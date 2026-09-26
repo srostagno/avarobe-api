@@ -8,13 +8,26 @@ const STALE_AFTER_MS = 10 * 60 * 1000
 export async function failStaleJobs(app: FastifyInstance) {
   const cutoff = new Date(Date.now() - STALE_AFTER_MS)
   const now = new Date()
-  const [avatars, looks] = await Promise.all([
+  const [refinements, avatars, looks] = await Promise.all([
+    // An interrupted refinement leaves the previous avatar usable.
     app.collections.avatars.updateMany(
-      { status: 'processing', updatedAt: { $lt: cutoff } },
+      { status: 'processing', 'job.kind': 'refine', updatedAt: { $lt: cutoff } },
+      {
+        $set: {
+          status: 'ready',
+          error: 'We could not apply those changes. Your avatar is unchanged; try again.',
+          job: null,
+          updatedAt: now,
+        },
+      },
+    ),
+    app.collections.avatars.updateMany(
+      { status: 'processing', 'job.kind': { $ne: 'refine' }, updatedAt: { $lt: cutoff } },
       {
         $set: {
           status: 'failed',
           error: 'We could not finish your avatar. Please try again.',
+          job: null,
           updatedAt: now,
         },
       },
@@ -31,9 +44,13 @@ export async function failStaleJobs(app: FastifyInstance) {
     ),
   ])
 
-  if (avatars.modifiedCount || looks.modifiedCount) {
+  if (refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount) {
     app.log.warn(
-      { avatars: avatars.modifiedCount, looks: looks.modifiedCount },
+      {
+        refinements: refinements.modifiedCount,
+        avatars: avatars.modifiedCount,
+        looks: looks.modifiedCount,
+      },
       'Marked interrupted generations as failed',
     )
   }

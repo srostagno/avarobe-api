@@ -50,7 +50,7 @@ const envSchema = z.object({
   VERIFY_EMAIL_TTL: z.string().default('24h'),
   PASSWORD_RESET_TTL: z.string().default('1h'),
   // Cost guards: generations per user per UTC day.
-  DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(4),
+  DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
   DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(12),
 })
 

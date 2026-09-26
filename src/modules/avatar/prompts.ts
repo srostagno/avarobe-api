@@ -1,4 +1,9 @@
-import type { AvatarBody, BodyBuild, ColorAnalysis } from '../../types/mongo.js'
+import type {
+  AvatarAdjustment,
+  AvatarBody,
+  BodyBuild,
+  ColorAnalysis,
+} from '../../types/mongo.js'
 
 export const COLOR_SEASONS = [
   'Light Spring',
@@ -91,21 +96,78 @@ export const COLOR_ANALYSIS_INSTRUCTIONS = [
   'Write in plain, warm American English.',
 ].join(' ')
 
-export function buildAvatarPrompt(body: AvatarBody) {
-  const garments =
-    body.presentation === 'womenswear'
-      ? 'a plain fitted white crew-neck t-shirt, straight mid-grey trousers and white minimalist sneakers'
-      : body.presentation === 'menswear'
-        ? 'a plain fitted white crew-neck t-shirt, mid-grey chino trousers and white minimalist sneakers'
-        : 'a plain white crew-neck t-shirt, relaxed mid-grey trousers and white minimalist sneakers'
+function neutralOutfit(body: AvatarBody) {
+  if (body.presentation === 'womenswear') {
+    return 'a plain fitted white crew-neck t-shirt, straight mid-grey trousers and white minimalist sneakers'
+  }
+
+  return body.presentation === 'menswear'
+    ? 'a plain fitted white crew-neck t-shirt, mid-grey chino trousers and white minimalist sneakers'
+    : 'a plain white crew-neck t-shirt, relaxed mid-grey trousers and white minimalist sneakers'
+}
+
+// The failure people notice most is a head that looks pasted onto a stock
+// body: wrong scale, a neck that doesn't fit, or skin that changes tone below
+// the jaw. These lines ask for one coherent photograph.
+const COHERENCE_RULES = [
+  'It must look like ONE real photograph taken in a single shot, never a composite.',
+  'The head is in natural proportion to the body for an adult of this height (roughly one-seventh to one-eighth of total height), with a neck whose width and length fit the build.',
+  'Skin tone, texture, lighting and color temperature are identical on the face, neck, arms and hands; the body looks the same age as the face.',
+  'Shot on an 85mm lens from chest height about 3 meters away, so there is no wide-angle distortion.',
+]
+
+function bodyDescription(body: AvatarBody) {
+  const meters = body.heightCm / 100
+  const bmi = body.weightKg / (meters * meters)
+
+  return `${body.heightCm} cm tall, ${body.weightKg} kg (BMI about ${bmi.toFixed(1)}), ${BUILD_DESCRIPTIONS[body.build]}`
+}
+
+export function buildAvatarPrompt(body: AvatarBody, hasBodyPhoto: boolean) {
+  return [
+    hasBodyPhoto
+      ? 'Image 1 is a selfie of a person; image 2 is a full-body photo of the same person. Create a new full-body studio photo of them.'
+      : 'Create a full-body studio photo of the SAME person from the reference selfie.',
+    'Keep their exact face, facial proportions, skin tone, hair, facial hair and eye color so they are instantly recognisable.',
+    hasBodyPhoto
+      ? `Take the body shape, shoulder width, proportions and posture from image 2, ignoring its clothes and background. For reference they are ${bodyDescription(body)}.`
+      : `Body: ${bodyDescription(body)}. Proportions must match these measurements realistically.`,
+    ...COHERENCE_RULES,
+    'They stand facing the camera in a relaxed neutral pose, arms at their sides, the whole body visible from head to shoes with a little margin.',
+    `Wearing ${neutralOutfit(body)}.`,
+    'Seamless light warm-grey studio backdrop, soft even lighting, realistic photo, no text, no logos.',
+  ].join(' ')
+}
+
+export const AVATAR_ADJUSTMENTS: Record<AvatarAdjustment, string> = {
+  more_like_me:
+    'Make the face match the selfie more closely: same face shape, jawline, eyes, nose, mouth, eyebrows, hairline and facial hair.',
+  head_smaller: 'Make the head a little smaller relative to the body so the proportions look natural.',
+  head_larger: 'Make the head a little larger relative to the body so the proportions look natural.',
+  slimmer: 'Make the body slightly slimmer, keeping the same height and frame.',
+  fuller: 'Make the body slightly fuller, keeping the same height and frame.',
+  broader_shoulders: 'Make the shoulders and chest slightly broader.',
+  narrower_shoulders: 'Make the shoulders slightly narrower.',
+  match_skin:
+    'Make the skin tone and texture of the neck, arms and hands match the face exactly, with the same lighting.',
+}
+
+export function buildRefinePrompt(input: {
+  adjustments: AvatarAdjustment[]
+  notes: string | null
+  hasBodyPhoto: boolean
+}) {
+  const changes = [
+    ...input.adjustments.map((key) => AVATAR_ADJUSTMENTS[key]),
+    ...(input.notes ? [`The person also asked: "${input.notes}".`] : []),
+  ]
 
   return [
-    'Create a full-body studio photo of the SAME person from the reference selfie.',
-    'Keep their exact face, facial proportions, skin tone, hair, facial hair and eye color so they are instantly recognisable.',
-    `Body: ${body.heightCm} cm tall, ${body.weightKg} kg, ${BUILD_DESCRIPTIONS[body.build]}. Proportions must match these measurements realistically.`,
-    'They stand facing the camera in a relaxed neutral pose, arms at their sides, the whole body visible from head to shoes with a little margin.',
-    `Wearing ${garments}.`,
-    'Seamless light warm-grey studio backdrop, soft even lighting, realistic photo, no text, no logos.',
+    `Image 1 is this person's current full-body avatar. Image 2 is their selfie${input.hasBodyPhoto ? ' and image 3 a full-body photo of them' : ''}.`,
+    'Edit image 1. Keep everything else exactly the same: pose, framing, outfit, background, lighting and identity.',
+    `Apply only these changes: ${changes.join(' ')}`,
+    ...COHERENCE_RULES,
+    'Realistic photo, no text, no logos.',
   ].join(' ')
 }
 

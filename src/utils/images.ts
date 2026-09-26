@@ -34,6 +34,40 @@ export async function normalizeSelfie(input: Buffer) {
     .toBuffer()
 }
 
+// Full-body photos keep more pixels than selfies: proportions matter more
+// than face detail there.
+export async function normalizeBodyPhoto(input: Buffer) {
+  let image: sharp.Sharp
+
+  try {
+    image = sharp(input, { failOn: 'error' }).rotate()
+  } catch {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  const metadata = await image.metadata().catch(() => null)
+
+  if (!metadata?.width || !metadata.height) {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  if (Math.min(metadata.width, metadata.height) < MIN_SELFIE_EDGE) {
+    throw new InvalidImageError(
+      `The full-body photo is too small. Use one at least ${MIN_SELFIE_EDGE}px on each side.`,
+    )
+  }
+
+  return image
+    .resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 88, mozjpeg: true })
+    .toBuffer()
+}
+
+// Small, quick-to-load version of an in-progress render.
+export async function toPreviewWebp(png: Buffer) {
+  return sharp(png).resize({ width: 512 }).webp({ quality: 70 }).toBuffer()
+}
+
 export async function toStoredWebp(png: Buffer) {
   return sharp(png).webp({ quality: 90 }).toBuffer()
 }

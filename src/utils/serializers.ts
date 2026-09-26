@@ -18,9 +18,20 @@ export function serializeUser(user: UserDocument) {
 }
 
 export async function serializeAvatar(avatar: AvatarDocument) {
-  const [avatarUrl, selfieUrl] = await Promise.all([
+  const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
     signedUrlOrNull(avatar.selfieKey),
+    signedUrlOrNull(avatar.bodyPhotoKey ?? null),
+    signedUrlOrNull(avatar.job?.previewKey ?? null),
+    Promise.all(
+      (avatar.versions ?? []).map(async (version) => ({
+        id: version.id,
+        url: await signedUrlOrNull(version.key),
+        source: version.source,
+        createdAt: version.createdAt.toISOString(),
+        current: version.key === avatar.avatarKey,
+      })),
+    ),
   ])
 
   return {
@@ -31,6 +42,16 @@ export async function serializeAvatar(avatar: AvatarDocument) {
     colorAnalysis: avatar.colorAnalysis,
     avatarUrl,
     selfieUrl,
+    bodyPhotoUrl,
+    versions,
+    job: avatar.job
+      ? {
+          kind: avatar.job.kind,
+          startedAt: avatar.job.startedAt.toISOString(),
+          previewUrl,
+          previewCount: avatar.job.previewCount,
+        }
+      : null,
     createdAt: avatar.createdAt.toISOString(),
     updatedAt: avatar.updatedAt.toISOString(),
     readyAt: avatar.readyAt?.toISOString() ?? null,
@@ -46,6 +67,7 @@ export async function serializeLook(look: LookDocument) {
     status: look.status,
     error: look.error,
     imageUrl: await signedUrlOrNull(look.imageKey),
+    previewUrl: look.status === 'processing' ? await signedUrlOrNull(look.previewKey ?? null) : null,
     collectionIds: look.collectionIds.map((id) => id.toString()),
     favorite: look.favorite,
     createdAt: look.createdAt.toISOString(),

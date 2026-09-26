@@ -41,14 +41,21 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     const [avatar, looks] = await Promise.all([
       app.collections.avatars.findOne({ userId }),
       app.collections.looks
-        .find({ userId }, { projection: { imageKey: 1 } })
+        .find({ userId }, { projection: { imageKey: 1, previewKey: 1 } })
         .toArray(),
     ])
     const keys = [
-      avatar?.selfieKey,
-      avatar?.avatarKey,
-      ...looks.map((look) => look.imageKey),
-    ].filter((key): key is string => Boolean(key))
+      ...new Set(
+        [
+          avatar?.selfieKey,
+          avatar?.bodyPhotoKey,
+          avatar?.avatarKey,
+          avatar?.job?.previewKey,
+          ...(avatar?.versions ?? []).map((version) => version.key),
+          ...looks.flatMap((look) => [look.imageKey, look.previewKey]),
+        ].filter((key): key is string => Boolean(key)),
+      ),
+    ]
 
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
     await Promise.all([

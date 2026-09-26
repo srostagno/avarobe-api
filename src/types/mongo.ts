@@ -94,13 +94,44 @@ export type ColorAnalysis = {
 
 export type GenerationStatus = 'processing' | 'ready' | 'failed'
 
+export type AvatarVersion = {
+  id: string
+  key: string
+  source: 'create' | 'refine'
+  createdAt: Date
+}
+
+// The generation in flight, so the app can show real progress: the palette
+// lands first, then previews of the render as the model refines it.
+export type AvatarJob = {
+  kind: 'create' | 'refine'
+  startedAt: Date
+  previewKey: string | null
+  previewCount: number
+}
+
+export type AvatarAdjustment =
+  | 'more_like_me'
+  | 'head_smaller'
+  | 'head_larger'
+  | 'slimmer'
+  | 'fuller'
+  | 'broader_shoulders'
+  | 'narrower_shoulders'
+  | 'match_skin'
+
 export type AvatarDocument = {
   _id: ObjectId
   userId: ObjectId
   status: GenerationStatus
   error: string | null
   selfieKey: string
+  // Optional full-body photo; the strongest signal for real proportions.
+  bodyPhotoKey?: string | null
   avatarKey: string | null
+  // Recent renders, newest first, so a refinement can be undone.
+  versions?: AvatarVersion[]
+  job?: AvatarJob | null
   body: AvatarBody
   colorAnalysis: ColorAnalysis | null
   consentVersion: string
@@ -154,6 +185,7 @@ export type LookDocument = {
   status: GenerationStatus
   error: string | null
   imageKey: string | null
+  previewKey?: string | null
   collectionIds: ObjectId[]
   favorite: boolean
   createdAt: Date

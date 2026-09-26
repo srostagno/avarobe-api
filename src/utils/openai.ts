@@ -171,6 +171,9 @@ export async function generateImageFromReferences(input: {
   prompt: string
   size?: '1024x1024' | '1024x1536' | '1536x1024'
   timeoutMs?: number
+  // Called with in-progress renders (full-size PNGs) as the model refines the
+  // image, so people can watch it form. Turns on streaming.
+  onPartial?: (png: Buffer, index: number) => Promise<void> | void
 }): Promise<Buffer> {
   const form = new FormData()
 
@@ -179,12 +182,21 @@ export async function generateImageFromReferences(input: {
   form.append('size', input.size ?? '1024x1536')
   form.append('quality', env.AI_IMAGE_QUALITY)
 
+  if (input.onPartial) {
+    form.append('stream', 'true')
+    form.append('partial_images', '2')
+  }
+
   for (const image of input.images) {
     form.append(
       'image[]',
       new Blob([new Uint8Array(image.data)], { type: image.contentType }),
       image.filename,
     )
+  }
+
+  if (input.onPartial) {
+    return streamImageEdit(form, input.onPartial, input.timeoutMs ?? 180_000)
   }
 
   const payload = await postOpenAi<ImagesPayload>('/images/edits', form, {
@@ -198,6 +210,117 @@ export async function generateImageFromReferences(input: {
   }
 
   return Buffer.from(b64, 'base64')
+}
+
+type ImageStreamEvent = {
+  type?: string
+  b64_json?: string
+  partial_image_index?: number
+  error?: { message?: string }
+}
+
+// Reads the server-sent events of a streamed image edit: partial images
+// first, then the completed one.
+async function streamImageEdit(
+  form: FormData,
+  onPartial: (png: Buffer, index: number) => Promise<void> | void,
+  timeoutMs: number,
+): Promise<Buffer> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(`${OPENAI_BASE_URL}/images/edits`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${requireKey()}` },
+      body: form,
+      signal: controller.signal,
+    })
+
+    if (!response.ok || !response.body) {
+      const payload = (await response.json().catch(() => ({}))) as ImagesPayload
+      throw new OpenAiRequestError(
+        payload.error?.message ?? `OpenAI responded with HTTP ${response.status}.`,
+        response.status,
+      )
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffered = ''
+    let finalImage: Buffer | null = null
+
+    const handle = async (block: string) => {
+      const data = block
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .join('')
+
+      if (!data) {
+        return
+      }
+
+      const event = JSON.parse(data) as ImageStreamEvent
+
+      if (event.type === 'error' || event.error) {
+        throw new OpenAiRequestError(event.error?.message ?? 'OpenAI image stream failed.', 502)
+      }
+
+      if (!event.b64_json) {
+        return
+      }
+
+      const image = Buffer.from(event.b64_json, 'base64')
+
+      if (event.type?.endsWith('.partial_image')) {
+        // A preview that fails to save must not sink the render.
+        await Promise.resolve(onPartial(image, event.partial_image_index ?? 0)).catch(() => undefined)
+      } else if (event.type?.endsWith('.completed')) {
+        finalImage = image
+      }
+    }
+
+    for (;;) {
+      const { done, value } = await reader.read()
+
+      if (done) {
+        break
+      }
+
+      buffered += decoder.decode(value, { stream: true })
+      let boundary = buffered.indexOf('\n\n')
+
+      while (boundary !== -1) {
+        await handle(buffered.slice(0, boundary))
+        buffered = buffered.slice(boundary + 2)
+        boundary = buffered.indexOf('\n\n')
+      }
+    }
+
+    if (buffered.trim()) {
+      await handle(buffered)
+    }
+
+    if (!finalImage) {
+      throw new OpenAiRequestError('OpenAI returned no image.', 502)
+    }
+
+    return finalImage
+  } catch (error) {
+    if (error instanceof OpenAiRequestError) {
+      throw error
+    }
+
+    const aborted = error instanceof Error && error.name === 'AbortError'
+
+    throw new OpenAiRequestError(
+      aborted ? 'OpenAI request timed out.' : 'OpenAI request failed.',
+      aborted ? 504 : 502,
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export function toDataUrl(data: Buffer, contentType: string) {

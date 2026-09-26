@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 
 import type { AvatarDocument, LookItem, LookPlan } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
-import { toStoredWebp } from '../../utils/images.js'
+import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
 import {
   createStructuredResponse,
   generateImageFromReferences,
@@ -75,7 +75,14 @@ export async function planLooks(input: {
 async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
   const look = await app.collections.looks.findOneAndUpdate(
     { _id: lookId, status: 'processing' },
-    { $set: { status: 'failed', error: RENDER_FAILED_MESSAGE, updatedAt: new Date() } },
+    {
+      $set: {
+        status: 'failed',
+        error: RENDER_FAILED_MESSAGE,
+        previewKey: null,
+        updatedAt: new Date(),
+      },
+    },
   )
 
   if (look) {
@@ -102,6 +109,8 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     storage.read(avatar.selfieKey),
   ])
 
+  const previewKey = `users/${look.userId.toString()}/look-${look._id.toString()}-preview.webp`
+
   try {
     const png = await generateImageFromReferences({
       images: [
@@ -109,6 +118,14 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
         { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
       ],
       prompt: buildLookRenderPrompt(look.plan, look.occasion.text),
+      // Previews let the card show the look forming instead of a shimmer.
+      onPartial: async (partial) => {
+        await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')
+        await app.collections.looks.updateOne(
+          { _id: lookId, status: 'processing' },
+          { $set: { previewKey, updatedAt: new Date() } },
+        )
+      },
     })
     const key = `users/${look.userId.toString()}/look-${look._id.toString()}-${Date.now()}.webp`
 
@@ -117,7 +134,16 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     const now = new Date()
     const result = await app.collections.looks.updateOne(
       { _id: lookId },
-      { $set: { status: 'ready', error: null, imageKey: key, updatedAt: now, readyAt: now } },
+      {
+        $set: {
+          status: 'ready',
+          error: null,
+          imageKey: key,
+          previewKey: null,
+          updatedAt: now,
+          readyAt: now,
+        },
+      },
     )
 
     // The look was deleted while rendering.
@@ -127,6 +153,8 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
   } catch (error) {
     app.log.error({ lookId: lookId.toString(), err: errorMessage(error) }, 'Look render failed')
     await markLookFailed(app, lookId)
+  } finally {
+    await storage.remove(previewKey).catch(() => undefined)
   }
 }
 
