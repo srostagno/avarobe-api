@@ -71,6 +71,14 @@ const envSchema = z.object({
   TOP_UP_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
   TOP_UP_CREDITS: z.coerce.number().int().min(1).default(20),
   TOP_UP_DAYS: z.coerce.number().int().min(1).default(30),
+  // Downsell when the Kit is declined, and the upgrade from it to the Kit.
+  COLOR_REPORT_PRICE_CENTS: z.coerce.number().int().min(100).default(1299),
+  COLOR_REPORT_CREDITS: z.coerce.number().int().min(0).default(3),
+  KIT_UPGRADE_PRICE_CENTS: z.coerce.number().int().min(100).default(1700),
+  KIT_UPGRADE_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
+  // Avarobe Plus: offered to people who had the Kit.
+  PLUS_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
+  PLUS_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(40),
   // Free allowance: looks on sign-up, and avatar renders (create + one redo).
   FREE_CREDITS: z.coerce.number().int().min(0).default(1),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),

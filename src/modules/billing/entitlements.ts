@@ -5,8 +5,9 @@ import { env } from '../../config/env.js'
 import type { UserDocument } from '../../types/mongo.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
-// season and a few colors, and FREE_CREDITS looks. The Style Kit unlocks the
-// full palette, reports, try-ons, pieces and stores, plus its credits.
+// season and a few colors, and FREE_CREDITS looks. The Color Report unlocks
+// the full palette and color report for good. The Style Kit (or an active
+// Plus subscription) unlocks everything: reports, try-ons, pieces, stores.
 // Looks and try-ons spend one credit each.
 
 export type PaywallCode = 'needs_kit' | 'no_credits'
@@ -27,18 +28,41 @@ const compEmails = () =>
       .filter(Boolean),
   )
 
-type BillingFields = Pick<UserDocument, 'email' | 'credits' | 'styleKitUntil' | 'freeAvatarRuns'>
+type BillingFields = Pick<
+  UserDocument,
+  'email' | 'credits' | 'styleKitUntil' | 'colorReportAt' | 'plus' | 'freeAvatarRuns'
+>
+
+const DAY_MS = 24 * 60 * 60 * 1000
+// A failed renewal gets a few days while Stripe retries the card.
+const PLUS_GRACE_MS = 3 * DAY_MS
+const PLUS_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due'])
 
 export function billingState(user: BillingFields) {
+  const now = Date.now()
   const comp = compEmails().has(user.email.toLowerCase())
   const kitUntil = user.styleKitUntil ?? null
-  const kitActive = comp || Boolean(kitUntil && kitUntil.getTime() > Date.now())
+  const plus = user.plus ?? null
+  const plusActive = Boolean(
+    plus && PLUS_LIVE_STATUSES.has(plus.status) && plus.periodEnd && plus.periodEnd.getTime() + PLUS_GRACE_MS > now,
+  )
+  const kitActive = comp || plusActive || Boolean(kitUntil && kitUntil.getTime() > now)
+  const colorReportAt = user.colorReportAt ?? null
+  const everHadKit = comp || Boolean(kitUntil) || Boolean(plus)
+  // The Color Report counts toward the Kit for a while after buying it.
+  const kitUpgradeUntil =
+    colorReportAt && !everHadKit ? new Date(colorReportAt.getTime() + env.KIT_UPGRADE_WINDOW_DAYS * DAY_MS) : null
 
   return {
     comp,
     kitActive,
     kitUntil,
-    everHadKit: comp || Boolean(kitUntil),
+    everHadKit,
+    plus,
+    plusActive,
+    colorAccess: kitActive || Boolean(colorReportAt),
+    colorReport: Boolean(colorReportAt),
+    kitUpgradeUntil: kitUpgradeUntil && kitUpgradeUntil.getTime() > now ? kitUpgradeUntil : null,
     credits: user.credits ?? env.FREE_CREDITS,
     freeAvatarRunsLeft: kitActive ? null : Math.max(0, env.FREE_AVATAR_RUNS - (user.freeAvatarRuns ?? 0)),
   }
@@ -51,17 +75,31 @@ export function serializeBilling(user: BillingFields) {
     kitActive: state.kitActive,
     kitUntil: state.comp ? null : (state.kitUntil?.toISOString() ?? null),
     everHadKit: state.everHadKit,
+    colorReport: state.colorReport,
+    colorAccess: state.colorAccess,
+    kitUpgradeUntil: state.kitUpgradeUntil?.toISOString() ?? null,
+    plus: state.plus
+      ? {
+          active: state.plusActive,
+          status: state.plus.status,
+          periodEnd: state.plus.periodEnd?.toISOString() ?? null,
+          cancelAtPeriodEnd: state.plus.cancelAtPeriodEnd,
+        }
+      : null,
     credits: state.credits,
     unlimited: state.comp,
     freeAvatarRunsLeft: state.freeAvatarRunsLeft,
   }
 }
 
+const BILLING_PROJECTION = { email: 1, credits: 1, styleKitUntil: 1, colorReportAt: 1, plus: 1, freeAvatarRuns: 1 }
+
+export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {
+  return app.collections.users.findOne({ _id: userId }, { projection: BILLING_PROJECTION })
+}
+
 async function loadUser(app: FastifyInstance, userId: ObjectId) {
-  const user = await app.collections.users.findOne(
-    { _id: userId },
-    { projection: { email: 1, credits: 1, styleKitUntil: 1, freeAvatarRuns: 1 } },
-  )
+  const user = await loadBillingUser(app, userId)
 
   if (!user) {
     throw new PaywallError('needs_kit', 'Sign in again to continue.')
@@ -77,6 +115,17 @@ export async function hasKit(app: FastifyInstance, userId: ObjectId) {
 export async function requireKit(app: FastifyInstance, userId: ObjectId, feature: string) {
   if (!(await hasKit(app, userId))) {
     throw new PaywallError('needs_kit', `${feature} comes with the Style Kit.`)
+  }
+}
+
+// The full palette and color report: Style Kit or Color Report.
+export async function hasColorAccess(app: FastifyInstance, userId: ObjectId) {
+  return billingState(await loadUser(app, userId)).colorAccess
+}
+
+export async function requireColorAccess(app: FastifyInstance, userId: ObjectId, feature: string) {
+  if (!(await hasColorAccess(app, userId))) {
+    throw new PaywallError('needs_kit', `${feature} comes with the Style Kit or the Color Report.`)
   }
 }
 

@@ -5,20 +5,25 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
+import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
+import { billingState, loadBillingUser } from './entitlements.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
   createCheckout,
   grantSession,
+  handleInvoicePaid,
+  handleSubscriptionChange,
   retrieveSession,
   sessionSettled,
+  setPlusCancellation,
   stripeConfigured,
   verifyWebhook,
 } from './stripe.js'
 
 const checkoutSchema = z.object({
-  product: z.enum(['style_kit', 'top_up']),
+  product: z.enum(['style_kit', 'top_up', 'color_report', 'kit_upgrade', 'plus']),
   // Where to come back to if they cancel; only paths inside the studio.
   returnPath: z
     .string()
@@ -34,9 +39,36 @@ function offer() {
   return Object.fromEntries(
     Object.entries(PRODUCTS).map(([id, product]) => [
       id,
-      { amount: product.amount(), currency: 'usd', credits: product.credits(), days: product.days() },
+      {
+        amount: product.amount(),
+        currency: 'usd',
+        credits: product.credits(),
+        days: product.days(),
+        interval: product.recurring ?? null,
+      },
     ]),
   )
+}
+
+// Who can buy what: top-ups and Plus continue a Style Kit, the upgrade
+// follows a recent Color Report, and nobody buys what they already have.
+function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billingState>) {
+  switch (product) {
+    case 'top_up':
+      return state.everHadKit ? null : 'Top-ups are for Style Kit owners.'
+    case 'plus':
+      if (!state.everHadKit) {
+        return 'Plus is for Style Kit owners.'
+      }
+
+      return state.plusActive ? 'You already have Plus.' : null
+    case 'color_report':
+      return state.colorAccess ? 'You already have your full color report.' : null
+    case 'kit_upgrade':
+      return state.kitUpgradeUntil ? null : 'The upgrade price has expired. The Style Kit is still available.'
+    default:
+      return null
+  }
 }
 
 const billingRoutes: FastifyPluginAsync = async (app) => {
@@ -57,10 +89,16 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message: parsed.message })
       }
 
-      const user = await app.collections.users.findOne({ _id: userId })
+      const user = await loadBillingUser(app, userId)
 
       if (!user) {
         return reply.code(401).send({ message: 'Sign in again to continue.' })
+      }
+
+      const reason = ineligibility(parsed.data.product, billingState(user))
+
+      if (reason) {
+        return reply.code(409).send({ message: reason })
       }
 
       try {
@@ -114,6 +152,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       return {
         user: user ? serializeUser(user) : null,
         purchase: {
+          mode: session.mode,
           product: session.metadata?.product ?? null,
           amount: session.amount_total ?? 0,
           currency: session.currency ?? 'usd',
@@ -122,6 +161,36 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
     },
   )
+
+  // Plus: cancel at the end of the paid period, or keep it after all.
+  for (const [path, cancel] of [
+    ['/plus/cancel', true],
+    ['/plus/resume', false],
+  ] as const) {
+    app.post(
+      path,
+      { preHandler: authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+      async (request, reply) => {
+        const userId = requireUserId(request)
+        const user = await loadBillingUser(app, userId)
+        const subscriptionId = user?.plus?.subscriptionId
+
+        if (!subscriptionId || !billingState(user).plusActive) {
+          return reply.code(404).send({ message: 'There is no active Plus subscription.' })
+        }
+
+        try {
+          await setPlusCancellation(app, subscriptionId, cancel)
+        } catch (error) {
+          request.log.error({ err: errorMessage(error) }, 'Plus cancellation change failed')
+          return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
+        }
+
+        const updated = await app.collections.users.findOne({ _id: userId })
+        return { user: updated ? serializeUser(updated) : null }
+      },
+    )
+  }
 }
 
 // Stripe needs the exact raw body to check the signature, so the webhook
@@ -147,11 +216,26 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: 'Invalid Stripe webhook.' })
     }
 
-    if (
-      event.type === 'checkout.session.completed' ||
-      event.type === 'checkout.session.async_payment_succeeded'
-    ) {
-      await grantSession(app, event.data.object)
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded':
+          await grantSession(app, event.data.object)
+          break
+        case 'invoice.paid':
+          await handleInvoicePaid(app, event.data.object)
+          break
+        case 'customer.subscription.updated':
+        case 'customer.subscription.deleted':
+          await handleSubscriptionChange(app, event.data.object)
+          break
+        default:
+          break
+      }
+    } catch (error) {
+      // A 500 makes Stripe retry later.
+      request.log.error({ err: errorMessage(error), type: event.type }, 'Stripe webhook failed')
+      return reply.code(500).send({ message: 'Webhook processing failed.' })
     }
 
     return { received: true }

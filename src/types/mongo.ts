@@ -22,14 +22,27 @@ export type UserDocument = {
   // Billing. Missing credits means the sign-up allowance (FREE_CREDITS).
   credits?: number
   styleKitUntil?: Date | null
+  // Bought the Color Report: full palette and color report, for good.
+  colorReportAt?: Date | null
+  // Avarobe Plus (monthly subscription): the Kit while active + monthly credits.
+  plus?: PlusSubscription | null
   // Avatar renders used without a Style Kit (create, redo, adjust).
   freeAvatarRuns?: number
 }
 
-export type PurchaseProduct = 'style_kit' | 'top_up'
+export type PlusSubscription = {
+  subscriptionId: string
+  customerId: string | null
+  status: string
+  periodEnd: Date | null
+  cancelAtPeriodEnd: boolean
+}
 
-// One paid Stripe Checkout session. The unique sessionId makes granting
-// idempotent: the success page and the webhook can both report the payment.
+export type PurchaseProduct = 'style_kit' | 'top_up' | 'color_report' | 'kit_upgrade' | 'plus'
+
+// One payment. The unique stripeSessionId (a Checkout session id, or the
+// invoice id for Plus months) makes granting idempotent: the success page and
+// the webhook can both report the same payment.
 export type PurchaseDocument = {
   _id: ObjectId
   userId: ObjectId

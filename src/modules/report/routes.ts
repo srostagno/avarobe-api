@@ -5,7 +5,14 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AvatarDocument } from '../../types/mongo.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
-import { PaywallError, hasKit, requireKit, sendPaywall } from '../billing/entitlements.js'
+import {
+  PaywallError,
+  hasColorAccess,
+  hasKit,
+  requireColorAccess,
+  requireKit,
+  sendPaywall,
+} from '../billing/entitlements.js'
 import { generateColorReport, generateStyleProfile, startDrapeTest } from './service.js'
 
 const refreshSchema = z.object({ refresh: z.boolean().default(false) })
@@ -34,13 +41,16 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (request) => {
     const userId = requireUserId(request)
 
-    if (!(await hasKit(app, userId))) {
-      return { available: false, color: null, drape: null, style: null }
+    const [kit, color] = await Promise.all([hasKit(app, userId), hasColorAccess(app, userId)])
+
+    if (!color) {
+      return { available: false, colorAvailable: false, color: null, drape: null, style: null }
     }
 
-    const avatar = await app.collections.avatars.findOne({ userId })
+    const report = await serializeReport(await app.collections.avatars.findOne({ userId }))
 
-    return { available: true, ...(await serializeReport(avatar)) }
+    // The Color Report unlocks the color half; the style profile needs the Kit.
+    return { available: kit, colorAvailable: true, ...report, style: kit ? report.style : null }
   })
 
   app.post(
@@ -55,7 +65,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireKit(app, userId, 'The advanced color report')
+        await requireColorAccess(app, userId, 'The advanced color report')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -114,7 +124,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       const userId = requireUserId(request)
 
       try {
-        await requireKit(app, userId, 'The drape test')
+        await requireColorAccess(app, userId, 'The drape test')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
