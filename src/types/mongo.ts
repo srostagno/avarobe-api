@@ -19,6 +19,28 @@ export type UserDocument = {
   // Throttles password guessing per account on top of the per-IP rate limit.
   failedLoginCount?: number
   lockedUntil?: Date | null
+  // Billing. Missing credits means the sign-up allowance (FREE_CREDITS).
+  credits?: number
+  styleKitUntil?: Date | null
+  // Avatar renders used without a Style Kit (create, redo, adjust).
+  freeAvatarRuns?: number
+}
+
+export type PurchaseProduct = 'style_kit' | 'top_up'
+
+// One paid Stripe Checkout session. The unique sessionId makes granting
+// idempotent: the success page and the webhook can both report the payment.
+export type PurchaseDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  product: PurchaseProduct
+  stripeSessionId: string
+  stripePaymentIntentId: string | null
+  amountTotal: number
+  currency: string
+  credits: number
+  kitDays: number
+  createdAt: Date
 }
 
 // A WebAuthn credential (passkey). The private key stays on the person's
@@ -134,12 +156,64 @@ export type AvatarDocument = {
   job?: AvatarJob | null
   body: AvatarBody
   colorAnalysis: ColorAnalysis | null
+  // Style Kit reports. The color report and drape test follow the selfie
+  // (cleared when it changes); the style profile follows the body.
+  colorReport?: { data: ColorReport; createdAt: Date } | null
+  drape?: DrapeTest | null
+  styleProfile?: { data: StyleProfile; createdAt: Date } | null
   consentVersion: string
   consentAt: Date
   generations: number
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
+}
+
+export type ScaleReading = { value: number; label: string }
+
+export type ColorReport = {
+  seasonLean: string
+  scales: { undertone: ScaleReading; depth: ScaleReading; chroma: ScaleReading; contrast: ScaleReading }
+  palette: { basics: ColorSwatch[]; accents: ColorSwatch[]; statements: ColorSwatch[] }
+  combinations: { name: string; occasion: string; colors: ColorSwatch[] }[]
+  guides: { title: string; text: string }[]
+  avoidAdvice: string
+  drape: { wear: ColorSwatch[]; avoid: ColorSwatch[] }
+}
+
+// One image of the avatar with four fabric drapes near the face: two colors
+// that flatter, two that don't (top row wear, bottom row avoid).
+export type DrapeTest = {
+  status: GenerationStatus
+  key: string | null
+  wear: ColorSwatch[]
+  avoid: ColorSwatch[]
+  updatedAt: Date
+}
+
+export type StyleProfile = {
+  archetype: string
+  tagline: string
+  description: string
+  keywords: string[]
+  shines: { situation: string; why: string }[]
+  adapt: { situation: string; how: string }[]
+  silhouettes: { area: string; advice: string }[]
+  signaturePieces: { name: string; color: string; colorHex: string; why: string }[]
+  capsule: { slot: string; name: string; color: string; colorHex: string; material: string }[]
+  skip: string[]
+}
+
+export type LookAnalysis = {
+  dressCodeFit: { score: number; verdict: string }
+  paletteHarmony: { score: number; verdict: string }
+  flatters: string
+  strengths: string[]
+  dressUp: string
+  dressDown: string
+  dayToNight: string
+  weather: string
+  accessories: string[]
 }
 
 export type LookItemSlot =
@@ -205,6 +279,9 @@ export type LookDocument = {
   error: string | null
   imageKey: string | null
   previewKey?: string | null
+  // Whether rendering this look took a credit (refunded if it fails).
+  creditSpent?: boolean
+  analysis?: { data: LookAnalysis; createdAt: Date } | null
   pieces?: LookPiece[]
   collectionIds: ObjectId[]
   favorite: boolean

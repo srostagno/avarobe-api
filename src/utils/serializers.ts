@@ -4,6 +4,7 @@ import type {
   LookDocument,
   UserDocument,
 } from '../types/mongo.js'
+import { serializeBilling } from '../modules/billing/entitlements.js'
 import { signedUrlOrNull } from './storage.js'
 
 export function serializeUser(user: UserDocument) {
@@ -13,11 +14,39 @@ export function serializeUser(user: UserDocument) {
     firstName: user.firstName,
     hasPassword: Boolean(user.passwordHash),
     emailVerified: Boolean(user.emailVerifiedAt),
+    billing: serializeBilling(user),
     createdAt: user.createdAt.toISOString(),
   }
 }
 
-export async function serializeAvatar(avatar: AvatarDocument) {
+// Without the Style Kit the palette shows the season and a first taste of
+// colors; the rest stays on the server, with counts so the page can hint at it.
+function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean) {
+  if (!analysis || full) {
+    return analysis ? { ...analysis, locked: false } : null
+  }
+
+  return {
+    season: analysis.season,
+    undertone: analysis.undertone,
+    contrast: analysis.contrast,
+    summary: analysis.summary,
+    bestColors: analysis.bestColors.slice(0, 3),
+    neutrals: [],
+    avoidColors: [],
+    metals: analysis.metals,
+    confidence: analysis.confidence,
+    photoNote: analysis.photoNote,
+    locked: true,
+    lockedCounts: {
+      bestColors: Math.max(0, analysis.bestColors.length - 3),
+      neutrals: analysis.neutrals.length,
+      avoidColors: analysis.avoidColors.length,
+    },
+  }
+}
+
+export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean }) {
   const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
     signedUrlOrNull(avatar.selfieKey),
@@ -39,7 +68,7 @@ export async function serializeAvatar(avatar: AvatarDocument) {
     status: avatar.status,
     error: avatar.error,
     body: avatar.body,
-    colorAnalysis: avatar.colorAnalysis,
+    colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette),
     avatarUrl,
     selfieUrl,
     bodyPhotoUrl,
@@ -65,6 +94,7 @@ export async function serializeLook(look: LookDocument) {
     occasion: look.occasion,
     plan: look.plan,
     source: look.source ?? 'stylist',
+    analysis: look.analysis?.data ?? null,
     referenceUrl: await signedUrlOrNull(look.referenceKey ?? null),
     pieces: await Promise.all(
       (look.pieces ?? []).map(async (piece) => ({

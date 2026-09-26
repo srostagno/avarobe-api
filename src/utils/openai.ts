@@ -170,6 +170,9 @@ export async function generateImageFromReferences(input: {
   images: ImageInput[]
   prompt: string
   size?: '1024x1024' | '1024x1536' | '1536x1024'
+  // Defaults to AI_IMAGE_MODEL / AI_IMAGE_QUALITY.
+  model?: string
+  quality?: 'low' | 'medium' | 'high'
   timeoutMs?: number
   // Called with in-progress renders (full-size PNGs) as the model refines the
   // image, so people can watch it form. Turns on streaming.
@@ -177,10 +180,10 @@ export async function generateImageFromReferences(input: {
 }): Promise<Buffer> {
   const form = new FormData()
 
-  form.append('model', env.AI_IMAGE_MODEL)
+  form.append('model', input.model ?? env.AI_IMAGE_MODEL)
   form.append('prompt', input.prompt)
   form.append('size', input.size ?? '1024x1536')
-  form.append('quality', env.AI_IMAGE_QUALITY)
+  form.append('quality', input.quality ?? env.AI_IMAGE_QUALITY)
 
   if (input.onPartial) {
     form.append('stream', 'true')

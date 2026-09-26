@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
+import { env } from '../../config/env.js'
 import type { AvatarDocument, LookDocument, LookItem, LookPiece, LookPlan } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
@@ -12,6 +13,7 @@ import {
 } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
+import { refundCredits } from '../billing/entitlements.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
   TRY_ON_INSTRUCTIONS,
@@ -135,6 +137,11 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
 
   if (look) {
     await releaseGenerations(app, look.userId, 'look', 1)
+
+    if (look.creditSpent) {
+      await refundCredits(app, look.userId, 1)
+      await app.collections.looks.updateOne({ _id: lookId }, { $set: { creditSpent: false } })
+    }
   }
 }
 
@@ -264,6 +271,8 @@ async function renderPiece(
       images: references,
       prompt: buildPiecePrompt(piece, references.length > 1),
       size: '1024x1024',
+      model: env.AI_PIECE_MODEL,
+      quality: env.AI_PIECE_QUALITY,
     })
     const key = `users/${look.userId.toString()}/look-${look._id.toString()}-piece-${piece.id}.webp`
 

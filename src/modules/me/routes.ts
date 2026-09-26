@@ -52,6 +52,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
           avatar?.bodyPhotoKey,
           avatar?.avatarKey,
           avatar?.job?.previewKey,
+          avatar?.drape?.key,
           ...(avatar?.versions ?? []).map((version) => version.key),
           ...looks.flatMap(lookStorageKeys),
         ].filter((key): key is string => Boolean(key)),
@@ -68,6 +69,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       app.collections.passkeys.deleteMany({ userId }),
       app.collections.authChallenges.deleteMany({ userId }),
       app.collections.shopSearches.deleteMany({ userId }),
+      app.collections.purchases.deleteMany({ userId }),
     ])
     await app.collections.users.deleteOne({ _id: userId })
 

@@ -33,6 +33,10 @@ const envSchema = z.object({
   AI_TEXT_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   AI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   AI_IMAGE_QUALITY: z.enum(['low', 'medium', 'high']).default('medium'),
+  // Piece photos only feed store search, so a cheaper model does: measured
+  // Sep 26 at $0.013 and 12 s each vs $0.065 and 33 s with gpt-image-2.
+  AI_PIECE_MODEL: z.string().default('gpt-image-1-mini'),
+  AI_PIECE_QUALITY: z.enum(['low', 'medium', 'high']).default('medium'),
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('.storage'),
   S3_BUCKET: z.string().optional(),
@@ -57,6 +61,21 @@ const envSchema = z.object({
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
   // SerpApi runs the Google Lens searches behind "Find it in stores".
   SERPAPI_API_KEY: z.string().optional(),
+  // Billing (Stripe Checkout, one-time payments). Products and prices are
+  // created in Stripe on first use, found again by lookup key.
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STYLE_KIT_PRICE_CENTS: z.coerce.number().int().min(100).default(2999),
+  STYLE_KIT_CREDITS: z.coerce.number().int().min(1).default(30),
+  STYLE_KIT_DAYS: z.coerce.number().int().min(1).default(60),
+  TOP_UP_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
+  TOP_UP_CREDITS: z.coerce.number().int().min(1).default(20),
+  TOP_UP_DAYS: z.coerce.number().int().min(1).default(30),
+  // Free allowance: looks on sign-up, and avatar renders (create + one redo).
+  FREE_CREDITS: z.coerce.number().int().min(0).default(1),
+  FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
+  // Accounts with the Style Kit for free, e.g. the founder and testers.
+  COMP_EMAILS: z.string().default(''),
 })
 
 const parsed = envSchema.safeParse(process.env)

@@ -9,6 +9,7 @@ import type {
   CollectionDocument,
   LookDocument,
   PasskeyDocument,
+  PurchaseDocument,
   RefreshTokenDocument,
   ShopSearchDocument,
   UsageCounterDocument,
@@ -25,6 +26,7 @@ export type MongoCollections = {
   passkeys: Collection<PasskeyDocument>
   authChallenges: Collection<AuthChallengeDocument>
   shopSearches: Collection<ShopSearchDocument>
+  purchases: Collection<PurchaseDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -42,6 +44,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
     authChallenges: mongoDb.collection<AuthChallengeDocument>('auth_challenges'),
     shopSearches: mongoDb.collection<ShopSearchDocument>('shop_searches'),
+    purchases: mongoDb.collection<PurchaseDocument>('purchases'),
   }
 }
 
@@ -79,6 +82,8 @@ async function ensureMongoIndexes(collections: MongoCollections) {
       { expiresAt: 1 },
       { expireAfterSeconds: 0 },
     ),
+    collections.purchases.createIndex({ stripeSessionId: 1 }, { unique: true }),
+    collections.purchases.createIndex({ userId: 1, createdAt: -1 }),
   ])
 }
 

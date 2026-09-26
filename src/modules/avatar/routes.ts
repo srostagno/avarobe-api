@@ -10,7 +10,8 @@ import { parseBody } from '../../utils/http.js'
 import { InvalidImageError, normalizeBodyPhoto, normalizeSelfie } from '../../utils/images.js'
 import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
-import { remainingGenerations, reserveGenerations } from '../../utils/usage.js'
+import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
+import { PaywallError, hasKit, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { startAvatarJob } from './service.js'
 
@@ -67,7 +68,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     const avatar = await app.collections.avatars.findOne({ userId })
 
     return {
-      avatar: avatar ? await serializeAvatar(avatar) : null,
+      avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null,
       remaining: await remainingGenerations(app, userId, 'avatar'),
     }
   })
@@ -139,6 +140,18 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return limitReached(reply)
       }
 
+      try {
+        await useAvatarRun(app, userId)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'avatar', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       const stamp = Date.now()
       const selfieKey = selfie ? `users/${userId.toString()}/selfie-${stamp}.jpg` : null
       const bodyPhotoKey = bodyPhoto ? `users/${userId.toString()}/body-${stamp}.jpg` : null
@@ -166,7 +179,8 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             updatedAt: now,
             readyAt: existing?.readyAt ?? null,
             avatarKey: existing?.avatarKey ?? null,
-            ...(selfieKey ? { selfieKey, colorAnalysis: null } : {}),
+            styleProfile: null,
+            ...(selfieKey ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null } : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
@@ -178,6 +192,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const replaced = [
         selfieKey ? existing?.selfieKey : null,
+        selfieKey ? existing?.drape?.key : null,
         bodyPhotoKey ? existing?.bodyPhotoKey : null,
       ].filter((key): key is string => Boolean(key))
 
@@ -190,7 +205,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: avatarId })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null })
     },
   )
 
@@ -221,6 +236,18 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return limitReached(reply)
       }
 
+      try {
+        await useAvatarRun(app, userId)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'avatar', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       await app.collections.avatars.updateOne(
         { _id: existing._id },
         {
@@ -229,7 +256,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             error: null,
             job: newJob('create'),
             updatedAt: new Date(),
-            ...(parsed.data.body ? { body: roundBody(parsed.data.body) } : {}),
+            ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),
           },
           $inc: { generations: 1 },
         },
@@ -239,7 +266,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null })
     },
   )
 
@@ -270,6 +297,18 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return limitReached(reply)
       }
 
+      try {
+        await useAvatarRun(app, userId)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'avatar', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       await app.collections.avatars.updateOne(
         { _id: existing._id },
         {
@@ -286,7 +325,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null })
     },
   )
 
@@ -310,7 +349,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    return { avatar: avatar ? await serializeAvatar(avatar) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null }
   })
 
   // Deletes one version. Deleting the one in use switches to the newest
@@ -347,7 +386,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
     await storage.remove(version.key).catch(() => undefined)
 
-    return { avatar: avatar ? await serializeAvatar(avatar) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null }
   })
 
   // Deletes the avatar, every version and the photos behind it. Looks keep
@@ -371,6 +410,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.bodyPhotoKey,
           existing.avatarKey,
           existing.job?.previewKey,
+          existing.drape?.key,
           ...(existing.versions ?? []).map((version) => version.key),
         ].filter((key): key is string => Boolean(key)),
       ),
@@ -398,7 +438,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    return { avatar: avatar ? await serializeAvatar(avatar) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasKit(app, userId) }) : null }
   })
 }
 

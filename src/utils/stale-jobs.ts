@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 
+import { refundCredits } from '../modules/billing/entitlements.js'
+
 // Generation runs in-process. If the API restarts mid-render the document
 // would stay "processing" forever, so on boot anything older than this is
 // marked failed and the person can retry.
@@ -8,7 +10,23 @@ const STALE_AFTER_MS = 10 * 60 * 1000
 export async function failStaleJobs(app: FastifyInstance) {
   const cutoff = new Date(Date.now() - STALE_AFTER_MS)
   const now = new Date()
-  const [refinements, avatars, looks, pieces] = await Promise.all([
+
+  // Interrupted looks give their credit back, like any failed render.
+  const paidLooks = await app.collections.looks
+    .find({ status: 'processing', updatedAt: { $lt: cutoff }, creditSpent: true }, { projection: { userId: 1 } })
+    .toArray()
+
+  for (const look of paidLooks) {
+    const claimed = await app.collections.looks.updateOne(
+      { _id: look._id, creditSpent: true },
+      { $set: { creditSpent: false } },
+    )
+
+    if (claimed.modifiedCount) {
+      await refundCredits(app, look.userId, 1)
+    }
+  }
+  const [refinements, avatars, looks, , pieces] = await Promise.all([
     // An interrupted refinement leaves the previous avatar usable.
     app.collections.avatars.updateMany(
       { status: 'processing', 'job.kind': 'refine', updatedAt: { $lt: cutoff } },
@@ -41,6 +59,11 @@ export async function failStaleJobs(app: FastifyInstance) {
           updatedAt: now,
         },
       },
+    ),
+    // A stuck drape test can be retried from the report.
+    app.collections.avatars.updateMany(
+      { 'drape.status': 'processing', 'drape.updatedAt': { $lt: cutoff } },
+      { $set: { 'drape.status': 'failed' } },
     ),
     // Piece photos can be retried one by one from the look page.
     app.collections.looks.updateMany(

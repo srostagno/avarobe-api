@@ -28,6 +28,7 @@
     "fastify-plugin": "^5.1.0",
     "mongodb": "^6.21.0",
     "sharp": "^0.34.5",
+    "stripe": "^18.5.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

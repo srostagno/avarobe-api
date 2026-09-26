@@ -16,6 +16,14 @@ import {
   remainingGenerations,
   reserveGenerations,
 } from '../../utils/usage.js'
+import {
+  PaywallError,
+  refundCredits,
+  requireKit,
+  sendPaywall,
+  spendCredits,
+} from '../billing/entitlements.js'
+import { generateLookAnalysis } from '../report/service.js'
 import { MARKET_IDS, MARKETS } from '../shop/markets.js'
 import { ShopSearchError, shopSearchConfigured } from '../shop/serpapi.js'
 import { ShopQuotaError, findPieceMatches } from '../shop/service.js'
@@ -151,6 +159,20 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         })
       }
 
+      let creditSpent: boolean
+
+      try {
+        creditSpent = await spendCredits(app, userId, count)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'look', count)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       let plan: Awaited<ReturnType<typeof planLooks>>
 
       try {
@@ -158,6 +180,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Look planning failed')
         await releaseGenerations(app, userId, 'look', count)
+        await refundCredits(app, userId, creditSpent ? count : 0)
         return reply
           .code(502)
           .send({ message: 'Our stylist could not plan this one. Please try again.' })
@@ -165,6 +188,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
       if (plan.looks.length < count) {
         await releaseGenerations(app, userId, 'look', count - plan.looks.length)
+        await refundCredits(app, userId, creditSpent ? count - plan.looks.length : 0)
       }
 
       const now = new Date()
@@ -183,6 +207,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         status: 'processing',
         error: null,
         imageKey: null,
+        creditSpent,
         collectionIds: [],
         favorite: false,
         createdAt: now,
@@ -263,6 +288,21 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         })
       }
 
+      let creditSpent: boolean
+
+      try {
+        await requireKit(app, userId, 'Trying on outfits')
+        creditSpent = await spendCredits(app, userId, 1)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'look', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       const notes = parsed.data.notes || null
       let analysis: Awaited<ReturnType<typeof analyzeOutfit>>
 
@@ -270,6 +310,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         analysis = await analyzeOutfit({ avatar, photo, notes })
       } catch (error) {
         await releaseGenerations(app, userId, 'look', 1)
+        await refundCredits(app, userId, creditSpent ? 1 : 0)
 
         if (error instanceof NoOutfitError) {
           return reply
@@ -303,6 +344,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         status: 'processing',
         error: null,
         imageKey: null,
+        creditSpent,
         collectionIds: [],
         favorite: false,
         createdAt: now,
@@ -333,6 +375,16 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
       if (look.status !== 'ready' || !look.imageKey) {
         return reply.code(409).send({ message: 'The look needs to finish first.' })
+      }
+
+      try {
+        await requireKit(app, userId, 'Shopping the pieces')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
       }
 
       let pieceIds: string[]
@@ -383,6 +435,59 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
+  // The stylist's full read of one look (Style Kit). Kept on the look.
+  app.post(
+    '/:id/analysis',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const lookId = toObjectId((request.params as { id?: string }).id)
+      const look = lookId ? await app.collections.looks.findOne({ _id: lookId, userId }) : null
+
+      if (!look) {
+        return reply.code(404).send({ message: 'Look not found.' })
+      }
+
+      try {
+        await requireKit(app, userId, 'The full look analysis')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      if (look.analysis) {
+        return { look: await serializeLook(look) }
+      }
+
+      if (look.status !== 'ready') {
+        return reply.code(409).send({ message: 'The look needs to finish first.' })
+      }
+
+      const avatar = await app.collections.avatars.findOne({ _id: look.avatarId })
+
+      if (!avatar) {
+        return reply.code(409).send({ message: 'This look’s avatar was deleted.' })
+      }
+
+      try {
+        const data = await generateLookAnalysis(avatar, look)
+        const updated = await app.collections.looks.findOneAndUpdate(
+          { _id: look._id },
+          { $set: { analysis: { data, createdAt: new Date() } } },
+          { returnDocument: 'after' },
+        )
+
+        return { look: updated ? await serializeLook(updated) : null }
+      } catch (error) {
+        request.log.error({ err: errorMessage(error) }, 'Look analysis failed')
+        return reply.code(502).send({ message: 'We could not analyze this look. Try again.' })
+      }
+    },
+  )
+
   // Store matches for one piece: ?market=cl&localOnly=true&offset=8
   app.get(
     '/:id/pieces/:pieceId/shop',
@@ -413,6 +518,8 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
+        await requireKit(app, userId, 'Store search')
+
         return await findPieceMatches(app, {
           userId,
           look,
@@ -423,6 +530,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
           limit: parsed.data.limit,
         })
       } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
         if (error instanceof ShopQuotaError) {
           return reply.code(429).send({ message: error.message })
         }
@@ -458,9 +569,23 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         })
       }
 
+      let creditSpent: boolean
+
+      try {
+        creditSpent = await spendCredits(app, userId, 1)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'look', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
       await app.collections.looks.updateOne(
         { _id: look._id },
-        { $set: { status: 'processing', error: null, updatedAt: new Date() } },
+        { $set: { status: 'processing', error: null, creditSpent, updatedAt: new Date() } },
       )
       startLookRender(app, look._id)
 
