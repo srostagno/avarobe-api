@@ -286,14 +286,18 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ message: 'Cancel Plus first, then reset.' })
     }
 
-    const updated = await app.collections.users.findOneAndUpdate(
-      { _id: userId },
-      {
-        $unset: { credits: '', styleKitUntil: '', colorReportAt: '', plus: '', freeAvatarRuns: '' },
-        $set: { updatedAt: new Date() },
-      },
-      { returnDocument: 'after' },
-    )
+    const [updated] = await Promise.all([
+      app.collections.users.findOneAndUpdate(
+        { _id: userId },
+        {
+          $unset: { credits: '', styleKitUntil: '', colorReportAt: '', plus: '', freeAvatarRuns: '' },
+          $set: { updatedAt: new Date() },
+        },
+        { returnDocument: 'after' },
+      ),
+      // Today's usage too, so the test starts like a brand-new account.
+      app.collections.usageCounters.deleteMany({ userId, day: new Date().toISOString().slice(0, 10) }),
+    ])
 
     return { user: updated ? serializeUser(updated) : null }
   })

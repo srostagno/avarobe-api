@@ -18,7 +18,6 @@ import {
 } from '../../utils/usage.js'
 import {
   PaywallError,
-  hasKit,
   refundCredits,
   requireKit,
   sendPaywall,
@@ -39,29 +38,17 @@ import {
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
-type QuotaResult =
-  | { ok: true }
-  | { ok: false; status: 402 | 429; body: { message: string; code?: string } }
+type QuotaResult = { ok: true } | { ok: false; status: 429; body: { message: string } }
 
-// The daily fair-use cap depends on the plan. Free accounts that hit it get
-// the upgrade instead of a dead end; paying ones hear that credits keep.
+// The daily fair-use cap. It's the same for every plan: credits are the real
+// limit, and running out of them is what shows the upgrade. (A per-plan cap
+// once blocked free accounts that still had credits.)
 async function reserveLookQuota(app: FastifyInstance, userId: ObjectId, amount: number): Promise<QuotaResult> {
-  const kit = await hasKit(app, userId)
-  const limit = kit ? env.DAILY_LOOK_LIMIT : env.DAILY_FREE_LOOK_LIMIT
-
-  if (await reserveGenerations(app, userId, 'look', amount, limit)) {
+  if (await reserveGenerations(app, userId, 'look', amount)) {
     return { ok: true }
   }
 
-  if (!kit) {
-    return {
-      ok: false,
-      status: 402,
-      body: { code: 'no_credits', message: 'You’ve used your free looks. Get the Style Kit to keep styling.' },
-    }
-  }
-
-  const remaining = await remainingGenerations(app, userId, 'look', limit)
+  const remaining = await remainingGenerations(app, userId, 'look')
 
   return {
     ok: false,
@@ -70,7 +57,7 @@ async function reserveLookQuota(app: FastifyInstance, userId: ObjectId, amount: 
       message:
         remaining > 0
           ? `You can style ${remaining} more look${remaining === 1 ? '' : 's'} today. Ask for fewer, or come back tomorrow.`
-          : `You’ve styled ${limit} looks today. Come back tomorrow; your credits will be waiting.`,
+          : `You’ve styled ${env.DAILY_LOOK_LIMIT} looks today. Come back tomorrow; your credits will be waiting.`,
     },
   }
 }
@@ -138,12 +125,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       looks: await Promise.all(looks.map(serializeLook)),
-      remaining: await remainingGenerations(
-        app,
-        userId,
-        'look',
-        (await hasKit(app, userId)) ? env.DAILY_LOOK_LIMIT : env.DAILY_FREE_LOOK_LIMIT,
-      ),
+      remaining: await remainingGenerations(app, userId, 'look'),
     }
   })
 

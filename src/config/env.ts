@@ -55,10 +55,9 @@ const envSchema = z.object({
   PASSWORD_RESET_TTL: z.string().default('1h'),
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
-  // Looks a day for Style Kit / Plus owners (credits are the real limit;
-  // this only stops abuse), and for free accounts.
+  // Looks a day, for everyone. Credits are the real limit (and running out of
+  // them is what shows the upgrade); this only stops abuse.
   DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(40),
-  DAILY_FREE_LOOK_LIMIT: z.coerce.number().int().min(1).max(100).default(3),
   // Looks broken down into separate piece photos, and store searches.
   DAILY_PIECES_LIMIT: z.coerce.number().int().min(1).max(100).default(6),
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
