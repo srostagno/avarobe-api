@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify'
+import type { ObjectId } from 'mongodb'
 import type Stripe from 'stripe'
 import { z } from 'zod'
 
@@ -44,6 +45,60 @@ const checkoutSchema = z.object({
 })
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
+
+// Plan stages an admin can jump to, to see each offer without buying.
+const SIMULATED_STAGES = [
+  'free',
+  'color_report',
+  'kit',
+  'kit_low',
+  'kit_ending',
+  'kit_ended',
+  'plus',
+  'plus_low',
+] as const
+
+const simulateSchema = z.object({ stage: z.enum(SIMULATED_STAGES) })
+
+// Simulated Plus subscriptions never reach Stripe.
+const SIMULATED_SUBSCRIPTION = 'sim_admin'
+
+function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
+  const day = 24 * 60 * 60 * 1000
+  const inDays = (days: number) => new Date(Date.now() + days * day)
+  const plus = (credits: number) => ({
+    credits,
+    styleKitUntil: inDays(-10),
+    plus: {
+      subscriptionId: SIMULATED_SUBSCRIPTION,
+      customerId: null,
+      status: 'active',
+      periodEnd: inDays(25),
+      cancelAtPeriodEnd: false,
+    },
+  })
+
+  switch (stage) {
+    case 'color_report':
+      return { credits: 6, colorReportAt: new Date() }
+    case 'kit':
+      return { credits: 30, styleKitUntil: inDays(60) }
+    case 'kit_low':
+      return { credits: 2, styleKitUntil: inDays(40) }
+    case 'kit_ending':
+      return { credits: 12, styleKitUntil: inDays(5) }
+    case 'kit_ended':
+      return { credits: 0, styleKitUntil: inDays(-1) }
+    case 'plus':
+      return plus(40)
+    case 'plus_low':
+      return plus(2)
+    default:
+      return {}
+  }
+}
+
+const isSimulated = (subscriptionId: string | undefined) => subscriptionId === SIMULATED_SUBSCRIPTION
 
 const funnelSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
 
@@ -273,34 +328,57 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     }
   })
 
-  app.post('/admin/reset', { preHandler: authenticate }, async (request, reply) => {
-    const userId = requireUserId(request)
-    const user = await loadBillingUser(app, userId)
-
-    if (!user || !isAdmin(user)) {
-      return reply.code(403).send({ message: 'Only admins can do this.' })
-    }
-
-    // A live subscription would put Plus back on its next invoice.
-    if (billingState(user).plusActive && !user.plus?.cancelAtPeriodEnd) {
-      return reply.code(409).send({ message: 'Cancel Plus first, then reset.' })
-    }
-
+  // Puts an admin's own account in a plan stage (and in test mode), with
+  // today's usage cleared. 'free' is a brand-new account. Refused while a
+  // real Plus subscription is live: its next invoice would undo it.
+  async function simulate(userId: ObjectId, stage: (typeof SIMULATED_STAGES)[number]) {
     const [updated] = await Promise.all([
       app.collections.users.findOneAndUpdate(
         { _id: userId },
         {
           $unset: { credits: '', styleKitUntil: '', colorReportAt: '', plus: '', freeAvatarRuns: '' },
-          $set: { updatedAt: new Date() },
+          $set: { compPaused: true, updatedAt: new Date() },
         },
         { returnDocument: 'after' },
       ),
-      // Today's usage too, so the test starts like a brand-new account.
       app.collections.usageCounters.deleteMany({ userId, day: new Date().toISOString().slice(0, 10) }),
     ])
+    const fields = stageFields(stage)
 
-    return { user: updated ? serializeUser(updated) : null }
-  })
+    if (Object.keys(fields).length === 0) {
+      return updated
+    }
+
+    return app.collections.users.findOneAndUpdate({ _id: userId }, { $set: fields }, { returnDocument: 'after' })
+  }
+
+  for (const path of ['/admin/reset', '/admin/simulate']) {
+    app.post(path, { preHandler: authenticate }, async (request, reply) => {
+      const userId = requireUserId(request)
+      const user = await loadBillingUser(app, userId)
+
+      if (!user || !isAdmin(user)) {
+        return reply.code(403).send({ message: 'Only admins can do this.' })
+      }
+
+      const parsed =
+        path === '/admin/reset'
+          ? { ok: true as const, data: { stage: 'free' as const } }
+          : parseBody(simulateSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      if (billingState(user).plusActive && !user.plus?.cancelAtPeriodEnd && !isSimulated(user.plus?.subscriptionId)) {
+        return reply.code(409).send({ message: 'Cancel your real Plus subscription first.' })
+      }
+
+      const updated = await simulate(userId, parsed.data.stage)
+
+      return { user: updated ? serializeUser(updated) : null }
+    })
+  }
 
   // Plus: cancel at the end of the paid period, or keep it after all.
   for (const [path, cancel] of [
@@ -320,7 +398,11 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         }
 
         try {
-          await setPlusCancellation(app, subscriptionId, cancel)
+          if (isSimulated(subscriptionId)) {
+            await app.collections.users.updateOne({ _id: userId }, { $set: { 'plus.cancelAtPeriodEnd': cancel } })
+          } else {
+            await setPlusCancellation(app, subscriptionId, cancel)
+          }
         } catch (error) {
           request.log.error({ err: errorMessage(error) }, 'Plus cancellation change failed')
           return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
