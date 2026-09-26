@@ -20,6 +20,7 @@ Second app of the Trimry multi-app workspace. It shares conventions with `trimry
 
 ## Guardrails
 
+- `MONGODB_DB` must be `avarobe` or `avarobe_<suffix>`; the API refuses to boot against another app's database on the shared cluster (a copied Trimry `.env` once pointed it at `trimry`).
 - Daily generation quotas per user (`DAILY_AVATAR_LIMIT`, `DAILY_LOOK_LIMIT`) via atomic counters in `usage_counters`; failed renders give the quota back.
 - Jobs are in-process. On boot, anything stuck in `processing` for 10+ minutes is marked failed (`utils/stale-jobs.ts`). Keep one PM2 instance.
 - Measured costs (Sep 2026, `gpt-image-2` medium, 1024x1536): avatar ~25 s, look plan ~8 s, each look render ~25-30 s.

@@ -3,14 +3,20 @@ import { env } from './config/env.js'
 import { failStaleJobs } from './utils/stale-jobs.js'
 
 async function main() {
-  const app = await buildApp()
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null
 
   try {
+    app = await buildApp()
     await failStaleJobs(app)
     await app.listen({ host: env.HOST, port: env.PORT })
     app.log.info(`avarobe-api listening on http://${env.HOST}:${env.PORT}`)
   } catch (error) {
-    app.log.error(error, 'Failed to start avarobe-api')
+    if (app) {
+      app.log.error(error, 'Failed to start avarobe-api')
+    } else {
+      console.error('Failed to start avarobe-api:', error)
+    }
+
     process.exit(1)
   }
 }

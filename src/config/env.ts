@@ -10,7 +10,11 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4100),
   MONGODB_URI: z.string().min(1),
-  MONGODB_DB: z.string().min(1),
+  // Avarobe shares the Atlas cluster with other apps; refusing any other
+  // database name stops a copied .env from writing into theirs.
+  MONGODB_DB: z
+    .string()
+    .regex(/^avarobe(_[a-z0-9]+)?$/, 'must be an Avarobe database (avarobe, avarobe_dev), never another app'),
   JWT_ACCESS_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(60),
