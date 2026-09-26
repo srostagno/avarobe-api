@@ -139,6 +139,11 @@ export function verifyWebhook(payload: string, signature: string) {
   return stripe().webhooks.constructEvent(payload, signature, env.STRIPE_WEBHOOK_SECRET)
 }
 
+// Paid, or free through a 100% promotion code (gifted Kits, live tests).
+export function sessionSettled(session: Stripe.Checkout.Session) {
+  return session.payment_status === 'paid' || session.payment_status === 'no_payment_required'
+}
+
 // Grants a paid Avarobe checkout session: credits plus Style Kit time
 // (extended from the later of now and the current end). Safe to call more
 // than once for the same session. Returns the user id it granted to.
@@ -149,7 +154,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
     return null
   }
 
-  if (session.payment_status !== 'paid') {
+  if (!sessionSettled(session)) {
     return null
   }
 

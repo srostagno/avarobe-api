@@ -12,6 +12,7 @@ import {
   createCheckout,
   grantSession,
   retrieveSession,
+  sessionSettled,
   stripeConfigured,
   verifyWebhook,
 } from './stripe.js'
@@ -102,7 +103,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ message: 'We could not find that payment.' })
       }
 
-      if (session.payment_status !== 'paid') {
+      if (!sessionSettled(session)) {
         return reply.code(409).send({ message: 'The payment is still processing. Refresh in a moment.' })
       }
 
