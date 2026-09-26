@@ -1,19 +1,26 @@
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { REFRESH_TOKEN_COOKIE } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
+import type { UserDocument } from '../../types/mongo.js'
+import { consumeLink, createLink, linkSentRecently, readLink } from '../../utils/auth-links.js'
 import {
   clearAuthCookies,
   issueAuthSession,
   rotateAuthSession,
 } from '../../utils/auth-session.js'
-import { buildLoginLinkEmail, canSendEmail, sendTransactionalEmail } from '../../utils/email.js'
+import {
+  deliverLinkEmail,
+  passwordChangedEmail,
+  passwordResetEmail,
+  sendNotice,
+  verificationEmail,
+} from '../../utils/email.js'
 import { parseBody } from '../../utils/http.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
-import { toObjectId } from '../../utils/object-id.js'
 import {
   burnPasswordCheck,
   hashPassword,
@@ -22,33 +29,22 @@ import {
   verifyPassword,
 } from '../../utils/password.js'
 import { serializeUser } from '../../utils/serializers.js'
-import { generateSecureToken, hashToken } from '../../utils/tokens.js'
-
-type LoginLinkPayload = {
-  typ?: string
-  sub?: string
-  em?: string
-  nn?: string
-  rp?: string
-}
-
-const startSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-  firstName: z.string().trim().max(60).optional(),
-  redirectPath: z.string().max(200).optional(),
-})
-
-const consumeSchema = z.object({
-  token: z.string().min(20).max(2_000),
-})
+import { hashToken } from '../../utils/tokens.js'
 
 const emailField = z.string().trim().toLowerCase().email().max(254)
 const passwordField = z.string().min(1).max(MAX_PASSWORD_LENGTH)
+const firstNameField = z.string().trim().max(60).optional()
+const tokenField = z.string().min(20).max(2_000)
 
 const registerSchema = z.object({
   email: emailField,
   password: passwordField,
-  firstName: z.string().trim().max(60).optional(),
+  firstName: firstNameField,
+})
+
+const registerPasskeySchema = z.object({
+  email: emailField,
+  firstName: firstNameField,
 })
 
 const loginSchema = z.object({
@@ -61,199 +57,47 @@ const changePasswordSchema = z.object({
   newPassword: passwordField,
 })
 
+const forgotSchema = z.object({ email: emailField })
+const tokenSchema = z.object({ token: tokenField })
+const resetSchema = z.object({ token: tokenField, newPassword: passwordField })
+
 const MAX_FAILED_LOGINS = 10
 const LOCKOUT_MS = 15 * 60 * 1000
+const ACCOUNT_EXISTS = { message: 'An account with this email already exists. Sign in instead.' }
+const EMAIL_FAILED = { message: 'We could not send the email. Please try again in a moment.' }
+const WAIT_FOR_EMAIL = { message: 'We just sent you an email. Wait a minute before asking for another.' }
 
-// Only same-site paths, never protocol-relative URLs.
-function normalizeRedirectPath(value: string | null | undefined) {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) {
-    return null
-  }
-
-  return value
+function recipient(user: UserDocument) {
+  return { email: user.email, name: user.firstName }
 }
 
 const authRoutes: FastifyPluginAsync = async (app) => {
-  // Passwordless: creates the account on first use and emails a one-time
-  // sign-in link. In development without MailerSend the link is returned in
-  // the response so the flow can be tested locally.
-  app.post(
-    '/start',
-    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
-    async (request, reply) => {
-      const parsed = parseBody(startSchema, request.body)
+  async function sendVerification(log: FastifyBaseLogger, user: UserDocument, forPasskey: boolean) {
+    const url = await createLink(app, user, 'verify_email', forPasskey ? 'passkey' : undefined)
 
-      if (!parsed.ok) {
-        return reply.code(400).send({ message: 'Enter a valid email address.' })
-      }
+    return deliverLinkEmail({
+      log,
+      to: recipient(user),
+      link: url,
+      content: verificationEmail({ firstName: user.firstName, url, forPasskey }),
+    })
+  }
 
-      const { email } = parsed.data
-      const firstName = parsed.data.firstName ?? ''
-      const now = new Date()
-      let user = await app.collections.users.findOne({ email })
+  function notifyPasswordChanged(log: FastifyBaseLogger, user: UserDocument) {
+    void sendNotice({
+      log,
+      to: recipient(user),
+      content: passwordChangedEmail({
+        firstName: user.firstName,
+        resetUrl: `${env.APP_URL}/login?mode=forgot`,
+      }),
+    })
+  }
 
-      if (!user) {
-        try {
-          const created = {
-            _id: new ObjectId(),
-            email,
-            firstName,
-            createdAt: now,
-            updatedAt: now,
-            lastLoginAt: null,
-            emailVerifiedAt: null,
-          }
-
-          await app.collections.users.insertOne(created)
-          user = created
-        } catch (error) {
-          if (!isDuplicateKeyError(error)) {
-            throw error
-          }
-
-          user = await app.collections.users.findOne({ email })
-        }
-      } else if (!user.firstName && firstName) {
-        await app.collections.users.updateOne(
-          { _id: user._id },
-          { $set: { firstName, updatedAt: now } },
-        )
-        user.firstName = firstName
-      }
-
-      if (!user) {
-        return reply.code(500).send({ message: 'Could not start sign-in.' })
-      }
-
-      const redirectPath = normalizeRedirectPath(parsed.data.redirectPath)
-      const nonce = generateSecureToken(24)
-
-      await app.collections.users.updateOne(
-        { _id: user._id },
-        { $set: { loginNonceHash: hashToken(nonce) } },
-      )
-
-      const token = await app.jwt.sign(
-        {
-          typ: 'login_link',
-          sub: user._id.toString(),
-          em: user.email,
-          nn: nonce,
-          ...(redirectPath ? { rp: redirectPath } : {}),
-        },
-        { expiresIn: env.LOGIN_LINK_TTL },
-      )
-      const loginUrl = `${env.APP_URL}/auth/callback?token=${encodeURIComponent(token)}`
-
-      if (!canSendEmail()) {
-        if (env.NODE_ENV === 'development') {
-          request.log.info({ email, loginUrl }, 'Dev sign-in link (MailerSend not configured)')
-          return reply.send({ ok: true, devLoginUrl: loginUrl })
-        }
-
-        request.log.error('MailerSend is not configured; cannot send sign-in links.')
-        return reply
-          .code(503)
-          .send({ message: 'Sign-in email is unavailable right now. Please try again soon.' })
-      }
-
-      try {
-        const content = buildLoginLinkEmail({ firstName: user.firstName, loginUrl })
-        await sendTransactionalEmail({
-          to: { email: user.email, name: user.firstName },
-          ...content,
-        })
-      } catch (error) {
-        request.log.error({ err: error, email }, 'Failed to send sign-in link')
-        return reply
-          .code(503)
-          .send({ message: 'We could not send the email. Please try again in a moment.' })
-      }
-
-      return reply.send({ ok: true })
-    },
-  )
-
-  app.post(
-    '/consume',
-    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
-    async (request, reply) => {
-      const parsed = parseBody(consumeSchema, request.body)
-      const invalid = { message: 'This sign-in link is invalid or has expired.' }
-
-      if (!parsed.ok) {
-        return reply.code(400).send(invalid)
-      }
-
-      let payload: LoginLinkPayload
-
-      try {
-        payload = await app.jwt.verify<LoginLinkPayload>(parsed.data.token)
-      } catch {
-        return reply.code(401).send(invalid)
-      }
-
-      const userId = toObjectId(payload.sub)
-
-      if (payload.typ !== 'login_link' || !userId || !payload.em || !payload.nn) {
-        return reply.code(401).send(invalid)
-      }
-
-      const now = new Date()
-      // Consuming clears the nonce atomically, so a link can't be reused.
-      const user = await app.collections.users.findOneAndUpdate(
-        { _id: userId, email: payload.em, loginNonceHash: hashToken(payload.nn) },
-        { $set: { loginNonceHash: null, lastLoginAt: now, updatedAt: now } },
-        { returnDocument: 'after' },
-      )
-
-      if (!user) {
-        return reply.code(401).send(invalid)
-      }
-
-      let credentialsReset = false
-
-      if (!user.emailVerifiedAt) {
-        // First proof that this person owns the email. A password or passkey
-        // added before that could belong to someone who signed up with an
-        // email that isn't theirs, so drop them and end other sessions.
-        const passkeyCount = await app.collections.passkeys.countDocuments({ userId: user._id })
-
-        credentialsReset = Boolean(user.passwordHash) || passkeyCount > 0
-
-        if (credentialsReset) {
-          await app.collections.passkeys.deleteMany({ userId: user._id })
-          await app.collections.refreshTokens.updateMany(
-            { userId: user._id, revokedAt: null },
-            { $set: { revokedAt: now } },
-          )
-          request.log.warn(
-            { userId: user._id.toString() },
-            'Cleared credentials set before the email was verified',
-          )
-        }
-
-        await app.collections.users.updateOne(
-          { _id: user._id },
-          { $set: { emailVerifiedAt: now, passwordHash: null, passwordUpdatedAt: null } },
-        )
-        user.passwordHash = null
-      }
-      await issueAuthSession(app, reply, request, {
-        id: user._id.toString(),
-        email: user.email,
-      })
-
-      return reply.send({
-        user: serializeUser(user),
-        redirectPath: normalizeRedirectPath(payload.rp),
-        credentialsReset,
-      })
-    },
-  )
-
-  // Creates an account with email and password. A stub account left by an
-  // unused sign-in link (never logged in, no password) can be claimed.
+  // Email + password. The account works right away and a verification email
+  // goes out (passkeys need a verified email); if sending fails the person
+  // can resend from the app. A stub left by an unfinished passkey sign-up can
+  // be claimed.
   app.post(
     '/register',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -278,10 +122,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       let userId: ObjectId
 
       if (existing) {
-        if (existing.passwordHash || existing.lastLoginAt) {
-          return reply
-            .code(409)
-            .send({ message: 'An account with this email already exists. Sign in instead.' })
+        if (existing.passwordHash || existing.lastLoginAt || existing.emailVerifiedAt) {
+          return reply.code(409).send(ACCOUNT_EXISTS)
         }
 
         await app.collections.users.updateOne(
@@ -314,9 +156,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           })
         } catch (error) {
           if (isDuplicateKeyError(error)) {
-            return reply
-              .code(409)
-              .send({ message: 'An account with this email already exists. Sign in instead.' })
+            return reply.code(409).send(ACCOUNT_EXISTS)
           }
 
           throw error
@@ -329,9 +169,88 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(500).send({ message: 'Could not create your account.' })
       }
 
+      let verification: { sent: boolean; devLink?: string } = { sent: false }
+
+      try {
+        verification = await sendVerification(request.log, user, false)
+      } catch (error) {
+        // The account still works; the person can resend from the app.
+        request.log.error({ err: error, email }, 'Failed to send verification email')
+      }
+
       await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
 
-      return reply.code(201).send({ user: serializeUser(user) })
+      return reply.code(201).send({ user: serializeUser(user), verification })
+    },
+  )
+
+  // Passkey sign-up starts with the email: we confirm it first, and the link
+  // signs the person in to create the passkey (passkeys need a verified email).
+  app.post(
+    '/register/passkey',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(registerPasskeySchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a valid email address.' })
+      }
+
+      const { email } = parsed.data
+      const firstName = parsed.data.firstName ?? ''
+      const now = new Date()
+      let user = await app.collections.users.findOne({ email })
+      let created = false
+
+      if (user) {
+        if (user.passwordHash || user.lastLoginAt || user.emailVerifiedAt) {
+          return reply.code(409).send(ACCOUNT_EXISTS)
+        }
+
+        if (linkSentRecently(user, 'verify_email')) {
+          return reply.code(429).send(WAIT_FOR_EMAIL)
+        }
+
+        if (!user.firstName && firstName) {
+          await app.collections.users.updateOne({ _id: user._id }, { $set: { firstName } })
+          user.firstName = firstName
+        }
+      } else {
+        user = {
+          _id: new ObjectId(),
+          email,
+          firstName,
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: null,
+          emailVerifiedAt: null,
+        }
+
+        try {
+          await app.collections.users.insertOne(user)
+          created = true
+        } catch (error) {
+          if (isDuplicateKeyError(error)) {
+            return reply.code(409).send(ACCOUNT_EXISTS)
+          }
+
+          throw error
+        }
+      }
+
+      try {
+        const result = await sendVerification(request.log, user, true)
+
+        return reply.code(202).send({ ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) })
+      } catch (error) {
+        request.log.error({ err: error, email }, 'Failed to send passkey sign-up email')
+
+        if (created) {
+          await app.collections.users.deleteOne({ _id: user._id })
+        }
+
+        return reply.code(503).send(EMAIL_FAILED)
+      }
     },
   )
 
@@ -357,7 +276,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
         return reply
           .code(429)
-          .send({ message: 'Too many attempts. Try again in a few minutes or use a sign-in link.' })
+          .send({ message: 'Too many attempts. Try again in a few minutes or reset your password.' })
       }
 
       if (!(await verifyPassword(password, user.passwordHash))) {
@@ -389,8 +308,179 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // Sets or changes the password. Changing requires the current one; other
-  // sessions are signed out.
+  app.post(
+    '/verify-email/send',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const user = await app.collections.users.findOne({ _id: requireUserId(request) })
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Unauthorized' })
+      }
+
+      if (user.emailVerifiedAt) {
+        return reply.code(409).send({ message: 'Your email is already confirmed.' })
+      }
+
+      if (linkSentRecently(user, 'verify_email')) {
+        return reply.code(429).send(WAIT_FOR_EMAIL)
+      }
+
+      try {
+        const result = await sendVerification(request.log, user, false)
+
+        return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }
+      } catch (error) {
+        request.log.error({ err: error, email: user.email }, 'Failed to resend verification email')
+        return reply.code(503).send(EMAIL_FAILED)
+      }
+    },
+  )
+
+  // Confirms the email and signs the person in (the link proves they own it).
+  app.post(
+    '/verify-email',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(tokenSchema, request.body)
+      const invalid = { message: 'This confirmation link is invalid, expired or already used.' }
+      const payload = parsed.ok ? await readLink(app, parsed.data.token, 'verify_email') : null
+      const consumed = payload ? await consumeLink(app, payload, 'verify_email') : null
+
+      if (!payload || !consumed) {
+        return reply.code(400).send(invalid)
+      }
+
+      const now = new Date()
+      const user = await app.collections.users.findOneAndUpdate(
+        { _id: consumed._id },
+        {
+          $set: {
+            emailVerifiedAt: consumed.emailVerifiedAt ?? now,
+            lastLoginAt: now,
+            updatedAt: now,
+          },
+        },
+        { returnDocument: 'after' },
+      )
+
+      if (!user) {
+        return reply.code(400).send(invalid)
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+
+      return reply.send({
+        user: serializeUser(user),
+        intent: payload.it === 'passkey' ? 'passkey' : null,
+      })
+    },
+  )
+
+  // Always answers the same way, so it can't be used to find accounts.
+  app.post(
+    '/password/forgot',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(forgotSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a valid email address.' })
+      }
+
+      const user = await app.collections.users.findOne({ email: parsed.data.email })
+
+      if (!user || linkSentRecently(user, 'reset_password')) {
+        return { ok: true }
+      }
+
+      try {
+        const url = await createLink(app, user, 'reset_password')
+        const result = await deliverLinkEmail({
+          log: request.log,
+          to: recipient(user),
+          link: url,
+          content: passwordResetEmail({ firstName: user.firstName, url }),
+        })
+
+        return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }
+      } catch (error) {
+        request.log.error({ err: error, email: user.email }, 'Failed to send password reset email')
+        return { ok: true }
+      }
+    },
+  )
+
+  // Sets a new password from a reset link. Proves email ownership, so it also
+  // verifies the email; signs out every session and removes passkeys, which
+  // is the safe reset if someone else had access.
+  app.post(
+    '/password/reset',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(resetSchema, request.body)
+      const invalid = { message: 'This reset link is invalid, expired or already used.' }
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a new password.' })
+      }
+
+      const payload = await readLink(app, parsed.data.token, 'reset_password')
+
+      if (!payload?.em) {
+        return reply.code(400).send(invalid)
+      }
+
+      // Check the password before using up the link, so a typo keeps it valid.
+      const problem = passwordProblem(parsed.data.newPassword, payload.em)
+
+      if (problem) {
+        return reply.code(400).send({ message: problem })
+      }
+
+      const consumed = await consumeLink(app, payload, 'reset_password')
+
+      if (!consumed) {
+        return reply.code(400).send(invalid)
+      }
+
+      const now = new Date()
+      const [user, removedPasskeys] = await Promise.all([
+        app.collections.users.findOneAndUpdate(
+          { _id: consumed._id },
+          {
+            $set: {
+              passwordHash: await hashPassword(parsed.data.newPassword),
+              passwordUpdatedAt: now,
+              emailVerifiedAt: consumed.emailVerifiedAt ?? now,
+              failedLoginCount: 0,
+              lockedUntil: null,
+              lastLoginAt: now,
+              updatedAt: now,
+            },
+          },
+          { returnDocument: 'after' },
+        ),
+        app.collections.passkeys.deleteMany({ userId: consumed._id }),
+        app.collections.refreshTokens.updateMany(
+          { userId: consumed._id, revokedAt: null },
+          { $set: { revokedAt: now } },
+        ),
+      ])
+
+      if (!user) {
+        return reply.code(400).send(invalid)
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+      notifyPasswordChanged(request.log, user)
+
+      return reply.send({ user: serializeUser(user), removedPasskeys: removedPasskeys.deletedCount })
+    },
+  )
+
+  // Sets or changes the password while signed in. Changing requires the
+  // current one; other sessions are signed out.
   app.post(
     '/password',
     { preHandler: authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -444,6 +534,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         },
         { $set: { revokedAt: now } },
       )
+
+      if (user.passwordHash) {
+        notifyPasswordChanged(request.log, user)
+      }
 
       const updated = await app.collections.users.findOne({ _id: user._id })
 

@@ -9,14 +9,16 @@ Lives in the `Projects/Avarobe/code` workspace next to `avarobe-web` (it started
 - `corepack pnpm --filter avarobe-api dev` (port 4100). Copy `.env.example` to `.env`.
 - `corepack pnpm --filter avarobe-api test:auth` runs the password + passkey end-to-end check (software authenticator) against the running dev API and deletes its test account.
 - Dev uses `MONGODB_DB=avarobe_dev` on the Trimry Atlas cluster and `STORAGE_DRIVER=local` (files in `.storage/`, served by `/api/v1/media/*` behind HMAC-signed, expiring URLs).
-- Without MailerSend in development, `POST /auth/start` returns `devLoginUrl` instead of emailing it.
+- In development, auth emails come back as `devLink` in the response unless the address is in `EMAIL_DEV_ALLOWLIST`.
 
 ## Flows
 
-1. `POST /auth/start {email, firstName?}` creates the user on first use and sends a one-time link (nonce stored hashed on the user; consuming clears it). `POST /auth/consume {token}` issues cookies `avarobe_at` / `avarobe_rt`.
-   Password: `POST /auth/register {email, password, firstName?}`, `POST /auth/login`, `POST /auth/password {currentPassword?, newPassword}` (argon2id, min 8 chars, per-account lockout after 10 failures for 15 min, same error for unknown emails with a timing-equal dummy check). Changing the password revokes other sessions.
-   Passkeys (WebAuthn, SimpleWebAuthn v13): `POST /auth/passkeys/register/options|verify` (signed in), `POST /auth/passkeys/login/options|verify` (usernameless), `GET /auth/passkeys`, `DELETE /auth/passkeys/:id`. RP ID defaults to `APP_URL`'s hostname (`avarobe.com`; `localhost` in dev), expected origins are `APP_URL` + `CORS_ORIGINS`. Challenges live 5 minutes in `auth_challenges` and are single use. Only public keys and counters are stored.
-   Pre-hijack guard: the first sign-in link consumed on an unverified account deletes any password/passkeys set before it and revokes sessions (`credentialsReset: true`), since someone could have registered with an email that isn't theirs.
+1. Auth (`modules/auth/routes.ts`, `passkeys.ts`, `utils/auth-links.ts`):
+   - Password: `POST /auth/register {email, password, firstName?}` creates the account, signs in and sends a verification email; `POST /auth/login`; `POST /auth/password {currentPassword?, newPassword}` (signed in; revokes other sessions). argon2id, 8+ chars, per-account lockout after 10 failures for 15 min, uniform error with a timing-equal dummy check.
+   - Email verification: one-time links (JWT + nonce hash on the user, 24 h). `POST /auth/verify-email/send` (signed in, 60 s cooldown), `POST /auth/verify-email {token}` confirms and signs in, returning `intent: 'passkey'` for passkey sign-ups.
+   - Password recovery: `POST /auth/password/forgot {email}` always answers `{ok:true}` (60 s cooldown per account); `POST /auth/password/reset {token, newPassword}` (1 h link) checks the password before using the link, then sets it, verifies the email, revokes every session and removes passkeys.
+   - Passkeys (SimpleWebAuthn v13) require a verified email to add: `POST /auth/passkeys/register/options|verify`, `GET /auth/passkeys`, `DELETE /auth/passkeys/:id`, usernameless `POST /auth/passkeys/login/options|verify`. Passkey sign-up is email-first: `POST /auth/register/passkey {email, firstName?}` sends the confirmation link; following it signs in and the web asks for the passkey. RP ID defaults to `APP_URL`'s hostname.
+   - Email (`utils/email.ts`, MailerSend, tracking off): production sends everything; development only sends to `EMAIL_DEV_ALLOWLIST` and otherwise returns `devLink` in the response. Security notices go out when a password changes or a passkey is added.
 2. `POST /avatar` (multipart: `selfie`, `heightCm`, `weightKg`, `build`, `presentation`, `consent=true`) normalizes the photo with sharp (rotation, resize, metadata stripped), stores it, and starts a background job that runs the color analysis (Responses API, strict JSON) and the avatar render (Images API edits, `gpt-image-2`) in parallel. Client polls `GET /avatar`.
 3. `POST /looks {occasion, notes?, count 1-3}` plans the looks synchronously (stylist prompt + palette + body) and renders each in the background from the avatar image plus the selfie as face reference. Client polls `GET /looks?batchId=`.
 4. Collections: `GET/POST /collections`, `GET/PATCH/DELETE /collections/:id`, `POST /collections/:id/looks`, `DELETE /collections/:id/looks/:lookId`.
@@ -34,4 +36,4 @@ Lives in the `Projects/Avarobe/code` workspace next to `avarobe-web` (it started
 - DNS: `avarobe.com` → web (Vercel), `api.avarobe.com` → EC2 (nginx → 4100).
 - `.env`: `NODE_ENV=production`, `MONGODB_DB=avarobe`, `APP_URL=https://avarobe.com`, `API_PUBLIC_URL=https://api.avarobe.com`, `CORS_ORIGINS=https://avarobe.com,https://www.avarobe.com`, `COOKIE_DOMAIN=.avarobe.com`, new `JWT_ACCESS_SECRET`.
 - Storage: private S3 bucket (block public access, SSE), `STORAGE_DRIVER=s3`, `S3_BUCKET`, `S3_REGION`; EC2 instance role with `s3:GetObject/PutObject/DeleteObject` on that bucket.
-- Email: verify `avarobe.com` in MailerSend, set `MAILERSEND_API_KEY` and `MAILERSEND_FROM_EMAIL`.
+- Email: `avarobe.com` is verified in MailerSend (DKIM + SPF); set `MAILERSEND_API_KEY` and `MAILERSEND_FROM_EMAIL=hello@avarobe.com`.

@@ -141,12 +141,18 @@ class SoftAuthenticator {
 
 const a = jar()
 const b = jar()
+const tokenOf = (link) => decodeURIComponent(String(link).split('token=')[1] ?? '')
 
-// Password
+// Password sign-up, verification and sign-in
 let r = await call(a, '/auth/register', { email, password: 'short', firstName: 'E2E' })
 check('weak password rejected', r.status === 400, r.data.message)
 r = await call(a, '/auth/register', { email, password: 'correct horse battery', firstName: 'E2E' })
-check('register with password', r.status === 201 && r.data.user?.hasPassword === true, `status ${r.status}`)
+check(
+  'register with password (unverified, verification link issued)',
+  r.status === 201 && r.data.user?.hasPassword === true && r.data.user?.emailVerified === false && Boolean(r.data.verification?.devLink),
+  `status ${r.status}`,
+)
+const verifyLink = r.data.verification?.devLink
 r = await call(a, '/auth/me', undefined, 'GET')
 check('session after register', r.status === 200 && r.data.user?.email === email)
 r = await call(b, '/auth/register', { email, password: 'another long password' })
@@ -157,17 +163,29 @@ r = await call(b, '/auth/login', { email: 'nobody@avarobe.test', password: 'what
 check('unknown email gives same error', r.status === 401 && r.data.message === 'Email or password is incorrect.')
 r = await call(b, '/auth/login', { email, password: 'correct horse battery' })
 check('login with password (second session)', r.status === 200)
-r = await call(a, '/auth/password', { currentPassword: 'nope nope nope', newPassword: 'new long password 1' })
+r = await call(a, '/auth/passkeys/register/options', {})
+check('passkey needs a verified email', r.status === 403 && r.data.code === 'email_not_verified', r.data.message)
+r = await call(a, '/auth/verify-email/send', {})
+check('resend right away is throttled', r.status === 429, r.data.message)
+r = await call(jar(), '/auth/verify-email', { token: tokenOf(verifyLink) })
+check('verify email via link', r.status === 200 && r.data.user?.emailVerified === true && r.data.intent === null)
+r = await call(jar(), '/auth/verify-email', { token: tokenOf(verifyLink) })
+check('verification link works once', r.status === 400)
+r = await call(a, '/auth/verify-email/send', {})
+check('resend after verifying refused', r.status === 409 || r.status === 401, `status ${r.status}`)
+
+// Change password
+r = await call(b, '/auth/password', { currentPassword: 'nope nope nope', newPassword: 'new long password 1' })
 check('change password needs current one', r.status === 400, r.data.message)
-r = await call(a, '/auth/password', { currentPassword: 'correct horse battery', newPassword: 'new long password 1' })
+r = await call(b, '/auth/password', { currentPassword: 'correct horse battery', newPassword: 'new long password 1' })
 check('change password', r.status === 200)
-r = await call(b, '/auth/refresh', {})
+r = await call(a, '/auth/refresh', {})
 check('other session signed out after change', r.status === 401)
-b.clear()
-r = await call(b, '/auth/login', { email, password: 'new long password 1' })
+a.clear()
+r = await call(a, '/auth/login', { email, password: 'new long password 1' })
 check('login with new password', r.status === 200)
 
-// Passkeys
+// Passkeys (email verified now)
 const device = new SoftAuthenticator()
 r = await call(a, '/auth/passkeys/register/options', {})
 check('passkey registration options', r.status === 200 && r.data.options?.rp?.id === RP_ID, `rp ${r.data.options?.rp?.id}`)
@@ -187,46 +205,68 @@ r = await call(guest, '/auth/me', undefined, 'GET')
 check('passkey session works', r.status === 200)
 r = await call(jar(), '/auth/passkeys/login/verify', { challengeId: loginChallenge, response: assertion })
 check('replayed assertion refused', r.status === 400 || r.status === 401, `status ${r.status}`)
-
 r = await call(jar(), '/auth/passkeys/login/options', {})
 r = await call(jar(), '/auth/passkeys/login/verify', {
   challengeId: r.data.challengeId,
   response: device.authenticate(r.data.options, { counter: 1 }),
 })
 check('cloned authenticator (counter went backwards) refused', r.status === 401, `status ${r.status}`)
-
 const stranger = new SoftAuthenticator()
 r = await call(jar(), '/auth/passkeys/login/options', {})
 r = await call(jar(), '/auth/passkeys/login/verify', { challengeId: r.data.challengeId, response: stranger.authenticate(r.data.options) })
 check('unknown passkey refused', r.status === 401, r.data.message)
-
 r = await call(a, '/auth/passkeys', undefined, 'GET')
 check('list passkeys', r.status === 200 && r.data.passkeys?.length === 1, r.data.passkeys?.[0]?.name)
-const passkeyId = r.data.passkeys?.[0]?.id
 
-// Sign-in link on an unverified account clears credentials set before it.
-r = await call(jar(), '/auth/start', { email })
-const token = decodeURIComponent(r.data.devLoginUrl.split('token=')[1])
-const linkSession = jar()
-r = await call(linkSession, '/auth/consume', { token })
-check('link sign-in resets pre-verification credentials', r.status === 200 && r.data.credentialsReset === true && r.data.user?.hasPassword === false)
-r = await call(linkSession, '/auth/passkeys', undefined, 'GET')
-check('passkeys removed', r.status === 200 && r.data.passkeys?.length === 0)
-r = await call(a, '/auth/refresh', {})
-check('older sessions revoked', r.status === 401)
+// Forgot / reset password
+r = await call(jar(), '/auth/password/forgot', { email: 'nobody@avarobe.test' })
+check('forgot for unknown email looks the same', r.status === 200 && r.data.ok === true && !r.data.devLink)
+r = await call(jar(), '/auth/password/forgot', { email })
+check('forgot password issues a reset link', r.status === 200 && Boolean(r.data.devLink))
+const resetToken = tokenOf(r.data.devLink)
+r = await call(jar(), '/auth/password/forgot', { email })
+check('second request within a minute sends nothing', r.status === 200 && !r.data.devLink)
+r = await call(jar(), '/auth/password/reset', { token: resetToken, newPassword: 'short' })
+check('weak new password rejected, link kept', r.status === 400, r.data.message)
+const resetSession = jar()
+r = await call(resetSession, '/auth/password/reset', { token: resetToken, newPassword: 'reset long password' })
+check('reset password', r.status === 200 && r.data.removedPasskeys === 1, `removed ${r.data.removedPasskeys}`)
+r = await call(jar(), '/auth/password/reset', { token: resetToken, newPassword: 'another reset pass' })
+check('reset link works once', r.status === 400)
+r = await call(guest, '/auth/refresh', {})
+check('all older sessions revoked by reset', r.status === 401)
+r = await call(resetSession, '/auth/passkeys', undefined, 'GET')
+check('passkeys removed by reset', r.status === 200 && r.data.passkeys?.length === 0)
+r = await call(jar(), '/auth/login', { email, password: 'reset long password' })
+check('login with reset password', r.status === 200)
 
-// Verified account keeps new credentials on later link sign-ins.
-r = await call(linkSession, '/auth/password', { newPassword: 'fresh long password' })
-check('set password without current one (none set)', r.status === 200 && r.data.user?.hasPassword === true)
-r = await call(jar(), '/auth/start', { email })
-r = await call(jar(), '/auth/consume', { token: decodeURIComponent(r.data.devLoginUrl.split('token=')[1]) })
-check('verified account keeps its password', r.status === 200 && r.data.credentialsReset === false && r.data.user?.hasPassword === true)
+// Passkey sign-up (email first)
+const passkeyEmail = `e2e-pk+${Date.now()}@avarobe.test`
+const pk = jar()
+r = await call(pk, '/auth/register/passkey', { email: passkeyEmail, firstName: 'Key' })
+check('passkey sign-up sends a confirmation link', r.status === 202 && Boolean(r.data.devLink), `status ${r.status}`)
+const passkeySignupLink = r.data.devLink
+r = await call(pk, '/auth/register/passkey', { email: passkeyEmail })
+check('repeat within a minute throttled', r.status === 429)
+r = await call(pk, '/auth/register/passkey', { email })
+check('passkey sign-up for an existing account refused', r.status === 409)
+r = await call(pk, '/auth/verify-email', { token: tokenOf(passkeySignupLink) })
+check('confirm link signs in with passkey intent', r.status === 200 && r.data.intent === 'passkey' && r.data.user?.emailVerified === true && r.data.user?.hasPassword === false)
+const pkDevice = new SoftAuthenticator()
+r = await call(pk, '/auth/passkeys/register/options', {})
+r = await call(pk, '/auth/passkeys/register/verify', { challengeId: r.data.challengeId, response: pkDevice.register(r.data.options) })
+check('first passkey created', r.status === 201)
+r = await call(jar(), '/auth/passkeys/login/options', {})
+r = await call(jar(), '/auth/passkeys/login/verify', { challengeId: r.data.challengeId, response: pkDevice.authenticate(r.data.options) })
+check('passkey-only account signs in', r.status === 200 && r.data.user?.email === passkeyEmail)
+r = await call(jar(), '/auth/register', { email: passkeyEmail, password: 'takeover attempt 1' })
+check('password sign-up cannot claim a verified passkey account', r.status === 409)
 
-r = await call(linkSession, `/auth/passkeys/${passkeyId}`, undefined, 'DELETE')
-check('deleting a removed passkey gives 404', r.status === 404)
-
-r = await call(linkSession, '/me', undefined, 'DELETE')
-check('cleanup: test account deleted', r.status === 200)
+// Cleanup
+r = await call(resetSession, '/me', undefined, 'DELETE')
+check('cleanup: password account deleted', r.status === 200)
+r = await call(pk, '/me', undefined, 'DELETE')
+check('cleanup: passkey account deleted', r.status === 200)
 
 const failed = results.filter((ok) => !ok).length
 console.log(`\n${results.length - failed}/${results.length} passed`)

@@ -18,7 +18,6 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(60),
-  LOGIN_LINK_TTL: z.string().default('30m'),
   COOKIE_DOMAIN: z.string().optional(),
   COOKIE_SECURE: z.enum(['true', 'false']).optional(),
   COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none']).default('lax'),
@@ -46,6 +45,10 @@ const envSchema = z.object({
   MAILERSEND_API_KEY: z.string().optional(),
   MAILERSEND_FROM_EMAIL: z.string().optional(),
   MAILERSEND_FROM_NAME: z.string().default('Avarobe'),
+  // Development only: addresses that receive real email (comma-separated).
+  EMAIL_DEV_ALLOWLIST: z.string().default(''),
+  VERIFY_EMAIL_TTL: z.string().default('24h'),
+  PASSWORD_RESET_TTL: z.string().default('1h'),
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(4),
   DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(12),
@@ -91,6 +94,9 @@ export const env = {
   S3_REGION: optionalTrimmed(raw.S3_REGION),
   MAILERSEND_API_KEY: optionalTrimmed(raw.MAILERSEND_API_KEY),
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
+  EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0),
 }
 
 if (env.STORAGE_DRIVER === 's3' && (!env.S3_BUCKET || !env.S3_REGION)) {

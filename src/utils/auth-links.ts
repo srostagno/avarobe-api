@@ -1,0 +1,103 @@
+import type { FastifyInstance } from 'fastify'
+
+import { env } from '../config/env.js'
+import type { UserDocument } from '../types/mongo.js'
+import { toObjectId } from './object-id.js'
+import { generateSecureToken, hashToken } from './tokens.js'
+
+// One-time links sent by email. The JWT carries a nonce whose hash is stored
+// on the user; using the link clears it, so each link works once and sending
+// a new one voids the previous.
+export type LinkPurpose = 'verify_email' | 'reset_password'
+
+const LINKS = {
+  verify_email: {
+    nonceField: 'emailVerificationNonceHash',
+    sentAtField: 'emailVerificationSentAt',
+    ttl: () => env.VERIFY_EMAIL_TTL,
+    path: '/verify-email',
+  },
+  reset_password: {
+    nonceField: 'passwordResetNonceHash',
+    sentAtField: 'passwordResetSentAt',
+    ttl: () => env.PASSWORD_RESET_TTL,
+    path: '/reset-password',
+  },
+} as const
+
+const RESEND_COOLDOWN_MS = 60 * 1000
+
+export type LinkPayload = {
+  typ?: string
+  sub?: string
+  em?: string
+  nn?: string
+  it?: string
+}
+
+export function linkSentRecently(user: UserDocument, purpose: LinkPurpose) {
+  const sentAt = user[LINKS[purpose].sentAtField]
+
+  return Boolean(sentAt && Date.now() - sentAt.getTime() < RESEND_COOLDOWN_MS)
+}
+
+export async function createLink(
+  app: FastifyInstance,
+  user: UserDocument,
+  purpose: LinkPurpose,
+  intent?: 'passkey',
+) {
+  const config = LINKS[purpose]
+  const nonce = generateSecureToken(24)
+
+  await app.collections.users.updateOne(
+    { _id: user._id },
+    { $set: { [config.nonceField]: hashToken(nonce), [config.sentAtField]: new Date() } },
+  )
+
+  const token = await app.jwt.sign(
+    {
+      typ: purpose,
+      sub: user._id.toString(),
+      em: user.email,
+      nn: nonce,
+      ...(intent ? { it: intent } : {}),
+    },
+    { expiresIn: config.ttl() },
+  )
+
+  return `${env.APP_URL}${config.path}?token=${encodeURIComponent(token)}`
+}
+
+// Checks signature, expiry and purpose without using up the link.
+export async function readLink(app: FastifyInstance, token: string, purpose: LinkPurpose) {
+  try {
+    const payload = await app.jwt.verify<LinkPayload>(token)
+
+    return payload.typ === purpose && payload.sub && payload.em && payload.nn ? payload : null
+  } catch {
+    return null
+  }
+}
+
+// Uses up the link atomically. Returns the user, or null when the link was
+// already used, replaced by a newer one, or the email changed.
+export async function consumeLink(
+  app: FastifyInstance,
+  payload: LinkPayload,
+  purpose: LinkPurpose,
+) {
+  const userId = toObjectId(payload.sub)
+
+  if (!userId || !payload.em || !payload.nn) {
+    return null
+  }
+
+  const field = LINKS[purpose].nonceField
+
+  return app.collections.users.findOneAndUpdate(
+    { _id: userId, email: payload.em, [field]: hashToken(payload.nn) },
+    { $set: { [field]: null } },
+    { returnDocument: 'after' },
+  )
+}

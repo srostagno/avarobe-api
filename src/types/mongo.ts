@@ -8,9 +8,12 @@ export type UserDocument = {
   updatedAt: Date
   lastLoginAt: Date | null
   emailVerifiedAt: Date | null
-  // Hash of the nonce in the latest sign-in link. Cleared when the link is
-  // used, so each link works once and a new link voids older ones.
-  loginNonceHash?: string | null
+  // Hashes of the nonce in the latest verification / reset link. Cleared when
+  // the link is used, so each link works once and a new one voids older ones.
+  emailVerificationNonceHash?: string | null
+  emailVerificationSentAt?: Date | null
+  passwordResetNonceHash?: string | null
+  passwordResetSentAt?: Date | null
   passwordHash?: string | null
   passwordUpdatedAt?: Date | null
   // Throttles password guessing per account on top of the per-IP rate limit.

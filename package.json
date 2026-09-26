@@ -38,12 +38,5 @@
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   },
-  "packageManager": "pnpm@10.29.2",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "argon2",
-      "esbuild",
-      "sharp"
-    ]
-  }
+  "packageManager": "pnpm@10.29.2"
 }

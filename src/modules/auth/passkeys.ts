@@ -18,6 +18,7 @@ import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AuthChallengeDocument, PasskeyDocument } from '../../types/mongo.js'
 import { issueAuthSession } from '../../utils/auth-session.js'
+import { passkeyAddedEmail, sendNotice } from '../../utils/email.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { toObjectId } from '../../utils/object-id.js'
@@ -26,6 +27,10 @@ import { generateSecureToken } from '../../utils/tokens.js'
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const MAX_PASSKEYS = 10
+const EMAIL_NOT_VERIFIED = {
+  message: 'Confirm your email before adding a passkey.',
+  code: 'email_not_verified',
+}
 
 // The browser's credential JSON; SimpleWebAuthn validates the details.
 const credentialSchema = z
@@ -133,6 +138,10 @@ const passkeyRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ message: 'Unauthorized' })
       }
 
+      if (!user.emailVerifiedAt) {
+        return reply.code(403).send(EMAIL_NOT_VERIFIED)
+      }
+
       const existing = await app.collections.passkeys.find({ userId: user._id }).toArray()
 
       if (existing.length >= MAX_PASSKEYS) {
@@ -164,12 +173,22 @@ const passkeyRoutes: FastifyPluginAsync = async (app) => {
     '/register/verify',
     { preHandler: authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const userId = requireUserId(request)
+      const user = await app.collections.users.findOne({ _id: requireUserId(request) })
       const parsed = parseBody(registerVerifySchema, request.body)
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Unauthorized' })
+      }
+
+      if (!user.emailVerifiedAt) {
+        return reply.code(403).send(EMAIL_NOT_VERIFIED)
+      }
 
       if (!parsed.ok) {
         return reply.code(400).send({ message: 'Invalid passkey response.' })
       }
+
+      const userId = user._id
 
       const challenge = await takeChallenge(app, parsed.data.challengeId, 'passkey_register', userId)
 
@@ -220,6 +239,16 @@ const passkeyRoutes: FastifyPluginAsync = async (app) => {
 
         throw error
       }
+
+      void sendNotice({
+        log: request.log,
+        to: { email: user.email, name: user.firstName },
+        content: passkeyAddedEmail({
+          firstName: user.firstName,
+          deviceName: passkey.name,
+          accountUrl: `${env.APP_URL}/studio/account`,
+        }),
+      })
 
       return reply.code(201).send({ passkey: serializePasskey(passkey) })
     },
