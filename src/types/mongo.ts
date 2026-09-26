@@ -28,6 +28,8 @@ export type UserDocument = {
   plus?: PlusSubscription | null
   // Avatar renders used without a Style Kit (create, redo, adjust).
   freeAvatarRuns?: number
+  // Admins (COMP_EMAILS) testing the app as a regular customer.
+  compPaused?: boolean
 }
 
 export type PlusSubscription = {

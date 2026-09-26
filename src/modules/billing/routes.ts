@@ -7,7 +7,7 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
-import { billingState, loadBillingUser } from './entitlements.js'
+import { billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
@@ -30,6 +30,8 @@ const checkoutSchema = z.object({
     .regex(/^\/studio(\/[\w\-/]*)?$/)
     .default('/studio'),
 })
+
+const previewSchema = z.object({ asCustomer: z.boolean() })
 
 const confirmSchema = z.object({
   sessionId: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/),
@@ -161,6 +163,55 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
     },
   )
+
+  // Admins only: see the app as a customer (free Kit off), and wipe their own
+  // test purchases to walk through the free flow again.
+  app.post('/admin/preview', { preHandler: authenticate }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const parsed = parseBody(previewSchema, request.body)
+    const user = await loadBillingUser(app, userId)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    if (!user || !isAdmin(user)) {
+      return reply.code(403).send({ message: 'Only admins can do this.' })
+    }
+
+    const updated = await app.collections.users.findOneAndUpdate(
+      { _id: userId },
+      { $set: { compPaused: parsed.data.asCustomer, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+
+    return { user: updated ? serializeUser(updated) : null }
+  })
+
+  app.post('/admin/reset', { preHandler: authenticate }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const user = await loadBillingUser(app, userId)
+
+    if (!user || !isAdmin(user)) {
+      return reply.code(403).send({ message: 'Only admins can do this.' })
+    }
+
+    // A live subscription would put Plus back on its next invoice.
+    if (billingState(user).plusActive && !user.plus?.cancelAtPeriodEnd) {
+      return reply.code(409).send({ message: 'Cancel Plus first, then reset.' })
+    }
+
+    const updated = await app.collections.users.findOneAndUpdate(
+      { _id: userId },
+      {
+        $unset: { credits: '', styleKitUntil: '', colorReportAt: '', plus: '', freeAvatarRuns: '' },
+        $set: { updatedAt: new Date() },
+      },
+      { returnDocument: 'after' },
+    )
+
+    return { user: updated ? serializeUser(updated) : null }
+  })
 
   // Plus: cancel at the end of the paid period, or keep it after all.
   for (const [path, cancel] of [

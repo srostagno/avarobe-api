@@ -30,8 +30,12 @@ const compEmails = () =>
 
 type BillingFields = Pick<
   UserDocument,
-  'email' | 'credits' | 'styleKitUntil' | 'colorReportAt' | 'plus' | 'freeAvatarRuns'
+  'email' | 'credits' | 'styleKitUntil' | 'colorReportAt' | 'plus' | 'freeAvatarRuns' | 'compPaused'
 >
+
+export function isAdmin(user: Pick<UserDocument, 'email'>) {
+  return compEmails().has(user.email.toLowerCase())
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000
 // A failed renewal gets a few days while Stripe retries the card.
@@ -40,7 +44,9 @@ const PLUS_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due'])
 
 export function billingState(user: BillingFields) {
   const now = Date.now()
-  const comp = compEmails().has(user.email.toLowerCase())
+  const admin = isAdmin(user)
+  // An admin can switch the free Kit off to see the app as a customer does.
+  const comp = admin && !user.compPaused
   const kitUntil = user.styleKitUntil ?? null
   const plus = user.plus ?? null
   const plusActive = Boolean(
@@ -54,6 +60,7 @@ export function billingState(user: BillingFields) {
     colorReportAt && !everHadKit ? new Date(colorReportAt.getTime() + env.KIT_UPGRADE_WINDOW_DAYS * DAY_MS) : null
 
   return {
+    admin,
     comp,
     kitActive,
     kitUntil,
@@ -89,10 +96,20 @@ export function serializeBilling(user: BillingFields) {
     credits: state.credits,
     unlimited: state.comp,
     freeAvatarRunsLeft: state.freeAvatarRunsLeft,
+    admin: state.admin,
+    testingAsCustomer: state.admin && !state.comp,
   }
 }
 
-const BILLING_PROJECTION = { email: 1, credits: 1, styleKitUntil: 1, colorReportAt: 1, plus: 1, freeAvatarRuns: 1 }
+const BILLING_PROJECTION = {
+  email: 1,
+  credits: 1,
+  styleKitUntil: 1,
+  colorReportAt: 1,
+  plus: 1,
+  freeAvatarRuns: 1,
+  compPaused: 1,
+}
 
 export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {
   return app.collections.users.findOne({ _id: userId }, { projection: BILLING_PROJECTION })
