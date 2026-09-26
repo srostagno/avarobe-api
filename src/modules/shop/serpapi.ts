@@ -23,13 +23,19 @@ export function shopSearchConfigured() {
 }
 
 // Each "show more" runs the next pass once the cached results run out:
-// shopping results for the photo, the same refined with the garment's name,
-// then broader visual matches.
+// shopping results for the photo refined with the garment's name (and
+// men's/women's, which the photo alone can't tell), the photo alone, then
+// broader visual matches.
 export const SEARCH_PASSES = [
-  { type: 'products', withQuery: false },
   { type: 'products', withQuery: true },
+  { type: 'products', withQuery: false },
   { type: 'visual_matches', withQuery: false },
 ] as const
+
+const DEPARTMENT: Record<string, string> = {
+  menswear: "men's",
+  womenswear: "women's",
+}
 
 const uploads = new Map<string, { imageId: string; at: number }>()
 
@@ -128,6 +134,7 @@ export async function searchPiece(input: {
   piece: LookPiece
   image: Buffer
   market: Market
+  presentation: string | null
   pass: number
 }): Promise<ShopMatch[]> {
   if (!env.SERPAPI_API_KEY) {
@@ -154,7 +161,8 @@ export async function searchPiece(input: {
   }
 
   if (pass.withQuery) {
-    params.set('q', `${input.piece.color} ${input.piece.name}`.toLowerCase())
+    const department = input.presentation ? DEPARTMENT[input.presentation] : undefined
+    params.set('q', [department, input.piece.color, input.piece.name].filter(Boolean).join(' ').toLowerCase())
   }
 
   const response = await fetch(`${SERPAPI_URL}/search.json?${params.toString()}`, {

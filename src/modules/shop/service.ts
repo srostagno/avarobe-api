@@ -38,6 +38,7 @@ export async function findPieceMatches(
   const market = marketById(input.marketId)
   const filter = { userId: input.userId, lookId: input.look._id, pieceId: input.piece.id, market: market.id }
   let search = await app.collections.shopSearches.findOne(filter)
+  let presentation: string | null | undefined
   const visible = (results: ShopMatch[]) =>
     results.filter((match) => isStore(match) && (!input.localOnly || isLocalStore(match, market)))
 
@@ -63,10 +64,19 @@ export async function findPieceMatches(
     let found: ShopMatch[]
 
     try {
+      if (presentation === undefined) {
+        const avatar = await app.collections.avatars.findOne(
+          { _id: input.look.avatarId },
+          { projection: { 'body.presentation': 1 } },
+        )
+        presentation = avatar?.body.presentation ?? null
+      }
+
       found = await searchPiece({
         piece: input.piece,
         image: await storage.read(input.piece.imageKey ?? ''),
         market,
+        presentation,
         pass,
       })
     } catch (error) {
