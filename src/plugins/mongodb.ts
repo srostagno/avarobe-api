@@ -10,6 +10,7 @@ import type {
   LookDocument,
   PasskeyDocument,
   RefreshTokenDocument,
+  ShopSearchDocument,
   UsageCounterDocument,
   UserDocument,
 } from '../types/mongo.js'
@@ -23,6 +24,7 @@ export type MongoCollections = {
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
   authChallenges: Collection<AuthChallengeDocument>
+  shopSearches: Collection<ShopSearchDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -39,6 +41,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
     authChallenges: mongoDb.collection<AuthChallengeDocument>('auth_challenges'),
+    shopSearches: mongoDb.collection<ShopSearchDocument>('shop_searches'),
   }
 }
 
@@ -65,6 +68,14 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.passkeys.createIndex({ credentialId: 1 }, { unique: true }),
     collections.passkeys.createIndex({ userId: 1 }),
     collections.authChallenges.createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0 },
+    ),
+    collections.shopSearches.createIndex(
+      { userId: 1, lookId: 1, pieceId: 1, market: 1 },
+      { unique: true },
+    ),
+    collections.shopSearches.createIndex(
       { expiresAt: 1 },
       { expireAfterSeconds: 0 },
     ),

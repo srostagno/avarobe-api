@@ -52,6 +52,11 @@ const envSchema = z.object({
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
   DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(12),
+  // Looks broken down into separate piece photos, and store searches.
+  DAILY_PIECES_LIMIT: z.coerce.number().int().min(1).max(100).default(6),
+  DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
+  // SerpApi runs the Google Lens searches behind "Find it in stores".
+  SERPAPI_API_KEY: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)

@@ -160,6 +160,22 @@ export type LookItem = {
   colorHex: string
   material: string
   fit: string
+  // Try-ons: false for pieces the stylist added to complete the outfit.
+  fromPhoto?: boolean
+}
+
+// One garment of a look, rendered on its own as a product photo (no person),
+// so it can be searched in stores.
+export type LookPiece = {
+  id: string
+  slot: LookItemSlot
+  name: string
+  color: string
+  colorHex: string
+  material: string
+  fit: string
+  status: GenerationStatus
+  imageKey: string | null
 }
 
 export type LookPlan = {
@@ -182,10 +198,14 @@ export type LookDocument = {
     summary: string
   }
   plan: LookPlan
+  // 'tryon': rendered from an outfit photo the person uploaded.
+  source?: 'stylist' | 'tryon'
+  referenceKey?: string | null
   status: GenerationStatus
   error: string | null
   imageKey: string | null
   previewKey?: string | null
+  pieces?: LookPiece[]
   collectionIds: ObjectId[]
   favorite: boolean
   createdAt: Date
@@ -201,11 +221,43 @@ export type CollectionDocument = {
   updatedAt: Date
 }
 
+export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop'
+
 export type UsageCounterDocument = {
   _id: string
   userId: ObjectId
-  kind: 'avatar' | 'look'
+  kind: UsageKind
   day: string
   count: number
   expireAt: Date
+}
+
+export type ShopMatch = {
+  title: string
+  link: string
+  domain: string
+  source: string
+  sourceIcon: string | null
+  thumbnail: string | null
+  price: string | null
+  extractedPrice: number | null
+  currency: string | null
+  inStock: boolean | null
+}
+
+// Store matches for one piece in one market, cached so "show more" pages
+// through what we already paid for before running another search.
+export type ShopSearchDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  lookId: ObjectId
+  pieceId: string
+  market: string
+  results: ShopMatch[]
+  // How many of the search passes (see shop/serpapi.ts) have run.
+  passes: number
+  exhausted: boolean
+  createdAt: Date
+  updatedAt: Date
+  expiresAt: Date
 }

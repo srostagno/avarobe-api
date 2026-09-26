@@ -1,20 +1,27 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
-import type { AvatarDocument, LookItem, LookPlan } from '../../types/mongo.js'
+import type { AvatarDocument, LookDocument, LookItem, LookPiece, LookPlan } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
 import {
+  type ImageInput,
   createStructuredResponse,
   generateImageFromReferences,
+  toDataUrl,
 } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
+  TRY_ON_INSTRUCTIONS,
   buildLookPlanRequest,
   buildLookRenderPrompt,
+  buildPiecePrompt,
+  buildTryOnRenderPrompt,
+  buildTryOnRequest,
   lookPlanSchema,
+  tryOnAnalysisSchema,
 } from './prompts.js'
 
 const HEX_PATTERN = /^#[0-9a-f]{6}$/i
@@ -72,6 +79,47 @@ export async function planLooks(input: {
   }
 }
 
+type TryOnAnalysis = Omit<LookPlan, 'items'> & {
+  hasOutfit: boolean
+  dressCode: string
+  items: (LookItem & { fromPhoto: boolean })[]
+}
+
+export class NoOutfitError extends Error {}
+
+// Reads the outfit in an uploaded photo into a look plan for this person.
+export async function analyzeOutfit(input: {
+  avatar: AvatarDocument
+  photo: Buffer
+  notes: string | null
+}) {
+  const response = await createStructuredResponse<TryOnAnalysis>({
+    instructions: TRY_ON_INSTRUCTIONS,
+    content: [
+      { type: 'input_text', text: buildTryOnRequest(input.avatar, input.notes) },
+      { type: 'input_image', image_url: toDataUrl(input.photo, 'image/jpeg'), detail: 'high' },
+    ],
+    schemaName: 'try_on',
+    schema: tryOnAnalysisSchema,
+    timeoutMs: 120_000,
+  })
+
+  if (!response.hasOutfit || response.items.length === 0) {
+    throw new NoOutfitError('We could not find an outfit in that photo.')
+  }
+
+  const plan: LookPlan = {
+    title: response.title.trim(),
+    vibe: response.vibe,
+    summary: response.summary.trim(),
+    whyItWorks: response.whyItWorks.trim(),
+    items: response.items.slice(0, 8).map((item) => ({ ...cleanItem(item), fromPhoto: item.fromPhoto })),
+    stylingTips: response.stylingTips.slice(0, 3),
+  }
+
+  return { dressCode: response.dressCode.trim(), plan }
+}
+
 async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
   const look = await app.collections.looks.findOneAndUpdate(
     { _id: lookId, status: 'processing' },
@@ -104,20 +152,28 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     return
   }
 
-  const [avatarImage, selfie] = await Promise.all([
+  const [avatarImage, selfie, reference] = await Promise.all([
     storage.read(avatar.avatarKey),
     storage.read(avatar.selfieKey),
+    look.referenceKey ? storage.read(look.referenceKey) : Promise.resolve(null),
   ])
+  const images: ImageInput[] = [
+    { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
+    { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
+  ]
+
+  if (reference) {
+    images.push({ data: reference, filename: 'outfit.jpg', contentType: 'image/jpeg' })
+  }
 
   const previewKey = `users/${look.userId.toString()}/look-${look._id.toString()}-preview.webp`
 
   try {
     const png = await generateImageFromReferences({
-      images: [
-        { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
-        { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
-      ],
-      prompt: buildLookRenderPrompt(look.plan, look.occasion.text),
+      images,
+      prompt: reference
+        ? buildTryOnRenderPrompt(look.plan)
+        : buildLookRenderPrompt(look.plan, look.occasion.text),
       // Previews let the card show the look forming instead of a shimmer.
       onPartial: async (partial) => {
         await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')
@@ -162,5 +218,109 @@ export function startLookRender(app: FastifyInstance, lookId: ObjectId) {
   void runLookRender(app, lookId).catch(async (error: unknown) => {
     app.log.error({ err: error, lookId: lookId.toString() }, 'Look render crashed')
     await markLookFailed(app, lookId).catch(() => undefined)
+  })
+}
+
+// Every file a look owns in storage.
+export function lookStorageKeys(
+  look: Pick<LookDocument, 'imageKey' | 'previewKey' | 'referenceKey' | 'pieces'>,
+) {
+  return [
+    look.imageKey,
+    look.previewKey,
+    look.referenceKey,
+    ...(look.pieces ?? []).map((piece) => piece.imageKey),
+  ].filter((key): key is string => Boolean(key))
+}
+
+const PIECE_CONCURRENCY = 3
+
+async function setPieceStatus(
+  app: FastifyInstance,
+  lookId: ObjectId,
+  pieceId: string,
+  update: Pick<LookPiece, 'status' | 'imageKey'>,
+) {
+  return app.collections.looks.updateOne(
+    { _id: lookId, 'pieces.id': pieceId },
+    {
+      $set: {
+        'pieces.$.status': update.status,
+        'pieces.$.imageKey': update.imageKey,
+        updatedAt: new Date(),
+      },
+    },
+  )
+}
+
+async function renderPiece(
+  app: FastifyInstance,
+  look: LookDocument,
+  piece: LookPiece,
+  references: ImageInput[],
+) {
+  try {
+    const png = await generateImageFromReferences({
+      images: references,
+      prompt: buildPiecePrompt(piece, references.length > 1),
+      size: '1024x1024',
+    })
+    const key = `users/${look.userId.toString()}/look-${look._id.toString()}-piece-${piece.id}.webp`
+
+    await storage.put(key, await toStoredWebp(png), 'image/webp')
+
+    const result = await setPieceStatus(app, look._id, piece.id, { status: 'ready', imageKey: key })
+
+    if (result.matchedCount === 0) {
+      await storage.remove(key).catch(() => undefined)
+    }
+  } catch (error) {
+    app.log.error(
+      { lookId: look._id.toString(), pieceId: piece.id, err: errorMessage(error) },
+      'Piece render failed',
+    )
+    await setPieceStatus(app, look._id, piece.id, { status: 'failed', imageKey: null })
+  }
+}
+
+// Renders the given pieces as separate product photos, a few at a time.
+export async function runPieceRenders(app: FastifyInstance, lookId: ObjectId, pieceIds: string[]) {
+  const look = await app.collections.looks.findOne({ _id: lookId })
+
+  if (!look?.imageKey) {
+    return
+  }
+
+  const [lookImage, reference] = await Promise.all([
+    storage.read(look.imageKey),
+    look.referenceKey ? storage.read(look.referenceKey) : Promise.resolve(null),
+  ])
+  const references: ImageInput[] = [{ data: lookImage, filename: 'look.webp', contentType: 'image/webp' }]
+
+  if (reference) {
+    references.push({ data: reference, filename: 'outfit.jpg', contentType: 'image/jpeg' })
+  }
+
+  const queue = (look.pieces ?? []).filter((piece) => pieceIds.includes(piece.id))
+
+  await Promise.all(
+    Array.from({ length: PIECE_CONCURRENCY }, async () => {
+      for (let piece = queue.shift(); piece; piece = queue.shift()) {
+        await renderPiece(app, look, piece, references)
+      }
+    }),
+  )
+}
+
+export function startPieceRenders(app: FastifyInstance, lookId: ObjectId, pieceIds: string[]) {
+  void runPieceRenders(app, lookId, pieceIds).catch((error: unknown) => {
+    app.log.error({ err: error, lookId: lookId.toString() }, 'Piece renders crashed')
+    void app.collections.looks
+      .updateOne(
+        { _id: lookId },
+        { $set: { 'pieces.$[piece].status': 'failed', updatedAt: new Date() } },
+        { arrayFilters: [{ 'piece.status': 'processing', 'piece.id': { $in: pieceIds } }] },
+      )
+      .catch(() => undefined)
   })
 }

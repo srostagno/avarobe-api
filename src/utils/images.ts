@@ -63,6 +63,34 @@ export async function normalizeBodyPhoto(input: Buffer) {
     .toBuffer()
 }
 
+// Outfit photos for try-ons: screenshots from stores, Pinterest, a friend's
+// photo. Only the clothes matter, so they can be smaller than a selfie.
+export async function normalizeOutfitPhoto(input: Buffer) {
+  let image: sharp.Sharp
+
+  try {
+    image = sharp(input, { failOn: 'error' }).rotate()
+  } catch {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  const metadata = await image.metadata().catch(() => null)
+
+  if (!metadata?.width || !metadata.height) {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  if (Math.min(metadata.width, metadata.height) < 256) {
+    throw new InvalidImageError('The photo is too small. Use one at least 256px on each side.')
+  }
+
+  return image
+    .resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: 88, mozjpeg: true })
+    .toBuffer()
+}
+
 // Small, quick-to-load version of an in-progress render.
 export async function toPreviewWebp(png: Buffer) {
   return sharp(png).resize({ width: 512 }).webp({ quality: 70 }).toBuffer()

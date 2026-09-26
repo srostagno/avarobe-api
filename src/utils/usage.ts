@@ -2,12 +2,18 @@ import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import { env } from '../config/env.js'
+import type { UsageKind } from '../types/mongo.js'
 import { isDuplicateKeyError } from './mongo-errors.js'
 
-type UsageKind = 'avatar' | 'look'
+const LIMITS: Record<UsageKind, () => number> = {
+  avatar: () => env.DAILY_AVATAR_LIMIT,
+  look: () => env.DAILY_LOOK_LIMIT,
+  pieces: () => env.DAILY_PIECES_LIMIT,
+  shop: () => env.DAILY_SHOP_SEARCH_LIMIT,
+}
 
 function limitFor(kind: UsageKind) {
-  return kind === 'avatar' ? env.DAILY_AVATAR_LIMIT : env.DAILY_LOOK_LIMIT
+  return LIMITS[kind]()
 }
 
 function counterId(userId: ObjectId, kind: UsageKind, day: string) {

@@ -6,6 +6,7 @@ import { clearAuthCookies } from '../../utils/auth-session.js'
 import { parseBody } from '../../utils/http.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
+import { lookStorageKeys } from '../looks/service.js'
 
 const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
@@ -41,7 +42,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     const [avatar, looks] = await Promise.all([
       app.collections.avatars.findOne({ userId }),
       app.collections.looks
-        .find({ userId }, { projection: { imageKey: 1, previewKey: 1 } })
+        .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1 } })
         .toArray(),
     ])
     const keys = [
@@ -52,7 +53,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
           avatar?.avatarKey,
           avatar?.job?.previewKey,
           ...(avatar?.versions ?? []).map((version) => version.key),
-          ...looks.flatMap((look) => [look.imageKey, look.previewKey]),
+          ...looks.flatMap(lookStorageKeys),
         ].filter((key): key is string => Boolean(key)),
       ),
     ]
@@ -66,6 +67,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       app.collections.usageCounters.deleteMany({ userId }),
       app.collections.passkeys.deleteMany({ userId }),
       app.collections.authChallenges.deleteMany({ userId }),
+      app.collections.shopSearches.deleteMany({ userId }),
     ])
     await app.collections.users.deleteOne({ _id: userId })
 
