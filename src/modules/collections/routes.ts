@@ -8,6 +8,7 @@ import type { CollectionDocument } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { serializeCollection, serializeLook } from '../../utils/serializers.js'
+import { storage } from '../../utils/storage.js'
 
 const MAX_COLLECTIONS = 50
 
@@ -142,22 +143,41 @@ const collectionRoutes: FastifyPluginAsync = async (app) => {
     return { collection: await summarize(app, collection) }
   })
 
-  // Deleting a collection keeps its looks; they just leave the collection.
+  // By default the looks stay in the studio and just leave the collection.
+  // `?withLooks=true` deletes them too (also from any other collection).
   app.delete('/:id', async (request, reply) => {
     const userId = requireUserId(request)
     const collection = await findOwned(app, userId, (request.params as { id?: string }).id)
+    const withLooks = (request.query as { withLooks?: string }).withLooks === 'true'
 
     if (!collection) {
       return reply.code(404).send({ message: 'Collection not found.' })
     }
 
     await app.collections.collections.deleteOne({ _id: collection._id })
-    await app.collections.looks.updateMany(
-      { userId, collectionIds: collection._id },
-      { $pull: { collectionIds: collection._id } },
+
+    if (!withLooks) {
+      await app.collections.looks.updateMany(
+        { userId, collectionIds: collection._id },
+        { $pull: { collectionIds: collection._id } },
+      )
+
+      return { ok: true, deletedLooks: 0 }
+    }
+
+    const looks = await app.collections.looks
+      .find({ userId, collectionIds: collection._id }, { projection: { imageKey: 1, previewKey: 1 } })
+      .toArray()
+
+    await app.collections.looks.deleteMany({ _id: { $in: looks.map((look) => look._id) }, userId })
+    await Promise.all(
+      looks
+        .flatMap((look) => [look.imageKey, look.previewKey])
+        .filter((key): key is string => Boolean(key))
+        .map((key) => storage.remove(key).catch(() => undefined)),
     )
 
-    return { ok: true }
+    return { ok: true, deletedLooks: looks.length }
   })
 
   app.post('/:id/looks', async (request, reply) => {

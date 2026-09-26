@@ -245,9 +245,11 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Look not found.' })
     }
 
-    if (look.imageKey) {
-      await storage.remove(look.imageKey).catch(() => undefined)
-    }
+    await Promise.all(
+      [look.imageKey, look.previewKey]
+        .filter((key): key is string => Boolean(key))
+        .map((key) => storage.remove(key).catch(() => undefined)),
+    )
 
     return { ok: true }
   })

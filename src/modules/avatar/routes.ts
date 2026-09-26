@@ -313,6 +313,75 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     return { avatar: avatar ? await serializeAvatar(avatar) : null }
   })
 
+  // Deletes one version. Deleting the one in use switches to the newest
+  // remaining version; the last version can't go (delete the avatar instead).
+  app.delete('/versions/:id', async (request, reply) => {
+    const userId = requireUserId(request)
+    const versionId = (request.params as { id?: string }).id
+    const existing = await app.collections.avatars.findOne({ userId })
+    const versions = existing?.versions ?? []
+    const version = versions.find((item) => item.id === versionId)
+
+    if (!existing || !version) {
+      return reply.code(404).send({ message: 'Version not found.' })
+    }
+
+    if (existing.status === 'processing') {
+      return reply.code(409).send({ message: 'Wait until your avatar is ready.' })
+    }
+
+    const remaining = versions.filter((item) => item.id !== version.id)
+
+    if (remaining.length === 0) {
+      return reply.code(409).send({
+        message: 'This is your only avatar version. Delete the whole avatar to start over.',
+      })
+    }
+
+    const avatarKey = existing.avatarKey === version.key ? remaining[0]?.key ?? null : existing.avatarKey
+    const avatar = await app.collections.avatars.findOneAndUpdate(
+      { _id: existing._id },
+      { $set: { versions: remaining, avatarKey, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+
+    await storage.remove(version.key).catch(() => undefined)
+
+    return { avatar: avatar ? await serializeAvatar(avatar) : null }
+  })
+
+  // Deletes the avatar, every version and the photos behind it. Looks keep
+  // their images; styling new ones needs a new avatar.
+  app.delete('/', async (request, reply) => {
+    const userId = requireUserId(request)
+    const existing = await app.collections.avatars.findOne({ userId })
+
+    if (!existing) {
+      return reply.code(404).send({ message: 'There is no avatar to delete.' })
+    }
+
+    if (existing.status === 'processing') {
+      return reply.code(409).send({ message: 'Wait until your avatar is ready.' })
+    }
+
+    const keys = [
+      ...new Set(
+        [
+          existing.selfieKey,
+          existing.bodyPhotoKey,
+          existing.avatarKey,
+          existing.job?.previewKey,
+          ...(existing.versions ?? []).map((version) => version.key),
+        ].filter((key): key is string => Boolean(key)),
+      ),
+    ]
+
+    await app.collections.avatars.deleteOne({ _id: existing._id })
+    await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
+
+    return { ok: true }
+  })
+
   app.delete('/body-photo', async (request, reply) => {
     const userId = requireUserId(request)
     const existing = await app.collections.avatars.findOne({ userId })
