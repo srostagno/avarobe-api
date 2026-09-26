@@ -57,6 +57,8 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       app.collections.avatars.deleteMany({ userId }),
       app.collections.refreshTokens.deleteMany({ userId }),
       app.collections.usageCounters.deleteMany({ userId }),
+      app.collections.passkeys.deleteMany({ userId }),
+      app.collections.authChallenges.deleteMany({ userId }),
     ])
     await app.collections.users.deleteOne({ _id: userId })
 

@@ -4,9 +4,11 @@ import fp from 'fastify-plugin'
 
 import { env } from '../config/env.js'
 import type {
+  AuthChallengeDocument,
   AvatarDocument,
   CollectionDocument,
   LookDocument,
+  PasskeyDocument,
   RefreshTokenDocument,
   UsageCounterDocument,
   UserDocument,
@@ -19,6 +21,8 @@ export type MongoCollections = {
   looks: Collection<LookDocument>
   collections: Collection<CollectionDocument>
   usageCounters: Collection<UsageCounterDocument>
+  passkeys: Collection<PasskeyDocument>
+  authChallenges: Collection<AuthChallengeDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -33,6 +37,8 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     looks: mongoDb.collection<LookDocument>('looks'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
+    passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
+    authChallenges: mongoDb.collection<AuthChallengeDocument>('auth_challenges'),
   }
 }
 
@@ -54,6 +60,12 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
+      { expireAfterSeconds: 0 },
+    ),
+    collections.passkeys.createIndex({ credentialId: 1 }, { unique: true }),
+    collections.passkeys.createIndex({ userId: 1 }),
+    collections.authChallenges.createIndex(
+      { expiresAt: 1 },
       { expireAfterSeconds: 0 },
     ),
   ])

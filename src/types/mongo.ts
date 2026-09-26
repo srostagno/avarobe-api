@@ -1,4 +1,4 @@
-import type { ObjectId } from 'mongodb'
+import type { Binary, ObjectId } from 'mongodb'
 
 export type UserDocument = {
   _id: ObjectId
@@ -11,6 +11,35 @@ export type UserDocument = {
   // Hash of the nonce in the latest sign-in link. Cleared when the link is
   // used, so each link works once and a new link voids older ones.
   loginNonceHash?: string | null
+  passwordHash?: string | null
+  passwordUpdatedAt?: Date | null
+  // Throttles password guessing per account on top of the per-IP rate limit.
+  failedLoginCount?: number
+  lockedUntil?: Date | null
+}
+
+// A WebAuthn credential (passkey). The private key stays on the person's
+// device; we only keep the public key and the signature counter.
+export type PasskeyDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  credentialId: string
+  publicKey: Binary
+  counter: number
+  transports: string[]
+  deviceType: 'singleDevice' | 'multiDevice'
+  backedUp: boolean
+  name: string
+  createdAt: Date
+  lastUsedAt: Date | null
+}
+
+export type AuthChallengeDocument = {
+  _id: string
+  purpose: 'passkey_register' | 'passkey_login'
+  userId: ObjectId | null
+  challenge: string
+  expiresAt: Date
 }
 
 export type RefreshTokenDocument = {

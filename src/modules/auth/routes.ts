@@ -14,6 +14,13 @@ import { buildLoginLinkEmail, canSendEmail, sendTransactionalEmail } from '../..
 import { parseBody } from '../../utils/http.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { toObjectId } from '../../utils/object-id.js'
+import {
+  burnPasswordCheck,
+  hashPassword,
+  MAX_PASSWORD_LENGTH,
+  passwordProblem,
+  verifyPassword,
+} from '../../utils/password.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { generateSecureToken, hashToken } from '../../utils/tokens.js'
 
@@ -34,6 +41,28 @@ const startSchema = z.object({
 const consumeSchema = z.object({
   token: z.string().min(20).max(2_000),
 })
+
+const emailField = z.string().trim().toLowerCase().email().max(254)
+const passwordField = z.string().min(1).max(MAX_PASSWORD_LENGTH)
+
+const registerSchema = z.object({
+  email: emailField,
+  password: passwordField,
+  firstName: z.string().trim().max(60).optional(),
+})
+
+const loginSchema = z.object({
+  email: emailField,
+  password: passwordField,
+})
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().max(MAX_PASSWORD_LENGTH).optional(),
+  newPassword: passwordField,
+})
+
+const MAX_FAILED_LOGINS = 10
+const LOCKOUT_MS = 15 * 60 * 1000
 
 // Only same-site paths, never protocol-relative URLs.
 function normalizeRedirectPath(value: string | null | undefined) {
@@ -182,11 +211,33 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send(invalid)
       }
 
+      let credentialsReset = false
+
       if (!user.emailVerifiedAt) {
+        // First proof that this person owns the email. A password or passkey
+        // added before that could belong to someone who signed up with an
+        // email that isn't theirs, so drop them and end other sessions.
+        const passkeyCount = await app.collections.passkeys.countDocuments({ userId: user._id })
+
+        credentialsReset = Boolean(user.passwordHash) || passkeyCount > 0
+
+        if (credentialsReset) {
+          await app.collections.passkeys.deleteMany({ userId: user._id })
+          await app.collections.refreshTokens.updateMany(
+            { userId: user._id, revokedAt: null },
+            { $set: { revokedAt: now } },
+          )
+          request.log.warn(
+            { userId: user._id.toString() },
+            'Cleared credentials set before the email was verified',
+          )
+        }
+
         await app.collections.users.updateOne(
           { _id: user._id },
-          { $set: { emailVerifiedAt: now } },
+          { $set: { emailVerifiedAt: now, passwordHash: null, passwordUpdatedAt: null } },
         )
+        user.passwordHash = null
       }
       await issueAuthSession(app, reply, request, {
         id: user._id.toString(),
@@ -196,7 +247,207 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.send({
         user: serializeUser(user),
         redirectPath: normalizeRedirectPath(payload.rp),
+        credentialsReset,
       })
+    },
+  )
+
+  // Creates an account with email and password. A stub account left by an
+  // unused sign-in link (never logged in, no password) can be claimed.
+  app.post(
+    '/register',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(registerSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a valid email and password.' })
+      }
+
+      const { email, password } = parsed.data
+      const problem = passwordProblem(password, email)
+
+      if (problem) {
+        return reply.code(400).send({ message: problem })
+      }
+
+      const firstName = parsed.data.firstName ?? ''
+      const passwordHash = await hashPassword(password)
+      const now = new Date()
+      const existing = await app.collections.users.findOne({ email })
+      let userId: ObjectId
+
+      if (existing) {
+        if (existing.passwordHash || existing.lastLoginAt) {
+          return reply
+            .code(409)
+            .send({ message: 'An account with this email already exists. Sign in instead.' })
+        }
+
+        await app.collections.users.updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              passwordHash,
+              passwordUpdatedAt: now,
+              lastLoginAt: now,
+              updatedAt: now,
+              ...(existing.firstName ? {} : { firstName }),
+            },
+          },
+        )
+        userId = existing._id
+      } else {
+        userId = new ObjectId()
+
+        try {
+          await app.collections.users.insertOne({
+            _id: userId,
+            email,
+            firstName,
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+            emailVerifiedAt: null,
+            passwordHash,
+            passwordUpdatedAt: now,
+          })
+        } catch (error) {
+          if (isDuplicateKeyError(error)) {
+            return reply
+              .code(409)
+              .send({ message: 'An account with this email already exists. Sign in instead.' })
+          }
+
+          throw error
+        }
+      }
+
+      const user = await app.collections.users.findOne({ _id: userId })
+
+      if (!user) {
+        return reply.code(500).send({ message: 'Could not create your account.' })
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+
+      return reply.code(201).send({ user: serializeUser(user) })
+    },
+  )
+
+  app.post(
+    '/login',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(loginSchema, request.body)
+      const wrong = { message: 'Email or password is incorrect.' }
+
+      if (!parsed.ok) {
+        return reply.code(400).send(wrong)
+      }
+
+      const { email, password } = parsed.data
+      const user = await app.collections.users.findOne({ email })
+
+      if (!user?.passwordHash) {
+        await burnPasswordCheck(password)
+        return reply.code(401).send(wrong)
+      }
+
+      if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+        return reply
+          .code(429)
+          .send({ message: 'Too many attempts. Try again in a few minutes or use a sign-in link.' })
+      }
+
+      if (!(await verifyPassword(password, user.passwordHash))) {
+        const failures = (user.failedLoginCount ?? 0) + 1
+        const locked = failures >= MAX_FAILED_LOGINS
+
+        await app.collections.users.updateOne(
+          { _id: user._id },
+          {
+            $set: locked
+              ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_MS) }
+              : { failedLoginCount: failures },
+          },
+        )
+        request.log.warn({ userId: user._id.toString(), failures, locked }, 'Failed password login')
+
+        return reply.code(401).send(wrong)
+      }
+
+      const now = new Date()
+
+      await app.collections.users.updateOne(
+        { _id: user._id },
+        { $set: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now, updatedAt: now } },
+      )
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+
+      return reply.send({ user: serializeUser(user) })
+    },
+  )
+
+  // Sets or changes the password. Changing requires the current one; other
+  // sessions are signed out.
+  app.post(
+    '/password',
+    { preHandler: authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(changePasswordSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a new password.' })
+      }
+
+      const user = await app.collections.users.findOne({ _id: requireUserId(request) })
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Unauthorized' })
+      }
+
+      if (user.passwordHash) {
+        const current = parsed.data.currentPassword ?? ''
+
+        if (!(await verifyPassword(current, user.passwordHash))) {
+          return reply.code(400).send({ message: 'Your current password is incorrect.' })
+        }
+      }
+
+      const problem = passwordProblem(parsed.data.newPassword, user.email)
+
+      if (problem) {
+        return reply.code(400).send({ message: problem })
+      }
+
+      const now = new Date()
+      const currentToken = request.cookies[REFRESH_TOKEN_COOKIE]
+
+      await app.collections.users.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            passwordHash: await hashPassword(parsed.data.newPassword),
+            passwordUpdatedAt: now,
+            failedLoginCount: 0,
+            lockedUntil: null,
+            updatedAt: now,
+          },
+        },
+      )
+      await app.collections.refreshTokens.updateMany(
+        {
+          userId: user._id,
+          revokedAt: null,
+          ...(currentToken ? { tokenHash: { $ne: hashToken(currentToken) } } : {}),
+        },
+        { $set: { revokedAt: now } },
+      )
+
+      const updated = await app.collections.users.findOne({ _id: user._id })
+
+      return reply.send({ user: updated ? serializeUser(updated) : null })
     },
   )
 

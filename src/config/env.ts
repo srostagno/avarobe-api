@@ -40,6 +40,9 @@ const envSchema = z.object({
   S3_REGION: z.string().optional(),
   S3_PREFIX: z.string().default(''),
   MEDIA_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(3_600),
+  // Passkeys are bound to this domain. Defaults to APP_URL's hostname
+  // (avarobe.com in production, localhost in development).
+  WEBAUTHN_RP_ID: z.string().optional(),
   MAILERSEND_API_KEY: z.string().optional(),
   MAILERSEND_FROM_EMAIL: z.string().optional(),
   MAILERSEND_FROM_NAME: z.string().default('Avarobe'),
@@ -66,6 +69,11 @@ function optionalTrimmed(value: string | undefined) {
   return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
+const appUrl = new URL(raw.APP_URL)
+const corsOrigins = raw.CORS_ORIGINS.split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0)
+
 export const env = {
   ...raw,
   APP_URL: raw.APP_URL.replace(/\/+$/, ''),
@@ -75,9 +83,9 @@ export const env = {
     raw.COOKIE_SECURE !== undefined
       ? raw.COOKIE_SECURE === 'true'
       : raw.NODE_ENV === 'production',
-  CORS_ORIGINS: raw.CORS_ORIGINS.split(',')
-    .map((origin) => origin.trim())
-    .filter((origin) => origin.length > 0),
+  CORS_ORIGINS: corsOrigins,
+  WEBAUTHN_RP_ID: optionalTrimmed(raw.WEBAUTHN_RP_ID) ?? appUrl.hostname,
+  WEBAUTHN_ORIGINS: [...new Set([appUrl.origin, ...corsOrigins])],
   OPENAI_API_KEY: optionalTrimmed(raw.OPENAI_API_KEY),
   S3_BUCKET: optionalTrimmed(raw.S3_BUCKET),
   S3_REGION: optionalTrimmed(raw.S3_REGION),

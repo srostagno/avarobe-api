@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit'
 import Fastify from 'fastify'
 
 import { env } from './config/env.js'
+import passkeyRoutes from './modules/auth/passkeys.js'
 import authRoutes from './modules/auth/routes.js'
 import avatarRoutes from './modules/avatar/routes.js'
 import collectionRoutes from './modules/collections/routes.js'
@@ -77,6 +78,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(async (v1) => {
     await v1.register(healthRoutes, { prefix: '/health' })
     await v1.register(authRoutes, { prefix: '/auth' })
+    await v1.register(passkeyRoutes, { prefix: '/auth/passkeys' })
     await v1.register(meRoutes, { prefix: '/me' })
     await v1.register(avatarRoutes, { prefix: '/avatar' })
     await v1.register(lookRoutes, { prefix: '/looks' })
