@@ -55,7 +55,10 @@ const envSchema = z.object({
   PASSWORD_RESET_TTL: z.string().default('1h'),
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
-  DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(12),
+  // Looks a day for Style Kit / Plus owners (credits are the real limit;
+  // this only stops abuse), and for free accounts.
+  DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(40),
+  DAILY_FREE_LOOK_LIMIT: z.coerce.number().int().min(1).max(100).default(3),
   // Looks broken down into separate piece photos, and store searches.
   DAILY_PIECES_LIMIT: z.coerce.number().int().min(1).max(100).default(6),
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
@@ -84,6 +87,12 @@ const envSchema = z.object({
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
   // Accounts with the Style Kit for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
+  // Server-side purchase events (see billing/conversions.ts). The ids are
+  // public; each side turns on when its secret is set.
+  GA_MEASUREMENT_ID: z.string().default('G-61GY4E48S6'),
+  GA_API_SECRET: z.string().optional(),
+  META_PIXEL_ID: z.string().default('1124489527286755'),
+  META_CAPI_TOKEN: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)

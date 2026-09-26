@@ -7,6 +7,7 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
+import { attributionMetadata } from './conversions.js'
 import { billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
   BillingNotConfiguredError,
@@ -22,8 +23,19 @@ import {
   verifyWebhook,
 } from './stripe.js'
 
+const idPattern = /^[A-Za-z0-9._-]{1,200}$/
+
 const checkoutSchema = z.object({
   product: z.enum(['style_kit', 'top_up', 'color_report', 'kit_upgrade', 'plus']),
+  // Browser analytics ids for server-side purchase events; absent when the
+  // visitor opted out.
+  attribution: z
+    .object({
+      gaClientId: z.string().regex(idPattern).optional(),
+      fbp: z.string().regex(idPattern).optional(),
+      fbc: z.string().regex(idPattern).optional(),
+    })
+    .optional(),
   // Where to come back to if they cancel; only paths inside the studio.
   returnPath: z
     .string()
@@ -32,6 +44,10 @@ const checkoutSchema = z.object({
 })
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
+
+const funnelSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+
+const LIVE_PLUS = ['active', 'trialing', 'past_due']
 
 const confirmSchema = z.object({
   sessionId: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/),
@@ -104,7 +120,12 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const url = await createCheckout({ user, product: parsed.data.product, returnPath: parsed.data.returnPath })
+        const url = await createCheckout({
+          user,
+          product: parsed.data.product,
+          returnPath: parsed.data.returnPath,
+          attribution: attributionMetadata(parsed.data.attribution, request),
+        })
         return { url }
       } catch (error) {
         if (error instanceof BillingNotConfiguredError) {
@@ -186,6 +207,70 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     )
 
     return { user: updated ? serializeUser(updated) : null }
+  })
+
+  // The funnel from the database (no ad blockers in the way): of the people
+  // who signed up in the last N days, how many got an avatar, styled a look
+  // and paid; plus purchases, revenue and Plus in the period. Admins excluded.
+  app.get('/admin/funnel', { preHandler: authenticate }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const viewer = await loadBillingUser(app, userId)
+    const parsed = parseBody(funnelSchema, request.query)
+
+    if (!viewer || !isAdmin(viewer)) {
+      return reply.code(403).send({ message: 'Only admins can do this.' })
+    }
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const since = new Date(Date.now() - parsed.data.days * 24 * 60 * 60 * 1000)
+    const admins = env.COMP_EMAILS.split(',').map((email) => email.trim().toLowerCase()).filter(Boolean)
+    const adminIds = (
+      await app.collections.users.find({ email: { $in: admins } }, { projection: { _id: 1 } }).toArray()
+    ).map((user) => user._id)
+    const cohort = (
+      await app.collections.users
+        .find({ createdAt: { $gte: since }, _id: { $nin: adminIds } }, { projection: { _id: 1 } })
+        .toArray()
+    ).map((user) => user._id)
+    const inCohort = { userId: { $in: cohort } }
+    const [avatarReady, styled, triedOn, purchased, purchases, plusActive, kitActive] = await Promise.all([
+      app.collections.avatars.countDocuments({ ...inCohort, readyAt: { $ne: null } }),
+      app.collections.looks.distinct('userId', inCohort),
+      app.collections.looks.distinct('userId', { ...inCohort, source: 'tryon' }),
+      app.collections.purchases.distinct('userId', inCohort),
+      app.collections.purchases
+        .aggregate<{ _id: string; count: number; revenue: number; buyers: unknown[] }>([
+          { $match: { createdAt: { $gte: since }, userId: { $nin: adminIds } } },
+          { $group: { _id: '$product', count: { $sum: 1 }, revenue: { $sum: '$amountTotal' }, buyers: { $addToSet: '$userId' } } },
+        ])
+        .toArray(),
+      app.collections.users.countDocuments({
+        _id: { $nin: adminIds },
+        'plus.status': { $in: LIVE_PLUS },
+        'plus.periodEnd': { $gt: new Date() },
+      }),
+      app.collections.users.countDocuments({ _id: { $nin: adminIds }, styleKitUntil: { $gt: new Date() } }),
+    ])
+
+    return {
+      days: parsed.data.days,
+      cohort: {
+        signups: cohort.length,
+        avatarReady,
+        styledLook: styled.length,
+        triedOn: triedOn.length,
+        purchased: purchased.length,
+      },
+      purchases: purchases
+        .map((row) => ({ product: row._id, count: row.count, buyers: row.buyers.length, revenue: row.revenue }))
+        .sort((a, b) => b.revenue - a.revenue),
+      revenue: purchases.reduce((sum, row) => sum + row.revenue, 0),
+      plus: { active: plusActive, mrr: plusActive * env.PLUS_PRICE_CENTS },
+      kitActive,
+    }
   })
 
   app.post('/admin/reset', { preHandler: authenticate }, async (request, reply) => {

@@ -32,8 +32,10 @@ export async function reserveGenerations(
   userId: ObjectId,
   kind: UsageKind,
   amount: number,
+  // Overrides the kind's default limit (looks depend on the plan).
+  limitOverride?: number,
 ) {
-  const limit = limitFor(kind)
+  const limit = limitOverride ?? limitFor(kind)
 
   if (amount > limit) {
     return false
@@ -84,10 +86,11 @@ export async function remainingGenerations(
   app: FastifyInstance,
   userId: ObjectId,
   kind: UsageKind,
+  limitOverride?: number,
 ) {
   const counter = await app.collections.usageCounters.findOne({
     _id: counterId(userId, kind, utcDay()),
   })
 
-  return Math.max(0, limitFor(kind) - (counter?.count ?? 0))
+  return Math.max(0, (limitOverride ?? limitFor(kind)) - (counter?.count ?? 0))
 }

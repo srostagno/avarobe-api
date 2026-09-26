@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import type { Filter } from 'mongodb'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
@@ -18,6 +18,7 @@ import {
 } from '../../utils/usage.js'
 import {
   PaywallError,
+  hasKit,
   refundCredits,
   requireKit,
   sendPaywall,
@@ -37,6 +38,42 @@ import {
 } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+
+type QuotaResult =
+  | { ok: true }
+  | { ok: false; status: 402 | 429; body: { message: string; code?: string } }
+
+// The daily fair-use cap depends on the plan. Free accounts that hit it get
+// the upgrade instead of a dead end; paying ones hear that credits keep.
+async function reserveLookQuota(app: FastifyInstance, userId: ObjectId, amount: number): Promise<QuotaResult> {
+  const kit = await hasKit(app, userId)
+  const limit = kit ? env.DAILY_LOOK_LIMIT : env.DAILY_FREE_LOOK_LIMIT
+
+  if (await reserveGenerations(app, userId, 'look', amount, limit)) {
+    return { ok: true }
+  }
+
+  if (!kit) {
+    return {
+      ok: false,
+      status: 402,
+      body: { code: 'no_credits', message: 'You’ve used your free looks. Get the Style Kit to keep styling.' },
+    }
+  }
+
+  const remaining = await remainingGenerations(app, userId, 'look', limit)
+
+  return {
+    ok: false,
+    status: 429,
+    body: {
+      message:
+        remaining > 0
+          ? `You can style ${remaining} more look${remaining === 1 ? '' : 's'} today. Ask for fewer, or come back tomorrow.`
+          : `You’ve styled ${limit} looks today. Come back tomorrow; your credits will be waiting.`,
+    },
+  }
+}
 
 const createSchema = z.object({
   occasion: z.string().trim().min(3).max(280),
@@ -101,7 +138,12 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       looks: await Promise.all(looks.map(serializeLook)),
-      remaining: await remainingGenerations(app, userId, 'look'),
+      remaining: await remainingGenerations(
+        app,
+        userId,
+        'look',
+        (await hasKit(app, userId)) ? env.DAILY_LOOK_LIMIT : env.DAILY_FREE_LOOK_LIMIT,
+      ),
     }
   })
 
@@ -148,15 +190,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       const { occasion, count } = parsed.data
       const notes = parsed.data.notes || null
 
-      if (!(await reserveGenerations(app, userId, 'look', count))) {
-        const remaining = await remainingGenerations(app, userId, 'look')
+      const quota = await reserveLookQuota(app, userId, count)
 
-        return reply.code(429).send({
-          message:
-            remaining > 0
-              ? `You have ${remaining} look${remaining === 1 ? '' : 's'} left today. Ask for fewer or come back tomorrow.`
-              : `You've used today's ${env.DAILY_LOOK_LIMIT} looks. Come back tomorrow.`,
-        })
+      if (!quota.ok) {
+        return reply.code(quota.status).send(quota.body)
       }
 
       let creditSpent: boolean
@@ -282,10 +319,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message })
       }
 
-      if (!(await reserveGenerations(app, userId, 'look', 1))) {
-        return reply.code(429).send({
-          message: `You've used today's ${env.DAILY_LOOK_LIMIT} looks. Come back tomorrow.`,
-        })
+      const quota = await reserveLookQuota(app, userId, 1)
+
+      if (!quota.ok) {
+        return reply.code(quota.status).send(quota.body)
       }
 
       let creditSpent: boolean
@@ -563,10 +600,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'This look does not need a retry.' })
       }
 
-      if (!(await reserveGenerations(app, userId, 'look', 1))) {
-        return reply.code(429).send({
-          message: `You've used today's ${env.DAILY_LOOK_LIMIT} looks. Come back tomorrow.`,
-        })
+      const quota = await reserveLookQuota(app, userId, 1)
+
+      if (!quota.ok) {
+        return reply.code(quota.status).send(quota.body)
       }
 
       let creditSpent: boolean

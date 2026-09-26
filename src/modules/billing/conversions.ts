@@ -1,0 +1,110 @@
+import type { FastifyInstance } from 'fastify'
+import type Stripe from 'stripe'
+
+import { env } from '../../config/env.js'
+import { errorMessage } from '../../utils/http.js'
+
+// Purchases reported from the server, so ad blockers and iOS don't lose them:
+// GA4 Measurement Protocol and Meta's Conversions API. Both deduplicate with
+// the browser events (GA by transaction_id, Meta by event_id = session id).
+// They only run when the browser sent its analytics ids at checkout, which
+// it doesn't do for visitors who opted out.
+
+export function serverConversionsEnabled() {
+  return Boolean((env.GA_API_SECRET && env.GA_MEASUREMENT_ID) || (env.META_CAPI_TOKEN && env.META_PIXEL_ID))
+}
+
+// What the browser hands over at checkout, kept in the session metadata.
+export type Attribution = { gaClientId?: string; fbp?: string; fbc?: string }
+
+export function attributionMetadata(
+  attribution: Attribution | undefined,
+  request: { ip: string; headers: Record<string, string | string[] | undefined> },
+) {
+  if (!attribution || (!attribution.gaClientId && !attribution.fbp)) {
+    return {}
+  }
+
+  const userAgent = request.headers['user-agent']
+
+  return {
+    ...(attribution.gaClientId ? { ga_cid: attribution.gaClientId } : {}),
+    ...(attribution.fbp ? { fbp: attribution.fbp } : {}),
+    ...(attribution.fbc ? { fbc: attribution.fbc } : {}),
+    ip: request.ip,
+    ua: (typeof userAgent === 'string' ? userAgent : '').slice(0, 400),
+  }
+}
+
+async function post(url: string, body: unknown) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${(await response.text()).slice(0, 200)}`)
+  }
+}
+
+export async function reportPurchase(
+  app: FastifyInstance,
+  input: { metadata: Stripe.Metadata | null | undefined; transactionId: string; product: string; amount: number; currency: string },
+) {
+  const metadata = input.metadata ?? {}
+  const value = input.amount / 100
+  const currency = input.currency.toUpperCase()
+  const tasks: Promise<void>[] = []
+
+  if (env.GA_API_SECRET && env.GA_MEASUREMENT_ID && metadata.ga_cid) {
+    tasks.push(
+      post(
+        `https://www.google-analytics.com/mp/collect?measurement_id=${env.GA_MEASUREMENT_ID}&api_secret=${env.GA_API_SECRET}`,
+        {
+          client_id: metadata.ga_cid,
+          events: [
+            {
+              name: 'purchase',
+              params: { transaction_id: input.transactionId, value, currency, items: [{ item_id: input.product }] },
+            },
+          ],
+        },
+      ),
+    )
+  }
+
+  if (env.META_CAPI_TOKEN && env.META_PIXEL_ID && metadata.fbp) {
+    tasks.push(
+      post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
+        data: [
+          {
+            event_name: 'Purchase',
+            event_time: Math.floor(Date.now() / 1000),
+            event_id: input.transactionId,
+            action_source: 'website',
+            event_source_url: `${env.APP_URL}/studio/billing/success`,
+            // No email or other identifiers: the privacy notice promises Meta
+            // never gets them. Browser ids, IP and user agent only.
+            user_data: {
+              fbp: metadata.fbp,
+              ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
+              ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
+              ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
+            },
+            custom_data: { value, currency, content_ids: [input.product], content_type: 'product' },
+          },
+        ],
+      }),
+    )
+  }
+
+  const results = await Promise.allSettled(tasks)
+
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      app.log.warn({ err: errorMessage(result.reason), transactionId: input.transactionId }, 'Server conversion failed')
+    }
+  }
+}

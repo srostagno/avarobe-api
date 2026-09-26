@@ -5,6 +5,7 @@ import Stripe from 'stripe'
 import { env } from '../../config/env.js'
 import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
+import { reportPurchase } from './conversions.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
@@ -137,9 +138,11 @@ export async function createCheckout(input: {
   user: Pick<UserDocument, '_id' | 'email'>
   product: PurchaseProduct
   returnPath: string
+  // Analytics ids for server-side purchase events (conversions.ts).
+  attribution?: Record<string, string>
 }) {
   const userId = input.user._id.toString()
-  const metadata = { app: APP, product: input.product, userId }
+  const metadata = { ...input.attribution, app: APP, product: input.product, userId }
   const common = {
     line_items: [{ price: await priceFor(input.product), quantity: 1 }],
     // Not a bare ObjectId, so Trimry's webhook can never take it for one of
@@ -149,7 +152,7 @@ export async function createCheckout(input: {
     metadata,
     allow_promotion_codes: true,
     success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.APP_URL}${input.returnPath}`,
+    cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
   }
   const session = PRODUCTS[input.product].recurring
     ? await stripe().checkout.sessions.create({
@@ -307,7 +310,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
       return null
     }
 
-    await grantPlusMonth(app, {
+    const applied = await grantPlusMonth(app, {
       userId,
       paymentKey: readId(session.invoice) ?? session.id,
       subscriptionId,
@@ -317,10 +320,14 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
       currency: session.currency ?? 'usd',
     })
 
+    if (applied) {
+      void reportSession(app, session, product)
+    }
+
     return userId
   }
 
-  await applyGrant(app, {
+  const applied = await applyGrant(app, {
     userId,
     product,
     paymentKey: session.id,
@@ -329,7 +336,22 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
     currency: session.currency ?? 'usd',
   })
 
+  if (applied) {
+    void reportSession(app, session, product)
+  }
+
   return userId
+}
+
+// Once per purchase, whichever of the success page or the webhook grants it.
+function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, product: PurchaseProduct) {
+  return reportPurchase(app, {
+    metadata: session.metadata,
+    transactionId: session.id,
+    product,
+    amount: session.amount_total ?? 0,
+    currency: session.currency ?? 'usd',
+  }).catch(() => undefined)
 }
 
 // One paid month of Plus: its credits, and the subscription's state.
@@ -371,6 +393,8 @@ async function grantPlusMonth(
       { $max: { 'plus.periodEnd': input.periodEnd } },
     )
   }
+
+  return applied
 }
 
 // invoice.paid: the first month (if the success page didn't get there
