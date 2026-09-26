@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "tsx --test \"src/**/__tests__/*.test.ts\""
+    "test": "tsx --test \"src/**/__tests__/*.test.ts\"",
+    "test:auth": "node scripts/auth-e2e.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",
@@ -37,5 +38,12 @@
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   },
-  "packageManager": "pnpm@10.29.2"
+  "packageManager": "pnpm@10.29.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "argon2",
+      "esbuild",
+      "sharp"
+    ]
+  }
 }

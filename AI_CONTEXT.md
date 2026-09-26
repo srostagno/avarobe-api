@@ -2,11 +2,12 @@
 
 Fastify backend for **Avarobe** (avarobe.com), an AI stylist: a person uploads a selfie plus height, weight, build and the clothing they shop for; we generate a full-body 2D avatar and a 12-season color analysis, then style complete outfits for an occasion and render them on the avatar. Looks are saved into collections per occasion. English, US-first.
 
-Second app of the Trimry multi-app workspace. It shares conventions with `trimry-api` (Fastify 5, zod env, Mongo driver, JWT access cookie + rotating refresh cookie, passwordless links) but runs as its own service with its own database, cookies and domain.
+Lives in the `Projects/Avarobe/code` workspace next to `avarobe-web` (it started inside the Trimry workspace and moved out on 2026-09-26). It shares conventions with `trimry-api` (Fastify 5, zod env, Mongo driver, JWT access cookie + rotating refresh cookie) but is its own service with its own database, cookies and domain. Product, research and operations docs live in `../../docs/`.
 
 ## Run
 
 - `corepack pnpm --filter avarobe-api dev` (port 4100). Copy `.env.example` to `.env`.
+- `corepack pnpm --filter avarobe-api test:auth` runs the password + passkey end-to-end check (software authenticator) against the running dev API and deletes its test account.
 - Dev uses `MONGODB_DB=avarobe_dev` on the Trimry Atlas cluster and `STORAGE_DRIVER=local` (files in `.storage/`, served by `/api/v1/media/*` behind HMAC-signed, expiring URLs).
 - Without MailerSend in development, `POST /auth/start` returns `devLoginUrl` instead of emailing it.
 
