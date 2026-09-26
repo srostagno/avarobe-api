@@ -82,8 +82,9 @@ const envSchema = z.object({
   // Avarobe Plus: offered to people who had the Kit.
   PLUS_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
   PLUS_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(40),
-  // Free allowance: looks on sign-up, and avatar renders (create + one redo).
-  FREE_CREDITS: z.coerce.number().int().min(0).default(1),
+  // Free allowance: looks on sign-up (a full set of 3 for the first
+  // occasion), and avatar renders (create + one redo).
+  FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
   // Accounts with the Style Kit for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),

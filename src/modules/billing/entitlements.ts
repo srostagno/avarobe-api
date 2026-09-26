@@ -176,7 +176,7 @@ export async function spendCredits(app: FastifyInstance, userId: ObjectId, amoun
         ? `You have ${left}. Top up to keep styling.`
         : credits > 0
           ? `You have ${left}. Ask for fewer looks, or get the Style Kit for more.`
-          : 'You’ve used your free look. Get the Style Kit to keep styling.',
+          : 'You’ve used your free looks. Get the Style Kit to keep styling.',
     )
   }
 
