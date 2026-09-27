@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 
 import { refundCredits } from '../modules/billing/entitlements.js'
+import { BOARD_KINDS } from '../modules/report/boards.js'
 
 // Generation runs in-process. If the API restarts mid-render the document
 // would stay "processing" forever, so on boot anything older than this is
@@ -70,6 +71,13 @@ export async function failStaleJobs(app: FastifyInstance) {
       { 'pieces.status': 'processing', updatedAt: { $lt: cutoff } },
       { $set: { 'pieces.$[piece].status': 'failed', updatedAt: now } },
       { arrayFilters: [{ 'piece.status': 'processing' }] },
+    ),
+    // So can the report boards, from the report.
+    ...BOARD_KINDS.map((kind) =>
+      app.collections.avatars.updateMany(
+        { [`reportBoards.${kind}.status`]: 'processing', [`reportBoards.${kind}.updatedAt`]: { $lt: cutoff } },
+        { $set: { [`reportBoards.${kind}.status`]: 'failed' } },
+      ),
     ),
   ])
 

@@ -12,8 +12,10 @@ import authRoutes from './modules/auth/routes.js'
 import avatarRoutes from './modules/avatar/routes.js'
 import billingRoutes, { billingWebhookRoutes } from './modules/billing/routes.js'
 import reportRoutes from './modules/report/routes.js'
+import tasteRoutes from './modules/taste/routes.js'
 import collectionRoutes from './modules/collections/routes.js'
 import healthRoutes from './modules/health/routes.js'
+import iconLookRoutes from './modules/looks/icon-routes.js'
 import lookRoutes from './modules/looks/routes.js'
 import mediaRoutes from './modules/media/routes.js'
 import meRoutes from './modules/me/routes.js'
@@ -84,9 +86,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(meRoutes, { prefix: '/me' })
     await v1.register(avatarRoutes, { prefix: '/avatar' })
     await v1.register(lookRoutes, { prefix: '/looks' })
+    await v1.register(iconLookRoutes, { prefix: '/looks/icons' })
     await v1.register(collectionRoutes, { prefix: '/collections' })
     await v1.register(billingRoutes, { prefix: '/billing' })
     await v1.register(reportRoutes, { prefix: '/report' })
+    await v1.register(tasteRoutes, { prefix: '/taste' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
 
     if (env.STORAGE_DRIVER === 'local') {

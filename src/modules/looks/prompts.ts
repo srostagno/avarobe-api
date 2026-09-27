@@ -1,4 +1,4 @@
-import type { AvatarDocument, LookItem, LookPlan } from '../../types/mongo.js'
+import type { AvatarDocument, LookDocument, LookItem, LookPlan, RemixChange } from '../../types/mongo.js'
 import { describePalette } from '../avatar/prompts.js'
 
 export const LOOK_SLOTS = [
@@ -27,11 +27,78 @@ const lookItemProperties = {
   fit: { type: 'string', description: 'Cut and fit, e.g. "slim, tapered".' },
 }
 
+// The stylist reads the brief before designing anything: writing the asks,
+// the decoded style and the weather first is what keeps the looks on it.
+const briefSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['asks', 'styleSignature', 'climate'],
+  properties: {
+    asks: {
+      type: 'array',
+      description:
+        'Every explicit thing the client asked for, 2 to 6 short phrases close to their words: the event, any style, person, era, music or aesthetic they named, colors or pieces they want or refuse, the season or weather. Only what they wrote in the occasion and notes: never their profile, their taste profile or the number of looks.',
+      items: { type: 'string' },
+    },
+    styleSignature: {
+      type: 'string',
+      description:
+        'The concrete signature of the style they named (a person, film, era, subculture, music or aesthetic): its key garments, colors, fabrics, fits, footwear and accessories. If they named none, the signature of what the occasion calls for.',
+    },
+    climate: {
+      type: 'string',
+      description:
+        'The weather the looks must handle and what it rules in or out, e.g. "Summer heat outdoors: breathable fabrics and short sleeves; no jackets unless carried for the evening."',
+    },
+  },
+}
+
+const lookSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'vibe', 'summary', 'whyItWorks', 'items', 'stylingTips', 'tasteApplied'],
+  properties: {
+    title: { type: 'string', description: '2 to 4 words.' },
+    vibe: {
+      type: 'string',
+      description: 'This look\'s take on the brief in 1 or 2 plain words, e.g. "Sixties cool", "Rock edge", "Polished", "Relaxed".',
+    },
+    summary: { type: 'string', description: 'One sentence describing the look.' },
+    whyItWorks: {
+      type: 'string',
+      description:
+        'Two sentences: how it delivers what they asked for (the style they named, the occasion, the weather) and why its colors and cut work on them.',
+    },
+    items: {
+      type: 'array',
+      description: 'Every garment head to toe, 4 to 7 items, always including shoes.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: Object.keys(lookItemProperties),
+        properties: lookItemProperties,
+      },
+    },
+    stylingTips: {
+      type: 'array',
+      description: '2 or 3 short, practical tips.',
+      items: { type: 'string' },
+    },
+    tasteApplied: {
+      type: 'array',
+      description:
+        'Up to 2 of the client\'s "Loves" lines that this look uses, each copied word for word as one short line. Empty when there is no taste profile or the look uses none of them.',
+      items: { type: 'string' },
+    },
+  },
+}
+
 export const lookPlanSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['dressCode', 'occasionSummary', 'looks'],
+  required: ['brief', 'dressCode', 'occasionSummary', 'looks'],
   properties: {
+    brief: briefSchema,
     dressCode: {
       type: 'string',
       description:
@@ -39,83 +106,135 @@ export const lookPlanSchema = {
     },
     occasionSummary: {
       type: 'string',
-      description: 'One sentence restating the occasion and what it asks of an outfit.',
+      description: 'One sentence restating the occasion and what it asks of an outfit, including any style they named.',
     },
-    looks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['title', 'vibe', 'summary', 'whyItWorks', 'items', 'stylingTips'],
-        properties: {
-          title: { type: 'string', description: '2 to 4 words.' },
-          vibe: { type: 'string', enum: LOOK_VIBES },
-          summary: { type: 'string', description: 'One sentence describing the look.' },
-          whyItWorks: {
-            type: 'string',
-            description:
-              'Two sentences tying the colors to their season and the cut to their body and the occasion.',
-          },
-          items: {
-            type: 'array',
-            description: 'Every garment head to toe, 4 to 7 items, always including shoes.',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: Object.keys(lookItemProperties),
-              properties: lookItemProperties,
-            },
-          },
-          stylingTips: {
-            type: 'array',
-            description: '2 or 3 short, practical tips.',
-            items: { type: 'string' },
-          },
-        },
-      },
-    },
+    looks: { type: 'array', items: lookSchema },
   },
 }
 
 export const LOOK_PLAN_INSTRUCTIONS = [
   'You are Avarobe, a senior personal stylist for American clients.',
-  'You design complete head-to-toe outfits that are right for the occasion and flattering on this specific person.',
+  'You design complete head-to-toe outfits that deliver exactly what the client asked for and flatter this specific person.',
+  'Read the brief before designing. Every explicit ask is a requirement: the event, any style, person, era, music or aesthetic they name, the colors or pieces they want or refuse, and the weather.',
+  'When they name a style reference (a person, a film, an era, a subculture, a music genre), every look must read unmistakably as that reference: build it from the reference\'s signature garments, colors, fabrics, fits, footwear and accessories, adapted to the occasion and the weather, with at least two signature pieces in every look. A fashion editor should recognize it at a glance. When they name several references (an icon and a music genre, say), blend all of them in every look instead of giving each look one of them.',
+  'Music they mention is a style signal too (rock or metal: black, denim, leather, boots; country: denim and western boots; jazz: dark and tailored): show it in every look.',
+  'Vary the looks within the brief, never away from it: give different takes on the same reference (another hero piece, level of polish or moment of the day, with colors still true to the reference). Without a named style, make them meaningfully different, for example one classic, one modern, one bolder.',
+  'Dress for the weather they state or imply (season, place, indoors or outdoors). In heat, use breathable fabrics and skip jackets and heavy layers unless the look says they are carried for the evening; in cold, include real outerwear.',
+  'Make each look coherent and wearable as a whole: shoes, layers and fabrics agree with each other, with the weather and with the formality.',
   'Know US dress codes precisely: white tie, black tie, black tie optional, formal, cocktail, semi-formal, business formal, business casual, smart casual, casual.',
   'Know venue rules: golf courses usually require collared shirts and tailored shorts or trousers, no denim; country clubs lean preppy; many tennis clubs require whites; houses of worship and funerals call for modest, dark colors.',
-  'Use the client color palette for the colors closest to the face; neutrals are fine elsewhere; keep avoid-colors away from the face.',
+  'Colors: use the client palette closest to the face and their neutrals elsewhere; keep avoid-colors away from the face. A named style\'s signature colors come first (black for rock or metal, navy and white for nautical): keep them, and when one is hard on the client, place it away from the face (trousers, boots, a jacket worn open) or use its most flattering shade near the face. Never add a color just to show off the palette.',
   'Choose cuts that suit their build and height. Never mention weight or body flaws; frame advice positively.',
-  'Every garment must be a real, common item a person can find at mainstream US retailers. No brand names, no logos.',
-  'Make the looks meaningfully different from each other (for example one classic, one modern, one with a bolder color), all appropriate for the occasion.',
+  'If the client has a taste profile, honor it: never use anything they avoid, and bring in what they love wherever it suits the brief. Translate their taste to the weather rather than ignoring either (a summer version of a leather-and-boots taste: a dark tee, light denim, suede boots). A color they love that is hard on them goes away from the face, and whyItWorks says why. When the brief and their taste conflict (an invitation that requires a tie for someone who avoids ties), the brief wins; say so kindly in a styling tip.',
+  'Every garment must be a real, common item a person can find at mainstream US retailers. No brand names and no logos: describe signature pieces generically, e.g. "tortoiseshell keyhole-bridge sunglasses".',
   'The summary, whyItWorks and tips must describe exactly the listed items and colors, never a garment or color that is not in the list.',
   'Write in warm, concise American English, second person.',
 ].join(' ')
+
+// The taste the stylist designs for: the person's own words plus what their
+// feedback taught us (see modules/taste).
+export type StylistTaste = {
+  statement: string | null
+  summary: string | null
+  loves: string[]
+  avoids: string[]
+}
+
+export function describeTaste(taste: StylistTaste | null | undefined) {
+  if (!taste || (!taste.statement && taste.loves.length === 0 && taste.avoids.length === 0)) {
+    return null
+  }
+
+  return [
+    'Client taste profile (their own words and what their feedback on past looks taught us):',
+    taste.statement ? `In their words: "${taste.statement}"` : null,
+    taste.summary ? `Summary: ${taste.summary}` : null,
+    taste.loves.length > 0 ? `Loves:\n${taste.loves.map((line) => `- ${line}`).join('\n')}` : null,
+    taste.avoids.length > 0 ? `Avoids (never use):\n${taste.avoids.map((line) => `- ${line}`).join('\n')}` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n')
+}
+
+function describeClient(avatar: AvatarDocument, taste: StylistTaste | null | undefined) {
+  const { body } = avatar
+
+  return [
+    'Client profile:',
+    `- Dresses in: ${body.presentation}`,
+    `- Height ${body.heightCm} cm, weight ${body.weightKg} kg, ${body.build} build`,
+    describePalette(avatar.colorAnalysis),
+    describeTaste(taste),
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n')
+}
 
 export function buildLookPlanRequest(input: {
   avatar: AvatarDocument
   occasion: string
   notes: string | null
   count: number
+  taste?: StylistTaste | null
 }) {
-  const { body } = input.avatar
-
   return [
     `Occasion: ${input.occasion}`,
     input.notes ? `Extra notes from the client: ${input.notes}` : null,
     `Design exactly ${input.count} look${input.count > 1 ? 's' : ''}.`,
     '',
-    'Client profile:',
-    `- Dresses in: ${body.presentation}`,
-    `- Height ${body.heightCm} cm, weight ${body.weightKg} kg, ${body.build} build`,
-    describePalette(input.avatar.colorAnalysis),
+    describeClient(input.avatar, input.taste),
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n')
+}
+
+const REMIX_CHANGES: Record<RemixChange, (detail: string | null) => string> = {
+  colors: () =>
+    'Keep the same kinds of pieces and silhouettes and give it a new color story from their palette; reuse no color from the original except basic neutrals the style needs.',
+  season: (detail) =>
+    `Adapt it to ${detail ?? 'the opposite season'}: that season's fabrics, layers, footwear and colors, with the same attitude.`,
+  dressier: () => 'Take it one clear step dressier, for a nicer venue or the evening, keeping its attitude.',
+  casual: () => 'Take it one clear step more casual, for a weekend or daytime plan, keeping its attitude.',
+  occasion: (detail) => `Restyle it for this occasion: ${detail ?? 'another plan they might have'}.`,
+  surprise: () =>
+    'Your call: one meaningful twist that keeps the style, such as a new hero piece, an unexpected color from their palette or a different moment of the day.',
+  custom: (detail) => `The client asks: ${detail ?? 'another take on it'}.`,
+  fix: (detail) => `The client disliked it. Their feedback: ${detail ?? 'not for them'}.`,
+}
+
+// A variant of a look the person liked: same style, one clear change.
+export function buildRemixRequest(input: {
+  avatar: AvatarDocument
+  base: Pick<LookDocument, 'plan' | 'occasion'>
+  change: RemixChange
+  detail: string | null
+  taste?: StylistTaste | null
+}) {
+  const { plan, occasion } = input.base
+  const fixing = input.change === 'fix'
+
+  return [
+    fixing
+      ? 'Design exactly 1 new look for the same occasion, replacing a look this client disliked.'
+      : 'Design exactly 1 look: a variant of a look this client liked.',
+    `${fixing ? 'The look they disliked' : 'Original look'}: "${plan.title}" (${plan.vibe}), styled for "${occasion.text}". ${plan.summary}`,
+    `Its pieces: ${plan.items.map(describeItem).join('; ')}.`,
+    fixing
+      ? 'Fix every point of their feedback. Keep only the pieces they liked, and nothing they disliked or anything like it. The new look must still deliver the original occasion and any style they named there.'
+      : 'Keep its style DNA (the same aesthetic, attitude and silhouette language) so it reads as a sibling of the original, not a copy. Change at least three pieces unless the change below keeps them.',
+    `${fixing ? 'Feedback' : 'Change'}: ${REMIX_CHANGES[input.change](input.detail)}`,
+    input.change === 'occasion' || fixing
+      ? null
+      : `Occasion: the same as the original, "${occasion.text}", unless the change says otherwise.`,
+    '',
+    describeClient(input.avatar, input.taste),
   ]
     .filter((line): line is string => line !== null)
     .join('\n')
 }
 
 export function buildLookRenderPrompt(plan: LookPlan, occasion: string) {
-  const garments = plan.items
-    .map((item) => `${item.color} ${item.material} ${item.name.toLowerCase()} (${item.fit})`)
-    .join('; ')
+  const garments = plan.items.map(describeItem).join('; ')
 
   return [
     'Image 1 is this person in full body. Image 2 is a close-up of the same face.',
@@ -204,7 +323,10 @@ export function buildTryOnRequest(avatar: AvatarDocument, notes: string | null) 
 }
 
 function describeItem(item: LookItem) {
-  return `${item.color} ${item.material} ${item.name.toLowerCase()} (${item.fit})`
+  const name = item.name.toLowerCase()
+  const material = item.material.toLowerCase()
+  // "Suede" and "Suede overshirt" would read "suede suede overshirt".
+  return `${item.color} ${name.includes(material) ? '' : `${material} `}${name} (${item.fit})`
 }
 
 export function buildTryOnRenderPrompt(plan: LookPlan) {

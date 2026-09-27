@@ -12,6 +12,7 @@ import type {
   PurchaseDocument,
   RefreshTokenDocument,
   ShopSearchDocument,
+  TasteDocument,
   UsageCounterDocument,
   UserDocument,
 } from '../types/mongo.js'
@@ -22,6 +23,7 @@ export type MongoCollections = {
   avatars: Collection<AvatarDocument>
   looks: Collection<LookDocument>
   collections: Collection<CollectionDocument>
+  tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
   authChallenges: Collection<AuthChallengeDocument>
@@ -40,6 +42,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     avatars: mongoDb.collection<AvatarDocument>('avatars'),
     looks: mongoDb.collection<LookDocument>('looks'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
+    tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
     authChallenges: mongoDb.collection<AuthChallengeDocument>('auth_challenges'),
@@ -63,6 +66,12 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.looks.createIndex({ userId: 1, batchId: 1 }),
     collections.looks.createIndex({ userId: 1, collectionIds: 1, createdAt: -1 }),
     collections.looks.createIndex({ status: 1, updatedAt: 1 }),
+    collections.looks.createIndex(
+      { userId: 1, 'feedback.at': -1 },
+      { partialFilterExpression: { 'feedback.at': { $exists: true } } },
+    ),
+    collections.looks.createIndex({ userId: 1, remixOf: 1 }, { partialFilterExpression: { remixOf: { $exists: true } } }),
+    collections.tastes.createIndex({ userId: 1 }, { unique: true }),
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },

@@ -1,11 +1,11 @@
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
+import type { FastifyPluginAsync } from 'fastify'
 import type { Filter } from 'mongodb'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
-import type { LookDocument, LookPiece } from '../../types/mongo.js'
+import type { LookDocument, LookFeedback, LookPiece } from '../../types/mongo.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import { InvalidImageError, normalizeOutfitPhoto } from '../../utils/images.js'
 import { toObjectId } from '../../utils/object-id.js'
@@ -27,40 +27,19 @@ import { generateLookAnalysis } from '../report/service.js'
 import { MARKET_IDS, MARKETS } from '../shop/markets.js'
 import { ShopSearchError, shopSearchConfigured } from '../shop/serpapi.js'
 import { ShopQuotaError, findPieceMatches } from '../shop/service.js'
+import { FEEDBACK_ASPECTS, describeFeedback } from '../taste/prompts.js'
+import { readTaste, scheduleTasteLearning, toStylistTaste } from '../taste/service.js'
+import { reserveLookQuota } from './quota.js'
 import {
-  NoOutfitError,
-  analyzeOutfit,
   lookStorageKeys,
   planLooks,
+  planRemix,
   startLookRender,
   startPieceRenders,
 } from './service.js'
+import { startTryOn } from './try-on.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
-
-type QuotaResult = { ok: true } | { ok: false; status: 429; body: { message: string } }
-
-// The daily fair-use cap. It's the same for every plan: credits are the real
-// limit, and running out of them is what shows the upgrade. (A per-plan cap
-// once blocked free accounts that still had credits.)
-async function reserveLookQuota(app: FastifyInstance, userId: ObjectId, amount: number): Promise<QuotaResult> {
-  if (await reserveGenerations(app, userId, 'look', amount)) {
-    return { ok: true }
-  }
-
-  const remaining = await remainingGenerations(app, userId, 'look')
-
-  return {
-    ok: false,
-    status: 429,
-    body: {
-      message:
-        remaining > 0
-          ? `You can style ${remaining} more look${remaining === 1 ? '' : 's'} today. Ask for fewer, or come back tomorrow.`
-          : `You’ve styled ${env.DAILY_LOOK_LIMIT} looks today. Come back tomorrow; your credits will be waiting.`,
-    },
-  }
-}
 
 const createSchema = z.object({
   occasion: z.string().trim().min(3).max(280),
@@ -70,6 +49,7 @@ const createSchema = z.object({
 
 const listQuerySchema = z.object({
   batchId: z.string().optional(),
+  remixOf: z.string().optional(),
   collectionId: z.string().optional(),
   favorite: z.enum(['true']).optional(),
   limit: z.coerce.number().int().min(1).max(60).default(24),
@@ -77,6 +57,21 @@ const listQuerySchema = z.object({
 
 const updateSchema = z.object({
   favorite: z.boolean().optional(),
+})
+
+const feedbackSchema = z.object({
+  rating: z.enum(['up', 'down']),
+  aspects: z.array(z.enum(FEEDBACK_ASPECTS)).max(8).default([]),
+  pieces: z
+    .array(z.object({ index: z.number().int().min(0).max(7), vote: z.enum(['up', 'down']) }))
+    .max(8)
+    .default([]),
+  note: z.string().trim().max(280).optional(),
+})
+
+const remixSchema = z.object({
+  change: z.enum(['colors', 'season', 'dressier', 'casual', 'occasion', 'surprise', 'custom', 'fix']),
+  detail: z.string().trim().max(200).optional(),
 })
 
 const tryOnFieldsSchema = z.object({
@@ -104,9 +99,14 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     const filter: Filter<LookDocument> = { userId }
     const batchId = toObjectId(parsed.data.batchId)
     const collectionId = toObjectId(parsed.data.collectionId)
+    const remixOf = toObjectId(parsed.data.remixOf)
 
     if (batchId) {
       filter.batchId = batchId
+    }
+
+    if (remixOf) {
+      filter.remixOf = remixOf
     }
 
     if (collectionId) {
@@ -195,7 +195,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       let plan: Awaited<ReturnType<typeof planLooks>>
 
       try {
-        plan = await planLooks({ avatar, occasion, notes, count })
+        plan = await planLooks({ avatar, occasion, notes, count, taste: toStylistTaste(await readTaste(app, userId)) })
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Look planning failed')
         await releaseGenerations(app, userId, 'look', count)
@@ -221,6 +221,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
           text: occasion,
           dressCode: plan.dressCode,
           summary: plan.occasionSummary,
+          asks: plan.asks,
         },
         plan: lookPlan,
         status: 'processing',
@@ -301,80 +302,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message })
       }
 
-      const quota = await reserveLookQuota(app, userId, 1)
-
-      if (!quota.ok) {
-        return reply.code(quota.status).send(quota.body)
-      }
-
-      let creditSpent: boolean
-
-      try {
-        await requireKit(app, userId, 'Trying on outfits')
-        creditSpent = await spendCredits(app, userId, 1)
-      } catch (error) {
-        await releaseGenerations(app, userId, 'look', 1)
-
-        if (error instanceof PaywallError) {
-          return sendPaywall(reply, error)
-        }
-
-        throw error
-      }
-
-      const notes = parsed.data.notes || null
-      let analysis: Awaited<ReturnType<typeof analyzeOutfit>>
-
-      try {
-        analysis = await analyzeOutfit({ avatar, photo, notes })
-      } catch (error) {
-        await releaseGenerations(app, userId, 'look', 1)
-        await refundCredits(app, userId, creditSpent ? 1 : 0)
-
-        if (error instanceof NoOutfitError) {
-          return reply
-            .code(422)
-            .send({ message: "We couldn't find an outfit in that photo. Try one that shows the clothes clearly." })
-        }
-
-        request.log.error({ err: errorMessage(error) }, 'Try-on analysis failed')
-        return reply.code(502).send({ message: 'Our stylist could not read that photo. Please try again.' })
-      }
-
-      const now = new Date()
-      const lookId = new ObjectId()
-      const referenceKey = `users/${userId.toString()}/look-${lookId.toString()}-reference.jpg`
-
-      await storage.put(referenceKey, photo, 'image/jpeg')
-
-      const look: LookDocument = {
-        _id: lookId,
-        userId,
-        avatarId: avatar._id,
-        batchId: new ObjectId(),
-        occasion: {
-          text: notes ?? 'Try-on',
-          dressCode: analysis.dressCode,
-          summary: analysis.plan.summary,
-        },
-        plan: analysis.plan,
-        source: 'tryon',
-        referenceKey,
-        status: 'processing',
-        error: null,
-        imageKey: null,
-        creditSpent,
-        collectionIds: [],
-        favorite: false,
-        createdAt: now,
-        updatedAt: now,
-        readyAt: null,
-      }
-
-      await app.collections.looks.insertOne(look)
-      startLookRender(app, look._id)
-
-      return reply.code(202).send({ look: await serializeLook(look) })
+      return startTryOn(app, request, reply, { userId, avatar, photo, notes: parsed.data.notes || null })
     },
   )
 
@@ -635,8 +563,190 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Look not found.' })
     }
 
+    // Favorites teach taste too.
+    if (parsed.data.favorite !== undefined) {
+      await scheduleTasteLearning(app, userId)
+    }
+
     return { look: await serializeLook(look) }
   })
+
+  // What the person thought of a look. It teaches their taste profile, which
+  // the stylist reads before every new look.
+  app.post('/:id/feedback', async (request, reply) => {
+    const userId = requireUserId(request)
+    const lookId = toObjectId((request.params as { id?: string }).id)
+    const parsed = parseBody(feedbackSchema, request.body)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const look = lookId ? await app.collections.looks.findOne({ _id: lookId, userId }) : null
+
+    if (!look) {
+      return reply.code(404).send({ message: 'Look not found.' })
+    }
+
+    const { rating, aspects, pieces, note } = parsed.data
+    const feedback: LookFeedback = {
+      rating,
+      aspects: [...new Set(aspects)],
+      // One vote per piece, the last one wins.
+      pieces: [
+        ...new Map(
+          pieces.filter((piece) => piece.index < look.plan.items.length).map((piece) => [piece.index, piece]),
+        ).values(),
+      ],
+      note: note || null,
+      at: new Date(),
+    }
+    const updated = await app.collections.looks.findOneAndUpdate(
+      { _id: look._id },
+      { $set: { feedback, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+
+    await scheduleTasteLearning(app, userId)
+
+    return { look: updated ? await serializeLook(updated) : null }
+  })
+
+  app.delete('/:id/feedback', async (request, reply) => {
+    const userId = requireUserId(request)
+    const lookId = toObjectId((request.params as { id?: string }).id)
+    const look = lookId
+      ? await app.collections.looks.findOneAndUpdate(
+          { _id: lookId, userId },
+          { $unset: { feedback: '' }, $set: { updatedAt: new Date() } },
+          { returnDocument: 'after' },
+        )
+      : null
+
+    if (!look) {
+      return reply.code(404).send({ message: 'Look not found.' })
+    }
+
+    await scheduleTasteLearning(app, userId)
+
+    return { look: await serializeLook(look) }
+  })
+
+  // A variant of a look: the same style with one change (new colors, another
+  // season, dressier…), or 'fix', which restyles a look they disliked from
+  // their feedback. One look, one credit, rendered in the background.
+  app.post(
+    '/:id/remix',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const lookId = toObjectId((request.params as { id?: string }).id)
+      const parsed = parseBody(remixSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      const base = lookId ? await app.collections.looks.findOne({ _id: lookId, userId }) : null
+
+      if (!base) {
+        return reply.code(404).send({ message: 'Look not found.' })
+      }
+
+      const { change } = parsed.data
+      let detail = parsed.data.detail || null
+
+      if ((change === 'occasion' || change === 'custom') && !detail) {
+        return reply
+          .code(400)
+          .send({ message: change === 'occasion' ? 'Tell us the new occasion.' : 'Tell us what to change.' })
+      }
+
+      if (change === 'fix') {
+        if (!base.feedback) {
+          return reply.code(409).send({ message: 'Tell us what missed first.' })
+        }
+
+        detail = describeFeedback(base.plan, base.feedback)
+      }
+
+      const avatar = await app.collections.avatars.findOne({ userId })
+
+      if (!avatar?.avatarKey || avatar.status !== 'ready') {
+        return reply.code(409).send({ message: 'Your avatar needs to be ready before styling looks.' })
+      }
+
+      const quota = await reserveLookQuota(app, userId, 1)
+
+      if (!quota.ok) {
+        return reply.code(quota.status).send(quota.body)
+      }
+
+      let creditSpent: boolean
+
+      try {
+        creditSpent = await spendCredits(app, userId, 1)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'look', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      let plan: Awaited<ReturnType<typeof planRemix>>
+
+      try {
+        plan = await planRemix({ avatar, base, change, detail, taste: toStylistTaste(await readTaste(app, userId)) })
+      } catch (error) {
+        request.log.error({ err: errorMessage(error) }, 'Look remix failed')
+        await releaseGenerations(app, userId, 'look', 1)
+        await refundCredits(app, userId, creditSpent ? 1 : 0)
+        return reply.code(502).send({ message: 'Our stylist could not restyle this one. Please try again.' })
+      }
+
+      const [lookPlan] = plan.looks
+
+      if (!lookPlan) {
+        throw new Error('The stylist returned no looks.')
+      }
+
+      const now = new Date()
+      const look: LookDocument = {
+        _id: new ObjectId(),
+        userId,
+        avatarId: avatar._id,
+        batchId: new ObjectId(),
+        occasion: {
+          text: change === 'occasion' && detail ? detail : base.occasion.text,
+          dressCode: plan.dressCode,
+          summary: plan.occasionSummary,
+          // What they asked for is still the original brief (or the new
+          // occasion); the remix request itself is our wording, not theirs.
+          asks: change === 'occasion' && detail ? [detail] : (base.occasion.asks ?? []),
+        },
+        plan: lookPlan,
+        remixOf: base._id,
+        remix: { change, detail: change === 'fix' ? null : detail },
+        status: 'processing',
+        error: null,
+        imageKey: null,
+        creditSpent,
+        collectionIds: [],
+        favorite: false,
+        createdAt: now,
+        updatedAt: now,
+        readyAt: null,
+      }
+
+      await app.collections.looks.insertOne(look)
+      startLookRender(app, look._id)
+
+      return reply.code(202).send({ look: await serializeLook(look) })
+    },
+  )
 
   app.delete('/:id', async (request, reply) => {
     const userId = requireUserId(request)

@@ -122,12 +122,15 @@ export async function createStructuredResponse<T>(input: {
   schemaName: string
   schema: Record<string, unknown>
   timeoutMs?: number
+  // Default to AI_TEXT_MODEL / AI_TEXT_REASONING_EFFORT.
+  model?: string
+  reasoningEffort?: 'low' | 'medium' | 'high'
 }): Promise<T> {
   const payload = await postOpenAi<ResponsesPayload>(
     '/responses',
     JSON.stringify({
-      model: env.AI_TEXT_MODEL,
-      reasoning: { effort: env.AI_TEXT_REASONING_EFFORT },
+      model: input.model ?? env.AI_TEXT_MODEL,
+      reasoning: { effort: input.reasoningEffort ?? env.AI_TEXT_REASONING_EFFORT },
       instructions: input.instructions,
       input: [{ role: 'user', content: input.content }],
       text: {
@@ -206,6 +209,34 @@ export async function generateImageFromReferences(input: {
     json: false,
     timeoutMs: input.timeoutMs ?? 180_000,
   })
+  const b64 = payload.data?.[0]?.b64_json
+
+  if (!b64) {
+    throw new OpenAiRequestError('OpenAI returned no image.', 502)
+  }
+
+  return Buffer.from(b64, 'base64')
+}
+
+// Text-to-image, for renders that don't need a reference (a flat-lay of clothes).
+export async function generateImage(input: {
+  prompt: string
+  size?: '1024x1024' | '1024x1536' | '1536x1024'
+  model?: string
+  quality?: 'low' | 'medium' | 'high'
+  timeoutMs?: number
+}): Promise<Buffer> {
+  const payload = await postOpenAi<ImagesPayload>(
+    '/images/generations',
+    JSON.stringify({
+      model: input.model ?? env.AI_IMAGE_MODEL,
+      prompt: input.prompt,
+      size: input.size ?? '1024x1024',
+      quality: input.quality ?? env.AI_IMAGE_QUALITY,
+      n: 1,
+    }),
+    { json: true, timeoutMs: input.timeoutMs ?? 180_000 },
+  )
   const b64 = payload.data?.[0]?.b64_json
 
   if (!b64) {

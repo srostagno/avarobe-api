@@ -176,6 +176,9 @@ export type AvatarDocument = {
   colorReport?: { data: ColorReport; createdAt: Date } | null
   drape?: DrapeTest | null
   styleProfile?: { data: StyleProfile; createdAt: Date } | null
+  // The visual boards of both reports: one image each, comparing options on
+  // the avatar (color boards follow the selfie, style boards the body).
+  reportBoards?: Partial<Record<BoardKind, ReportBoard>> | null
   consentVersion: string
   consentAt: Date
   generations: number
@@ -186,6 +189,14 @@ export type AvatarDocument = {
 
 export type ScaleReading = { value: number; label: string }
 
+export type Verdict = 'wear' | 'avoid'
+
+export type TestSwatch = ColorSwatch & { verdict: Verdict }
+
+// A comparison of options near the face or on the body: the insight is the
+// headline ("Espresso is your black"), the note explains why.
+export type ComparisonTest<T> = { insight: string; note: string; panels: T[] }
+
 export type ColorReport = {
   seasonLean: string
   scales: { undertone: ScaleReading; depth: ScaleReading; chroma: ScaleReading; contrast: ScaleReading }
@@ -194,6 +205,44 @@ export type ColorReport = {
   guides: { title: string; text: string }[]
   avoidAdvice: string
   drape: { wear: ColorSwatch[]; avoid: ColorSwatch[] }
+  // Added with the visual report (Sep 2026); older reports lack them.
+  coloring?: { skin: string; hair: string; eyes: string }
+  signature?: string
+  gameChangers?: { title: string; text: string }[]
+  neutralsTest?: ComparisonTest<TestSwatch>
+  whitesTest?: ComparisonTest<TestSwatch>
+  metalsTest?: { best: 'gold' | 'silver' | 'both'; insight: string; note: string }
+  faceTest?: ComparisonTest<TestSwatch> & { kind: 'lips' | 'shirts' }
+  // 'beard' (menswear) compares facial hair styles instead of hair colors.
+  hairTest?: ComparisonTest<TestSwatch> & { current: string; kind?: 'color' | 'beard' }
+  paletteLooks?: { name: string; outfit: string }[]
+}
+
+export type BoardKind =
+  | 'neutrals'
+  | 'whites'
+  | 'metals'
+  | 'face'
+  | 'hair'
+  | 'palette'
+  | 'silhouettes'
+  | 'necklines'
+  | 'capsule'
+
+// One label per panel, in reading order (left to right, top to bottom).
+export type BoardPanel = { label: string; verdict: Verdict | 'current' | null; hex: string | null }
+
+export type ReportBoard = {
+  status: GenerationStatus
+  key: string | null
+  layout: 'grid' | 'pair' | 'single'
+  panels: BoardPanel[]
+  // What the image shows and what it is drawn from (the face, the full-body
+  // avatar, or nothing), kept so a retry renders the same board.
+  prompt: string
+  refs: 'portrait' | 'body' | 'none'
+  size: '1024x1024' | '1536x1024'
+  updatedAt: Date
 }
 
 // One image of the avatar with four fabric drapes near the face: two colors
@@ -217,6 +266,10 @@ export type StyleProfile = {
   signaturePieces: { name: string; color: string; colorHex: string; why: string }[]
   capsule: { slot: string; name: string; color: string; colorHex: string; material: string }[]
   skip: string[]
+  // Added with the visual report (Sep 2026); older profiles lack them.
+  silhouetteTest?: ComparisonTest<{ name: string; garment: string; verdict: Verdict }>
+  necklineTest?: ComparisonTest<{ name: string; verdict: Verdict }> & { kind: 'necklines' | 'collars' }
+  capsuleNote?: string
 }
 
 export type LookAnalysis = {
@@ -274,6 +327,63 @@ export type LookPlan = {
   whyItWorks: string
   items: LookItem[]
   stylingTips: string[]
+  // What the look took from the person's taste profile ("Boots over sneakers").
+  tasteApplied?: string[]
+}
+
+// What someone thought of a look. The aspects read with the rating: 'colors'
+// on a thumbs up means they loved the colors, on a thumbs down that the
+// colors were off. The last four only come with a thumbs down.
+export type FeedbackAspect =
+  | 'style'
+  | 'colors'
+  | 'fit'
+  | 'occasion'
+  | 'too_formal'
+  | 'too_casual'
+  | 'missed_request'
+  | 'weather'
+
+export type LookFeedback = {
+  rating: 'up' | 'down'
+  aspects: FeedbackAspect[]
+  // Pieces they singled out, by index in plan.items.
+  pieces: { index: number; vote: 'up' | 'down' }[]
+  note: string | null
+  at: Date
+}
+
+// 'fix' restyles a look the person disliked, from their feedback.
+export type RemixChange = 'colors' | 'season' | 'dressier' | 'casual' | 'occasion' | 'surprise' | 'custom' | 'fix'
+
+// One line of a taste profile. 'you' lines were written by the person and
+// are never rewritten; 'learned' lines come from their feedback.
+export type TasteNote = {
+  id: string
+  text: string
+  source: 'you' | 'learned'
+  // How many looks back a learned line up.
+  evidence: number
+}
+
+// What the stylist knows about someone's taste, one per user. Learning runs
+// in the background after feedback; `dirty` asks for one more pass when
+// feedback lands during a run.
+export type TasteDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  statement: string | null
+  summary: string | null
+  loves: TasteNote[]
+  avoids: TasteNote[]
+  // Learned lines the person removed; learning never brings them back.
+  dismissed: string[]
+  signals: number
+  learning: boolean
+  dirty: boolean
+  learnedAt: Date | null
+  createdAt: Date
+  updatedAt: Date
 }
 
 export type LookDocument = {
@@ -285,11 +395,19 @@ export type LookDocument = {
     text: string
     dressCode: string
     summary: string
+    // What the stylist understood the person asked for, shown back to them.
+    asks?: string[]
   }
   plan: LookPlan
+  feedback?: LookFeedback | null
+  // A variant of another look ("same style, new colors").
+  remixOf?: ObjectId | null
+  remix?: { change: RemixChange; detail: string | null } | null
   // 'tryon': rendered from an outfit photo the person uploaded.
   source?: 'stylist' | 'tryon'
   referenceKey?: string | null
+  // Try-ons of an icon look (modules/looks/icons.ts): which one.
+  iconId?: string | null
   status: GenerationStatus
   error: string | null
   imageKey: string | null
@@ -313,7 +431,7 @@ export type CollectionDocument = {
   updatedAt: Date
 }
 
-export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop'
+export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report'
 
 export type UsageCounterDocument = {
   _id: string

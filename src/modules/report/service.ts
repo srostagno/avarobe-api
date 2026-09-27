@@ -1,7 +1,17 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
-import type { AvatarDocument, ColorReport, ColorSwatch, LookAnalysis, LookDocument, StyleProfile } from '../../types/mongo.js'
+import type {
+  AvatarDocument,
+  ColorReport,
+  ColorSwatch,
+  LookAnalysis,
+  LookDocument,
+  Presentation,
+  StyleProfile,
+  TestSwatch,
+  Verdict,
+} from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
@@ -29,6 +39,18 @@ const cleanSwatches = (list: ColorSwatch[], max: number) =>
 
 const clampScore = (value: number) => Math.min(100, Math.max(0, Math.round(value)))
 
+// Tests read what to wear first, then what to avoid, whatever order the
+// model wrote them in.
+const wearFirst = <T extends { verdict: Verdict }>(panels: T[]) => [
+  ...panels.filter((panel) => panel.verdict === 'wear'),
+  ...panels.filter((panel) => panel.verdict !== 'wear'),
+]
+
+const cleanTestSwatches = (list: TestSwatch[], max: number) =>
+  wearFirst(list.filter((swatch) => HEX.test(swatch.hex)))
+    .slice(0, max)
+    .map((swatch) => ({ name: swatch.name.trim(), hex: swatch.hex.toUpperCase(), verdict: swatch.verdict }))
+
 export async function generateColorReport(avatar: AvatarDocument): Promise<ColorReport> {
   const selfie = await storage.read(avatar.selfieKey)
   const report = await createStructuredResponse<ColorReport>({
@@ -41,6 +63,13 @@ export async function generateColorReport(avatar: AvatarDocument): Promise<Color
     schema: colorReportSchema,
     timeoutMs: 120_000,
   })
+
+  return cleanColorReport(report, avatar.body.presentation)
+}
+
+// Keeps the model's report within what the page and the boards expect.
+export function cleanColorReport(report: ColorReport, presentation: Presentation): ColorReport {
+  const { neutralsTest, whitesTest, faceTest, hairTest } = report
 
   return {
     ...report,
@@ -60,6 +89,23 @@ export async function generateColorReport(avatar: AvatarDocument): Promise<Color
       .map((combination) => ({ ...combination, colors: cleanSwatches(combination.colors, 3) })),
     guides: report.guides.slice(0, 6),
     drape: { wear: cleanSwatches(report.drape.wear, 2), avoid: cleanSwatches(report.drape.avoid, 2) },
+    gameChangers: report.gameChangers?.slice(0, 3),
+    neutralsTest: neutralsTest && { ...neutralsTest, panels: cleanTestSwatches(neutralsTest.panels, 4) },
+    whitesTest: whitesTest && { ...whitesTest, panels: cleanTestSwatches(whitesTest.panels, 4) },
+    // Lips or shirts follow how they dress; the model only picks the colors.
+    faceTest: faceTest && {
+      ...faceTest,
+      kind: presentation === 'menswear' ? 'shirts' : 'lips',
+      panels: cleanTestSwatches(faceTest.panels, 4),
+    },
+    // Facial hair for menswear, hair color otherwise, like lips and shirts.
+    hairTest: hairTest && {
+      ...hairTest,
+      kind: presentation === 'menswear' ? 'beard' : 'color',
+      current: hairTest.current.trim(),
+      panels: cleanTestSwatches(hairTest.panels, 3),
+    },
+    paletteLooks: report.paletteLooks?.slice(0, 4),
   }
 }
 
@@ -127,13 +173,24 @@ export async function generateStyleProfile(app: FastifyInstance, avatar: AvatarD
     timeoutMs: 120_000,
   })
 
+  return cleanStyleProfile(profile, avatar.body.presentation)
+}
+
+export function cleanStyleProfile(profile: StyleProfile, presentation: Presentation): StyleProfile {
   const hex = (value: string) => (HEX.test(value) ? value.toUpperCase() : '#9A948C')
+  const { silhouetteTest, necklineTest } = profile
 
   return {
     ...profile,
     keywords: profile.keywords.slice(0, 5),
     signaturePieces: profile.signaturePieces.slice(0, 4).map((piece) => ({ ...piece, colorHex: hex(piece.colorHex) })),
     capsule: profile.capsule.slice(0, 12).map((item) => ({ ...item, colorHex: hex(item.colorHex) })),
+    silhouetteTest: silhouetteTest && { ...silhouetteTest, panels: wearFirst(silhouetteTest.panels).slice(0, 4) },
+    necklineTest: necklineTest && {
+      ...necklineTest,
+      kind: presentation === 'menswear' ? 'collars' : 'necklines',
+      panels: wearFirst(necklineTest.panels).slice(0, 4),
+    },
   }
 }
 

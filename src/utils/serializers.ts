@@ -94,6 +94,7 @@ export async function serializeLook(look: LookDocument) {
     occasion: look.occasion,
     plan: look.plan,
     source: look.source ?? 'stylist',
+    iconId: look.iconId ?? null,
     analysis: look.analysis?.data ?? null,
     referenceUrl: await signedUrlOrNull(look.referenceKey ?? null),
     pieces: await Promise.all(
@@ -115,6 +116,17 @@ export async function serializeLook(look: LookDocument) {
     previewUrl: look.status === 'processing' ? await signedUrlOrNull(look.previewKey ?? null) : null,
     collectionIds: look.collectionIds.map((id) => id.toString()),
     favorite: look.favorite,
+    feedback: look.feedback
+      ? {
+          rating: look.feedback.rating,
+          aspects: look.feedback.aspects,
+          pieces: look.feedback.pieces,
+          note: look.feedback.note,
+          at: look.feedback.at.toISOString(),
+        }
+      : null,
+    remixOf: look.remixOf?.toString() ?? null,
+    remix: look.remix ?? null,
     createdAt: look.createdAt.toISOString(),
     readyAt: look.readyAt?.toISOString() ?? null,
   }

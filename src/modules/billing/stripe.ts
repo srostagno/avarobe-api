@@ -47,7 +47,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   color_report: {
     lookupKey: 'avarobe_color_report_v1',
     name: 'Avarobe Color Report',
-    description: 'Your full palette, advanced color analysis and a drape test.',
+    description: 'Your full palette and a visual color report on your own face.',
     amount: () => env.COLOR_REPORT_PRICE_CENTS,
     credits: () => env.COLOR_REPORT_CREDITS,
     days: () => 0,

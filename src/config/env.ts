@@ -31,6 +31,9 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   AI_TEXT_MODEL: z.string().default('gpt-5.4-mini'),
   AI_TEXT_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  // The stylist that plans looks: brief-following matters more than speed here.
+  AI_STYLIST_MODEL: z.string().default('gpt-5.5'),
+  AI_STYLIST_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   AI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   AI_IMAGE_QUALITY: z.enum(['low', 'medium', 'high']).default('medium'),
   // Piece photos only feed store search, so a cheaper model does: measured
@@ -60,6 +63,8 @@ const envSchema = z.object({
   DAILY_LOOK_LIMIT: z.coerce.number().int().min(1).max(500).default(40),
   // Looks broken down into separate piece photos, and store searches.
   DAILY_PIECES_LIMIT: z.coerce.number().int().min(1).max(100).default(6),
+  // Writing a report renders its boards (up to 7 paid images), so rewrites are capped.
+  DAILY_REPORT_LIMIT: z.coerce.number().int().min(1).max(50).default(6),
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
   // SerpApi runs the Google Lens searches behind "Find it in stores".
   SERPAPI_API_KEY: z.string().optional(),

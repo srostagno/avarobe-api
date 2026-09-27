@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { AvatarDocument, LookDocument, LookItem, LookPiece, LookPlan } from '../../types/mongo.js'
+import type { AvatarDocument, LookDocument, LookItem, LookPiece, LookPlan, RemixChange } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
 import {
@@ -16,10 +16,12 @@ import { releaseGenerations } from '../../utils/usage.js'
 import { refundCredits } from '../billing/entitlements.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
+  type StylistTaste,
   TRY_ON_INSTRUCTIONS,
   buildLookPlanRequest,
   buildLookRenderPrompt,
   buildPiecePrompt,
+  buildRemixRequest,
   buildTryOnRenderPrompt,
   buildTryOnRequest,
   lookPlanSchema,
@@ -30,6 +32,7 @@ const HEX_PATTERN = /^#[0-9a-f]{6}$/i
 const RENDER_FAILED_MESSAGE = 'We could not render this look. Try again.'
 
 type LookPlanResponse = {
+  brief: { asks: string[]; styleSignature: string; climate: string }
   dressCode: string
   occasionSummary: string
   looks: LookPlan[]
@@ -46,39 +49,75 @@ function cleanItem(item: LookItem): LookItem {
   }
 }
 
-export async function planLooks(input: {
-  avatar: AvatarDocument
-  occasion: string
-  notes: string | null
-  count: number
-}) {
+function cleanPlan(look: LookPlan, taste: StylistTaste | null | undefined): LookPlan {
+  // Only lines that really are in their profile, so "Tuned to you" never
+  // shows something they didn't say or we didn't learn.
+  const loves = new Map((taste?.loves ?? []).map((line) => [line.trim().toLowerCase(), line]))
+
+  return {
+    ...look,
+    title: look.title.trim(),
+    // The card shows it as a chip.
+    vibe: look.vibe.trim().slice(0, 24),
+    items: look.items.slice(0, 8).map(cleanItem),
+    stylingTips: look.stylingTips.slice(0, 3),
+    tasteApplied: [
+      ...new Set(
+        (look.tasteApplied ?? [])
+          .map((line) => loves.get(line.trim().replace(/^- /, '').toLowerCase()))
+          .filter((line): line is string => Boolean(line)),
+      ),
+    ].slice(0, 2),
+  }
+}
+
+async function requestPlan(request: string, count: number, taste: StylistTaste | null | undefined) {
   const response = await createStructuredResponse<LookPlanResponse>({
     instructions: LOOK_PLAN_INSTRUCTIONS,
-    content: [{ type: 'input_text', text: buildLookPlanRequest(input) }],
+    content: [{ type: 'input_text', text: request }],
     schemaName: 'look_plan',
     schema: lookPlanSchema,
+    model: env.AI_STYLIST_MODEL,
+    reasoningEffort: env.AI_STYLIST_REASONING_EFFORT,
     timeoutMs: 120_000,
   })
 
   const looks = response.looks
     .filter((look) => look.items.length > 0)
-    .slice(0, input.count)
-    .map((look) => ({
-      ...look,
-      title: look.title.trim(),
-      items: look.items.slice(0, 8).map(cleanItem),
-      stylingTips: look.stylingTips.slice(0, 3),
-    }))
+    .slice(0, count)
+    .map((look) => cleanPlan(look, taste))
 
   if (looks.length === 0) {
     throw new Error('The stylist returned no looks.')
   }
 
   return {
+    asks: response.brief.asks.map((ask) => ask.trim()).filter(Boolean).slice(0, 6),
     dressCode: response.dressCode.trim(),
     occasionSummary: response.occasionSummary.trim(),
     looks,
   }
+}
+
+export async function planLooks(input: {
+  avatar: AvatarDocument
+  occasion: string
+  notes: string | null
+  count: number
+  taste?: StylistTaste | null
+}) {
+  return requestPlan(buildLookPlanRequest(input), input.count, input.taste)
+}
+
+// One variant of a look: same style, the change the person picked.
+export async function planRemix(input: {
+  avatar: AvatarDocument
+  base: Pick<LookDocument, 'plan' | 'occasion'>
+  change: RemixChange
+  detail: string | null
+  taste?: StylistTaste | null
+}) {
+  return requestPlan(buildRemixRequest(input), 1, input.taste)
 }
 
 type TryOnAnalysis = Omit<LookPlan, 'items'> & {

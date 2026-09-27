@@ -7,6 +7,7 @@ import { parseBody } from '../../utils/http.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { lookStorageKeys } from '../looks/service.js'
+import { boardKeys } from '../report/boards.js'
 
 const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
@@ -53,6 +54,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
           avatar?.avatarKey,
           avatar?.job?.previewKey,
           avatar?.drape?.key,
+          ...boardKeys(avatar?.reportBoards),
           ...(avatar?.versions ?? []).map((version) => version.key),
           ...looks.flatMap(lookStorageKeys),
         ].filter((key): key is string => Boolean(key)),
@@ -62,6 +64,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
     await Promise.all([
       app.collections.looks.deleteMany({ userId }),
+      app.collections.tastes.deleteMany({ userId }),
       app.collections.collections.deleteMany({ userId }),
       app.collections.avatars.deleteMany({ userId }),
       app.collections.refreshTokens.deleteMany({ userId }),

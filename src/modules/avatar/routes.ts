@@ -12,6 +12,7 @@ import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
 import { PaywallError, hasColorAccess, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
+import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { startAvatarJob } from './service.js'
 
@@ -168,7 +169,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const avatarId = existing?._id ?? new ObjectId()
       const newPhotos = Boolean(selfie || bodyPhoto)
 
-      await app.collections.avatars.updateOne(
+      // What it replaces comes from the document as it was right before, so
+      // a report image that finished rendering meanwhile goes too.
+      const previous = await app.collections.avatars.findOneAndUpdate(
         { userId },
         {
           $set: {
@@ -180,20 +183,23 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             readyAt: existing?.readyAt ?? null,
             avatarKey: existing?.avatarKey ?? null,
             styleProfile: null,
-            ...(selfieKey ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null } : {}),
+            ...(selfieKey ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null, reportBoards: null } : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
+          // A new selfie clears every board (above); the body, the style ones.
+          ...(selfieKey ? {} : { $unset: unsetBoards(STYLE_BOARDS) }),
           $inc: { generations: 1 },
           $setOnInsert: { _id: avatarId, userId, createdAt: now },
         },
-        { upsert: true },
+        { upsert: true, returnDocument: 'before' },
       )
 
       const replaced = [
-        selfieKey ? existing?.selfieKey : null,
-        selfieKey ? existing?.drape?.key : null,
-        bodyPhotoKey ? existing?.bodyPhotoKey : null,
+        selfieKey ? previous?.selfieKey : null,
+        selfieKey ? previous?.drape?.key : null,
+        bodyPhotoKey ? previous?.bodyPhotoKey : null,
+        ...boardKeys(previous?.reportBoards, selfieKey ? BOARD_KINDS : STYLE_BOARDS),
       ].filter((key): key is string => Boolean(key))
 
       await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
@@ -248,7 +254,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      await app.collections.avatars.updateOne(
+      const previous = await app.collections.avatars.findOneAndUpdate(
         { _id: existing._id },
         {
           $set: {
@@ -258,9 +264,16 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             updatedAt: new Date(),
             ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),
           },
+          ...(parsed.data.body ? { $unset: unsetBoards(STYLE_BOARDS) } : {}),
           $inc: { generations: 1 },
         },
+        { returnDocument: 'before' },
       )
+
+      // New measurements retire the style boards along with the profile.
+      const replaced = parsed.data.body ? boardKeys(previous?.reportBoards, STYLE_BOARDS) : []
+
+      await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
 
       startAvatarJob(app, existing._id, { kind: 'create', analyze: !existing.colorAnalysis })
 
@@ -411,6 +424,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.avatarKey,
           existing.job?.previewKey,
           existing.drape?.key,
+          ...boardKeys(existing.reportBoards),
           ...(existing.versions ?? []).map((version) => version.key),
         ].filter((key): key is string => Boolean(key)),
       ),
