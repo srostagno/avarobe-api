@@ -4,6 +4,7 @@ import fp from 'fastify-plugin'
 
 import { env } from '../config/env.js'
 import type {
+  ArrivalDocument,
   AuthChallengeDocument,
   AvatarDocument,
   CollectionDocument,
@@ -31,6 +32,7 @@ export type MongoCollections = {
   shopSearches: Collection<ShopSearchDocument>
   purchases: Collection<PurchaseDocument>
   emailSends: Collection<EmailSendDocument>
+  arrivals: Collection<ArrivalDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -51,6 +53,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     shopSearches: mongoDb.collection<ShopSearchDocument>('shop_searches'),
     purchases: mongoDb.collection<PurchaseDocument>('purchases'),
     emailSends: mongoDb.collection<EmailSendDocument>('email_sends'),
+    arrivals: mongoDb.collection<ArrivalDocument>('arrivals'),
   }
 }
 
@@ -103,6 +106,11 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.purchases.createIndex({ createdAt: -1 }),
     collections.emailSends.createIndex({ userId: 1, sentAt: -1 }),
     collections.emailSends.createIndex({ sentAt: -1 }),
+    collections.arrivals.createIndex(
+      { click: 1, stage: 1 },
+      { unique: true, partialFilterExpression: { click: { $type: 'string' } } },
+    ),
+    collections.arrivals.createIndex({ at: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }),
   ])
 }
 

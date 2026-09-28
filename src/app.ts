@@ -15,6 +15,7 @@ import billingRoutes, { billingWebhookRoutes } from './modules/billing/routes.js
 import reportRoutes from './modules/report/routes.js'
 import tasteRoutes from './modules/taste/routes.js'
 import collectionRoutes from './modules/collections/routes.js'
+import eventRoutes from './modules/events/routes.js'
 import healthRoutes from './modules/health/routes.js'
 import iconLookRoutes from './modules/looks/icon-routes.js'
 import lookRoutes from './modules/looks/routes.js'
@@ -95,6 +96,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(tasteRoutes, { prefix: '/taste' })
     await v1.register(lifecycleRoutes, { prefix: '/email' })
     await v1.register(adminRoutes, { prefix: '/admin' })
+    await v1.register(eventRoutes, { prefix: '/events' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
 
     if (env.STORAGE_DRIVER === 'local') {

@@ -108,3 +108,40 @@ export async function reportPurchase(
     }
   }
 }
+
+// A new account, reported to Meta from the server too (the pixel sends the
+// same event from the browser with the same event id, and Meta keeps one).
+// Browser ids, IP and user agent only: never the email.
+export async function reportRegistration(
+  app: FastifyInstance,
+  input: { metadata: Record<string, string>; eventId: string; method: string },
+) {
+  const metadata = input.metadata
+
+  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !metadata.fbp) {
+    return
+  }
+
+  try {
+    await post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
+      data: [
+        {
+          event_name: 'CompleteRegistration',
+          event_time: Math.floor(Date.now() / 1000),
+          event_id: input.eventId,
+          action_source: 'website',
+          event_source_url: `${env.APP_URL}/login`,
+          user_data: {
+            fbp: metadata.fbp,
+            ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
+            ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
+            ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
+          },
+          custom_data: { status: input.method },
+        },
+      ],
+    })
+  } catch (error) {
+    app.log.warn({ err: errorMessage(error), eventId: input.eventId }, 'Server registration event failed')
+  }
+}

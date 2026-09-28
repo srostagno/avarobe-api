@@ -327,7 +327,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .toArray()
     ).map((user) => user._id)
     const inCohort = { userId: { $in: cohort } }
-    const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual] = await Promise.all([
+    const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual, arrivals] = await Promise.all([
       app.collections.avatars.countDocuments({ ...inCohort, readyAt: { $ne: null } }),
       app.collections.looks.distinct('userId', inCohort),
       app.collections.looks.distinct('userId', { ...inCohort, source: 'tryon' }),
@@ -340,7 +340,14 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .toArray(),
       countPro('month'),
       countPro('year'),
+      app.collections.arrivals
+        .aggregate<{ _id: string; count: number; inApp: number }>([
+          { $match: { at: { $gte: since } } },
+          { $group: { _id: '$stage', count: { $sum: 1 }, inApp: { $sum: { $cond: ['$inApp', 1, 0] } } } },
+        ])
+        .toArray(),
     ])
+    const stage = (name: string) => arrivals.find((row) => row._id === name)
 
     return {
       days: parsed.data.days,
@@ -355,6 +362,14 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .map((row) => ({ product: row._id, count: row.count, buyers: row.buyers.length, revenue: row.revenue }))
         .sort((a, b) => b.revenue - a.revenue),
       revenue: purchases.reduce((sum, row) => sum + row.revenue, 0),
+      // Visits from Meta ads, counted by us: the request reached the site,
+      // the page ran, the click became an account.
+      ads: {
+        arrived: stage('arrived')?.count ?? 0,
+        loaded: stage('loaded')?.count ?? 0,
+        registered: stage('registered')?.count ?? 0,
+        inAppArrived: stage('arrived')?.inApp ?? 0,
+      },
       pro: {
         monthly: proMonthly,
         annual: proAnnual,

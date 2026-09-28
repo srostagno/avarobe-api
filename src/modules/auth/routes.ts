@@ -1,4 +1,4 @@
-import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify'
+import type { FastifyBaseLogger, FastifyPluginAsync, FastifyRequest } from 'fastify'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
@@ -30,21 +30,34 @@ import {
 } from '../../utils/password.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { hashToken } from '../../utils/tokens.js'
+import { attributionMetadata, reportRegistration } from '../billing/conversions.js'
+import { recordRegisteredClick } from '../events/service.js'
 
 const emailField = z.string().trim().toLowerCase().email().max(254)
 const passwordField = z.string().min(1).max(MAX_PASSWORD_LENGTH)
 const firstNameField = z.string().trim().max(60).optional()
 const tokenField = z.string().min(20).max(2_000)
 
+const idField = z.string().regex(/^[A-Za-z0-9._-]{1,200}$/)
+
+// Analytics ids from the browser (absent when the visitor opted out), and
+// the id the pixel used for this sign-up, so Meta merges both reports.
+const signupTracking = {
+  attribution: z.object({ gaClientId: idField.optional(), fbp: idField.optional(), fbc: idField.optional() }).optional(),
+  eventId: z.string().uuid().optional(),
+}
+
 const registerSchema = z.object({
   email: emailField,
   password: passwordField,
   firstName: firstNameField,
+  ...signupTracking,
 })
 
 const registerPasskeySchema = z.object({
   email: emailField,
   firstName: firstNameField,
+  ...signupTracking,
 })
 
 const loginSchema = z.object({
@@ -72,6 +85,24 @@ function recipient(user: UserDocument) {
 }
 
 const authRoutes: FastifyPluginAsync = async (app) => {
+  // Sign-ups reported from the server (Meta CAPI), and the ad click they
+  // came from counted as registered. Never blocks or fails the sign-up.
+  function reportSignup(
+    request: FastifyRequest,
+    data: { attribution?: { fbp?: string; fbc?: string; gaClientId?: string }; eventId?: string },
+    method: 'password' | 'passkey',
+  ) {
+    const metadata = attributionMetadata(data.attribution, request) as Record<string, string>
+
+    if (data.eventId) {
+      void reportRegistration(app, { metadata, eventId: data.eventId, method })
+    }
+
+    void recordRegisteredClick(app, data.attribution?.fbc).catch((error: unknown) =>
+      request.log.warn({ err: error }, 'Registered click not recorded'),
+    )
+  }
+
   async function sendVerification(log: FastifyBaseLogger, user: UserDocument, forPasskey: boolean) {
     const url = await createLink(app, user, 'verify_email', forPasskey ? 'passkey' : undefined)
 
@@ -179,6 +210,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+      reportSignup(request, parsed.data, 'password')
 
       return reply.code(201).send({ user: serializeUser(user), verification })
     },
@@ -237,6 +269,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           throw error
         }
       }
+
+      reportSignup(request, parsed.data, 'passkey')
 
       try {
         const result = await sendVerification(request.log, user, true)

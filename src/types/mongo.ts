@@ -92,6 +92,24 @@ export type PurchaseDocument = {
   createdAt: Date
 }
 
+// A visit from a Meta ad, counted by us to see where clicks get lost:
+// 'arrived' when the request reaches the web server, 'loaded' when the page
+// runs in the browser, 'registered' when that click becomes an account.
+// `click` is a hash of the ad click id (fbclid), never the id itself.
+export type ArrivalStage = 'arrived' | 'loaded' | 'registered'
+
+export type ArrivalDocument = {
+  _id: ObjectId
+  stage: ArrivalStage
+  click: string | null
+  path: string
+  campaign: string | null
+  content: string | null
+  inApp: boolean
+  mobile: boolean
+  at: Date
+}
+
 // One lifecycle email that went out, with what the person did with it:
 // opens (a tracking pixel; Apple Mail opens everything on its own, so read
 // them as a ceiling), clicks through our redirect, and unsubscribes.
