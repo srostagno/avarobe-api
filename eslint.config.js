@@ -26,4 +26,11 @@ export default [
       ],
     },
   },
+  {
+    // node:test's describe/it return promises the runner itself awaits.
+    files: ['src/**/__tests__/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'off',
+    },
+  },
 ]

@@ -13,6 +13,12 @@ const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
 })
 
+const emailPreferencesSchema = z.object({
+  // Tips and reminders (the onboarding emails). Account and security emails
+  // always go out.
+  tips: z.boolean(),
+})
+
 const meRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
@@ -26,6 +32,27 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     const user = await app.collections.users.findOneAndUpdate(
       { _id: requireUserId(request) },
       { $set: { firstName: parsed.data.firstName, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+
+    if (!user) {
+      return reply.code(404).send({ message: 'Account not found.' })
+    }
+
+    return { user: serializeUser(user) }
+  })
+
+  app.patch('/email', async (request, reply) => {
+    const parsed = parseBody(emailPreferencesSchema, request.body)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const now = new Date()
+    const user = await app.collections.users.findOneAndUpdate(
+      { _id: requireUserId(request) },
+      { $set: { emailTipsOptOutAt: parsed.data.tips ? null : now, updatedAt: now } },
       { returnDocument: 'after' },
     )
 

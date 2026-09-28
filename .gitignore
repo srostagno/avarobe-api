@@ -3,3 +3,6 @@ dist
 .env
 .storage
 evals/stylist/out
+
+# Rendered onboarding emails (scripts/email-preview.ts)
+.email-previews/

@@ -54,6 +54,12 @@ const envSchema = z.object({
   MAILERSEND_FROM_NAME: z.string().default('Avarobe'),
   // Development only: addresses that receive real email (comma-separated).
   EMAIL_DEV_ALLOWLIST: z.string().default(''),
+  // Onboarding emails (welcome and reminders). On by default in production,
+  // off elsewhere unless set to 'on'.
+  LIFECYCLE_EMAILS: z.enum(['on', 'off']).optional(),
+  // Postal address for the footer of promotional emails (CAN-SPAM). The
+  // Style Kit offer only goes out once it is set.
+  EMAIL_POSTAL_ADDRESS: z.string().optional(),
   VERIFY_EMAIL_TTL: z.string().default('24h'),
   PASSWORD_RESET_TTL: z.string().default('1h'),
   // Cost guards: generations per user per UTC day.
@@ -140,6 +146,8 @@ export const env = {
   S3_REGION: optionalTrimmed(raw.S3_REGION),
   MAILERSEND_API_KEY: optionalTrimmed(raw.MAILERSEND_API_KEY),
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
+  LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
+  EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
     .map((email) => email.trim().toLowerCase())
     .filter((email) => email.length > 0),

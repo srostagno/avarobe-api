@@ -17,6 +17,7 @@ import collectionRoutes from './modules/collections/routes.js'
 import healthRoutes from './modules/health/routes.js'
 import iconLookRoutes from './modules/looks/icon-routes.js'
 import lookRoutes from './modules/looks/routes.js'
+import lifecycleRoutes from './modules/lifecycle/routes.js'
 import mediaRoutes from './modules/media/routes.js'
 import meRoutes from './modules/me/routes.js'
 import mongodbPlugin from './plugins/mongodb.js'
@@ -91,6 +92,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(billingRoutes, { prefix: '/billing' })
     await v1.register(reportRoutes, { prefix: '/report' })
     await v1.register(tasteRoutes, { prefix: '/taste' })
+    await v1.register(lifecycleRoutes, { prefix: '/email' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
 
     if (env.STORAGE_DRIVER === 'local') {

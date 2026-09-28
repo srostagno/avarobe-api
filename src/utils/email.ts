@@ -70,6 +70,24 @@ export async function deliverLinkEmail(input: {
   return { sent: true }
 }
 
+// Onboarding emails (modules/lifecycle). Throws when delivery fails so the
+// caller can try again on its next run. Returns false when it didn't send
+// (development, address not allowlisted).
+export async function deliverEmail(input: {
+  log: FastifyBaseLogger
+  to: { email: string; name?: string }
+  content: EmailContent
+}) {
+  if (!shouldDeliver(input.to.email)) {
+    input.log.info({ email: input.to.email, subject: input.content.subject }, 'Dev email (not sent)')
+    return false
+  }
+
+  await sendViaMailersend(input.to, input.content)
+
+  return true
+}
+
 // Security notices (password changed, passkey added). Best effort: a failed
 // notice never blocks the action that triggered it.
 export async function sendNotice(input: {

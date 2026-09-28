@@ -54,6 +54,8 @@ export function buildCollections(mongoDb: Db): MongoCollections {
 async function ensureMongoIndexes(collections: MongoCollections) {
   await Promise.all([
     collections.users.createIndex({ email: 1 }, { unique: true }),
+    // Onboarding emails look at recent sign-ups.
+    collections.users.createIndex({ createdAt: -1 }),
     collections.refreshTokens.createIndex({ tokenHash: 1 }, { unique: true }),
     collections.refreshTokens.createIndex({ userId: 1 }),
     collections.refreshTokens.createIndex(

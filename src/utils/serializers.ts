@@ -14,6 +14,7 @@ export function serializeUser(user: UserDocument) {
     firstName: user.firstName,
     hasPassword: Boolean(user.passwordHash),
     emailVerified: Boolean(user.emailVerifiedAt),
+    emailTips: !user.emailTipsOptOutAt,
     billing: serializeBilling(user),
     createdAt: user.createdAt.toISOString(),
   }

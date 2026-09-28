@@ -10,7 +10,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "tsx --test \"src/**/__tests__/*.test.ts\"",
-    "test:auth": "node scripts/auth-e2e.mjs"
+    "test:auth": "node scripts/auth-e2e.mjs",
+    "email:preview": "tsx scripts/email-preview.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",

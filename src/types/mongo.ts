@@ -30,7 +30,16 @@ export type UserDocument = {
   freeAvatarRuns?: number
   // Admins (COMP_EMAILS) testing the app as a regular customer.
   compPaused?: boolean
+  // Onboarding emails (modules/lifecycle): when each one went out, and the
+  // latest, so they stay spaced out.
+  lifecycleEmails?: Partial<Record<LifecycleEmailKind, Date>>
+  lifecycleEmailLastAt?: Date | null
+  // Opted out of tips and reminders (unsubscribe link or account settings).
+  // Account and security emails still go out.
+  emailTipsOptOutAt?: Date | null
 }
+
+export type LifecycleEmailKind = 'welcome' | 'avatar_nudge' | 'looks_nudge' | 'kit_offer'
 
 export type PlusSubscription = {
   subscriptionId: string
