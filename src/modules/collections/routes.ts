@@ -79,6 +79,17 @@ const collectionRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
+    // Creating a name that already exists returns that collection (any
+    // capitalization), so a double tap never makes "Cocktail attire" twice.
+    const existing = await app.collections.collections.findOne(
+      { userId, name: parsed.data.name },
+      { collation: { locale: 'en', strength: 2 } },
+    )
+
+    if (existing) {
+      return reply.code(200).send({ collection: await summarize(app, existing) })
+    }
+
     if ((await app.collections.collections.countDocuments({ userId })) >= MAX_COLLECTIONS) {
       return reply
         .code(409)
