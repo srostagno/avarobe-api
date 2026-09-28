@@ -66,14 +66,17 @@ describe('lifecycle templates', () => {
 describe('offer emails', () => {
   it('show the current prices and say how Pro renews', () => {
     const offer = upgradeOfferEmail(recipient)
-    assert.ok(offer.html.includes('$59.90/yr'))
-    assert.ok(offer.html.includes('$10.90/mo'))
-    assert.ok(offer.html.includes('$4.99 a month'))
+    assert.ok(offer.subject.includes('from $4.99 a month'))
+    // Every way to pay, annual first.
+    for (const price of ['$59.90/yr', '$10.90/mo', '$14.90', '$19.90', '$9.90']) {
+      assert.ok(offer.html.includes(price), price)
+    }
+    assert.ok(offer.html.indexOf('Pro annual') < offer.html.indexOf('Pro monthly'))
     assert.ok(offer.text.includes('renews automatically'))
     const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
     assert.ok(reminder.subject.includes('Soft Summer'))
     assert.ok(reminder.html.includes('$14.90'))
-    assert.ok(reminder.html.includes('save $4.90'))
+    assert.ok(reminder.html.includes('Save $4.90'))
   })
 
   it('carry the postal address only when it is set', () => {

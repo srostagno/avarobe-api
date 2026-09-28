@@ -414,22 +414,41 @@ const perMonth = (yearCents: number) => money(Math.floor(yearCents / 12))
 const RENEWAL_NOTE =
   'Pro renews automatically until you cancel, and you can cancel anytime in your account settings. Changed your mind? Write to hello@avarobe.com within 7 days of your first payment.'
 
-function proPlans(): Block {
-  return plans([
-    {
-      name: 'Pro annual',
-      price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
-      detail: `${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month, with your Color and Style Reports included`,
-      badge: 'Best value',
-    },
-    { name: 'Pro monthly', price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`, detail: 'Cancel anytime' },
-    { name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks, no subscription` },
-  ])
+const bundleSavings = () => env.PRICE_COLOR_REPORT_CENTS + env.PRICE_STYLE_REPORT_CENTS - env.PRICE_REPORTS_BUNDLE_CENTS
+
+const PLAN = {
+  annual: () => ({
+    name: 'Pro annual',
+    price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
+    detail: `${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month, with your Color and Style Reports included`,
+    badge: 'Best value',
+  }),
+  monthly: () => ({
+    name: 'Pro monthly',
+    price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`,
+    detail: `${env.PRO_MONTHLY_CREDITS} looks every month. Cancel anytime`,
+  }),
+  colorReport: () => ({ name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'Your full palette and drape test, yours to keep' }),
+  reports: () => ({
+    name: 'Color + Style Reports',
+    price: money(env.PRICE_REPORTS_BUNDLE_CENTS),
+    detail: `Your colors plus the cuts and necklines that flatter you. Save ${money(bundleSavings())}`,
+  }),
+  pack: () => ({ name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks. They never expire` }),
+}
+
+// Every way to pay, with Pro annual first and highlighted.
+function allPlans(): Block[] {
+  return [
+    plans([PLAN.annual(), PLAN.monthly()]),
+    small('Or pay once, no subscription:'),
+    plans([PLAN.colorReport(), PLAN.reports(), PLAN.pack()]),
+  ]
 }
 
 export function upgradeOfferEmail(input: Recipient): EmailContent {
   return layout({
-    subject: `Your next ${env.PRO_MONTHLY_CREDITS} looks, for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month`,
+    subject: `Your next ${env.PRO_MONTHLY_CREDITS} looks, from ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month`,
     preheader: `Avarobe Pro: ${env.PRO_MONTHLY_CREDITS} looks every month, try-ons from any photo, and your color and style reports.`,
     hero: {
       src: `${ASSETS}/occasions.jpg`,
@@ -448,7 +467,7 @@ export function upgradeOfferEmail(input: Recipient): EmailContent {
         'Every piece of a look, found in stores',
         'Your Color Report and Style Report, included with the annual plan',
       ]),
-      proPlans(),
+      ...allPlans(),
       button('See my options', appLink('/studio', 'upgrade_offer', { upgrade: 'look' })),
       small(RENEWAL_NOTE),
       signature(),
@@ -458,7 +477,6 @@ export function upgradeOfferEmail(input: Recipient): EmailContent {
 
 export function upgradeReminderEmail(input: Recipient & { season: string | null; colors: ColorSwatch[] }): EmailContent {
   const { season, colors } = input
-  const bundleSavings = env.PRICE_COLOR_REPORT_CENTS + env.PRICE_STYLE_REPORT_CENTS - env.PRICE_REPORTS_BUNDLE_CENTS
 
   return layout({
     subject: season ? `The rest of your ${season} palette` : 'The colors that light you up',
@@ -481,18 +499,16 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
         'Guides for prints, denim, makeup and eyewear',
       ]),
       plans([
-        { name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'One time, yours to keep' },
         {
-          name: 'Color + Style Reports',
-          price: money(env.PRICE_REPORTS_BUNDLE_CENTS),
-          detail: `Add the cuts and necklines that flatter you, and save ${money(bundleSavings)}`,
+          ...PLAN.annual(),
+          detail: `Both reports included, plus ${env.PRO_MONTHLY_CREDITS} looks every month (${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}/mo)`,
         },
-        {
-          name: 'Included with Pro annual',
-          price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
-          detail: `Both reports and ${env.PRO_MONTHLY_CREDITS} looks every month`,
-        },
+        { ...PLAN.colorReport(), detail: 'One time, yours to keep' },
+        PLAN.reports(),
       ]),
+      small(
+        `Prefer month to month? Pro monthly is ${money(env.PRICE_PRO_MONTHLY_CENTS)}. Just need looks? ${env.LOOK_PACK_CREDITS} for ${money(env.PRICE_LOOK_PACK_CENTS)}.`,
+      ),
       button('Get my Color Report', appLink('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
       signature(),
     ],
@@ -521,6 +537,8 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
         RENEWAL_NOTE,
       ),
       button('Go Pro annual', appLink('/studio', 'upgrade_last_call', { upgrade: 'look' })),
+      small('Other ways to pay:'),
+      plans([PLAN.monthly(), PLAN.colorReport(), PLAN.pack()]),
       small('Not ready? Your avatar, your season and your looks stay in your account, and you can pick up anytime.'),
       signature(),
     ],

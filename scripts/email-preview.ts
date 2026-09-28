@@ -1,7 +1,8 @@
 // Renders every onboarding email with sample data, to check the design.
 //
-//   corepack pnpm email:preview                 -> .email-previews/*.html (+ .txt)
-//   corepack pnpm email:preview you@example.com -> also sends them to that address
+//   corepack pnpm email:preview                                -> .email-previews/*.html (+ .txt)
+//   corepack pnpm email:preview you@example.com                -> also sends them to that address
+//   corepack pnpm email:preview you@example.com upgrade-offer  -> sends only the ones named
 //
 // Sending goes through the normal path, so in development the address has
 // to be in EMAIL_DEV_ALLOWLIST.
@@ -55,9 +56,14 @@ for (const [name, email] of Object.entries(emails)) {
 }
 
 const sendTo = process.argv[2]
+const only = process.argv.slice(3)
 
 if (sendTo) {
   for (const [name, email] of Object.entries(emails)) {
+    if (only.length > 0 && !only.includes(name)) {
+      continue
+    }
+
     const sent = await deliverEmail({ log, to: { email: sendTo, name: 'Preview' }, content: { ...email, subject: `[Preview] ${email.subject}` } })
     console.log(`${name}: ${sent ? 'sent' : 'not sent (address not in EMAIL_DEV_ALLOWLIST)'}`)
   }

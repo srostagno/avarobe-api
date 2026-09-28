@@ -181,6 +181,18 @@ async function creditCoupon(cents: number) {
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
+// Checkout shows the Stripe account's name, Trimry's, unless told otherwise.
+// This covers the top of the page; Stripe keeps the account name in its
+// terms line and receipts. (Accepted by the API; not yet in this SDK's types.)
+const BRANDING = {
+  display_name: 'Avarobe',
+  icon: { type: 'url', url: 'https://www.avarobe.com/brand/avarobe-logo.png' },
+  background_color: '#F7F4EF',
+  button_color: '#171412',
+  border_style: 'pill',
+  font_family: 'inter',
+}
+
 // What checkout says next to the pay button: how a subscription renews and
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
@@ -216,22 +228,20 @@ export async function createCheckout(input: {
     // Stripe takes either a discount or the promotion code field.
     ...(discount ? { discounts: [{ coupon: discount }] } : { allow_promotion_codes: true }),
     custom_text: { submit: { message: submitMessage(input.product) } },
+    branding_settings: BRANDING,
     success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
   }
-  const session = PRODUCTS[input.product].recurring
-    ? await stripe().checkout.sessions.create({
-        ...common,
-        mode: 'subscription',
-        subscription_data: { metadata },
-      })
-    : await stripe().checkout.sessions.create({
+  const params: Stripe.Checkout.SessionCreateParams = PRODUCTS[input.product].recurring
+    ? { ...common, mode: 'subscription', subscription_data: { metadata } }
+    : {
         ...common,
         mode: 'payment',
         // The account is shared with Trimry: without this, card statements
         // would only say the account's name.
         payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
-      })
+      }
+  const session = await stripe().checkout.sessions.create(params)
 
   if (!session.url) {
     throw new Error('Stripe returned a checkout session without a URL.')
