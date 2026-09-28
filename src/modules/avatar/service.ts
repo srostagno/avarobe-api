@@ -17,6 +17,7 @@ import {
 } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
+import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
 import {
   COLOR_ANALYSIS_INSTRUCTIONS,
   buildAvatarPrompt,
@@ -24,7 +25,6 @@ import {
   colorAnalysisSchema,
 } from './prompts.js'
 
-const HEX_PATTERN = /^#[0-9a-f]{6}$/i
 const MAX_VERSIONS = 6
 const CREATE_FAILED = 'We could not finish your avatar. Please try again.'
 const REFINE_FAILED = 'We could not apply those changes. Your avatar is unchanged; try again.'
@@ -33,15 +33,8 @@ export type AvatarJobOptions =
   | { kind: 'create'; analyze: boolean }
   | { kind: 'refine'; adjustments: AvatarAdjustment[]; notes: string | null }
 
-function cleanSwatches(swatches: ColorAnalysis['bestColors'], max: number) {
-  return swatches
-    .filter((swatch) => swatch.name.trim() && HEX_PATTERN.test(swatch.hex))
-    .slice(0, max)
-    .map((swatch) => ({ name: swatch.name.trim(), hex: swatch.hex.toUpperCase() }))
-}
-
-export async function analyzeColors(selfie: Buffer): Promise<ColorAnalysis> {
-  const analysis = await createStructuredResponse<ColorAnalysis>({
+function requestColorAnalysis(selfie: Buffer) {
+  return createStructuredResponse<ColorAnalysis>({
     instructions: COLOR_ANALYSIS_INSTRUCTIONS,
     content: [
       {
@@ -53,13 +46,17 @@ export async function analyzeColors(selfie: Buffer): Promise<ColorAnalysis> {
     schemaName: 'color_analysis',
     schema: colorAnalysisSchema,
   })
+}
 
-  return {
-    ...analysis,
-    bestColors: cleanSwatches(analysis.bestColors, 12),
-    neutrals: cleanSwatches(analysis.neutrals, 6),
-    avoidColors: cleanSwatches(analysis.avoidColors, 5),
+export async function analyzeColors(selfie: Buffer): Promise<ColorAnalysis> {
+  let analysis = await requestColorAnalysis(selfie)
+
+  // A word from another script slipped into the English: ask once more.
+  if (analysisHasForeignScript(analysis)) {
+    analysis = await requestColorAnalysis(selfie)
   }
+
+  return cleanColorAnalysis(analysis)
 }
 
 // Avatars made before versioning have a key but no history; treat that
