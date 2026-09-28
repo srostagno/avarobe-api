@@ -58,7 +58,7 @@ const envSchema = z.object({
   // off elsewhere unless set to 'on'.
   LIFECYCLE_EMAILS: z.enum(['on', 'off']).optional(),
   // Postal address for the footer of promotional emails (CAN-SPAM). The
-  // Style Kit offer only goes out once it is set.
+  // upgrade offer and its reminders only go out once it is set.
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
   VERIFY_EMAIL_TTL: z.string().default('24h'),
   PASSWORD_RESET_TTL: z.string().default('1h'),
@@ -74,29 +74,29 @@ const envSchema = z.object({
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
   // SerpApi runs the Google Lens searches behind "Find it in stores".
   SERPAPI_API_KEY: z.string().optional(),
-  // Billing (Stripe Checkout, one-time payments). Products and prices are
-  // created in Stripe on first use, found again by lookup key.
+  // Billing (Stripe Checkout). Products and prices are created in Stripe on
+  // first use and found again by lookup key; a new amount gets a new price.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STYLE_KIT_PRICE_CENTS: z.coerce.number().int().min(100).default(2999),
-  STYLE_KIT_CREDITS: z.coerce.number().int().min(1).default(30),
-  STYLE_KIT_DAYS: z.coerce.number().int().min(1).default(60),
-  TOP_UP_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
-  TOP_UP_CREDITS: z.coerce.number().int().min(1).default(20),
-  TOP_UP_DAYS: z.coerce.number().int().min(1).default(30),
-  // Downsell when the Kit is declined, and the upgrade from it to the Kit.
-  COLOR_REPORT_PRICE_CENTS: z.coerce.number().int().min(100).default(1299),
-  COLOR_REPORT_CREDITS: z.coerce.number().int().min(0).default(3),
-  KIT_UPGRADE_PRICE_CENTS: z.coerce.number().int().min(100).default(1700),
-  KIT_UPGRADE_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
-  // Avarobe Plus: offered to people who had the Kit.
-  PLUS_PRICE_CENTS: z.coerce.number().int().min(100).default(999),
-  PLUS_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(40),
+  // The price list (US cents). The reports are one-time and yours to keep;
+  // the look pack never expires; Pro is a subscription, monthly or annual,
+  // and the annual plan includes both reports.
+  PRICE_COLOR_REPORT_CENTS: z.coerce.number().int().min(100).default(1490),
+  PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(990),
+  PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
+  PRICE_LOOK_PACK_CENTS: z.coerce.number().int().min(100).default(990),
+  LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
+  PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(1090),
+  PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(5990),
+  PRO_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(30),
+  // For this many days after buying a report, it counts toward the other
+  // report (the bundle price) and toward Pro annual.
+  REPORT_CREDIT_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
   // Free allowance: looks on sign-up (a full set of 3 for the first
   // occasion), and avatar renders (create + one redo).
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
-  // Accounts with the Style Kit for free, e.g. the founder and testers.
+  // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
   // Server-side purchase events (see billing/conversions.ts). The ids are
   // public; each side turns on when its secret is set.

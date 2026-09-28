@@ -21,12 +21,16 @@ export type UserDocument = {
   lockedUntil?: Date | null
   // Billing. Missing credits means the sign-up allowance (FREE_CREDITS).
   credits?: number
-  styleKitUntil?: Date | null
-  // Bought the Color Report: full palette and color report, for good.
+  // The reports, bought on their own or with Pro annual: yours to keep.
   colorReportAt?: Date | null
-  // Avarobe Plus (monthly subscription): the Kit while active + monthly credits.
-  plus?: PlusSubscription | null
-  // Avatar renders used without a Style Kit (create, redo, adjust).
+  styleReportAt?: Date | null
+  // Avarobe Pro (monthly or annual subscription).
+  pro?: ProSubscription | null
+  // Legacy: the Style Kit of the first price list (everything until then).
+  styleKitUntil?: Date | null
+  // First purchase of anything (reports, a look pack or Pro).
+  paidAt?: Date | null
+  // Avatar renders used without Pro (create, redo, adjust).
   freeAvatarRuns?: number
   // Admins (COMP_EMAILS) testing the app as a regular customer.
   compPaused?: boolean
@@ -39,17 +43,39 @@ export type UserDocument = {
   emailTipsOptOutAt?: Date | null
 }
 
-export type LifecycleEmailKind = 'welcome' | 'avatar_nudge' | 'looks_nudge' | 'kit_offer'
+export type LifecycleEmailKind =
+  | 'welcome'
+  | 'avatar_nudge'
+  | 'looks_nudge'
+  // Out of free looks: the offer, then two reminders.
+  | 'upgrade_offer'
+  | 'upgrade_reminder'
+  | 'upgrade_last_call'
 
-export type PlusSubscription = {
+export type ProSubscription = {
   subscriptionId: string
   customerId: string | null
   status: string
+  interval: 'month' | 'year'
   periodEnd: Date | null
   cancelAtPeriodEnd: boolean
+  // Annual plans get their monthly looks from a scheduler: the next drop.
+  nextCreditsAt?: Date | null
 }
 
-export type PurchaseProduct = 'style_kit' | 'top_up' | 'color_report' | 'kit_upgrade' | 'plus'
+export type PurchaseProduct =
+  | 'color_report'
+  | 'style_report'
+  | 'reports_bundle'
+  // The other report at the bundle price, soon after buying one.
+  | 'color_addon'
+  | 'style_addon'
+  | 'look_pack'
+  | 'pro_monthly'
+  | 'pro_annual'
+
+// Products of the first price list (Sep 2026), found in old records only.
+export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'
 
 // One payment. The unique stripeSessionId (a Checkout session id, or the
 // invoice id for Plus months) makes granting idempotent: the success page and
@@ -57,14 +83,32 @@ export type PurchaseProduct = 'style_kit' | 'top_up' | 'color_report' | 'kit_upg
 export type PurchaseDocument = {
   _id: ObjectId
   userId: ObjectId
-  product: PurchaseProduct
+  product: PurchaseProduct | LegacyPurchaseProduct
   stripeSessionId: string
   stripePaymentIntentId: string | null
   amountTotal: number
   currency: string
   credits: number
-  kitDays: number
   createdAt: Date
+}
+
+// One lifecycle email that went out, with what the person did with it:
+// opens (a tracking pixel; Apple Mail opens everything on its own, so read
+// them as a ceiling), clicks through our redirect, and unsubscribes.
+// Purchases are attributed at read time (admin/routes.ts).
+export type EmailSendDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  kind: LifecycleEmailKind
+  subject: string
+  sentAt: Date
+  // Set by the first open or click ($min on a missing field).
+  opens: number
+  firstOpenAt?: Date
+  clicks: number
+  firstClickAt?: Date
+  lastClickAt?: Date
+  unsubscribedAt?: Date
 }
 
 // A WebAuthn credential (passkey). The private key stays on the person's

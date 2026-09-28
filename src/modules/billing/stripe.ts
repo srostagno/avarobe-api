@@ -3,74 +3,98 @@ import { ObjectId } from 'mongodb'
 import Stripe from 'stripe'
 
 import { env } from '../../config/env.js'
-import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
+import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { reportPurchase } from './conversions.js'
+import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
 // webhook skips one-time payments, and it can't match Avarobe subscriptions:
 // they use their own customers and never send a Trimry-shaped reference.
 const APP = 'avarobe'
-const DAY_MS = 24 * 60 * 60 * 1000
 
 type ProductConfig = {
   lookupKey: string
   name: string
   description: string
   amount: () => number
-  // Credits and Style Kit days granted per payment (per month for Plus).
+  // Credits per payment (per month for Pro).
   credits: () => number
-  days: () => number
-  recurring?: 'month'
-  // The Color Report unlocks the full palette and color report for good.
-  unlocksColor?: boolean
+  recurring?: 'month' | 'year'
+  // Reports the payment unlocks, for good.
+  unlocks?: { color?: boolean; style?: boolean }
 }
 
 export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
-  style_kit: {
-    lookupKey: 'avarobe_style_kit_v1',
-    name: 'Avarobe Style Kit',
-    description: 'Advanced color analysis, your style profile, try-ons, shopping and looks for your occasions.',
-    amount: () => env.STYLE_KIT_PRICE_CENTS,
-    credits: () => env.STYLE_KIT_CREDITS,
-    days: () => env.STYLE_KIT_DAYS,
-  },
-  top_up: {
-    lookupKey: 'avarobe_top_up_v1',
-    name: 'Avarobe credits top-up',
-    description: 'More looks and try-ons, and more time with your Style Kit.',
-    amount: () => env.TOP_UP_PRICE_CENTS,
-    credits: () => env.TOP_UP_CREDITS,
-    days: () => env.TOP_UP_DAYS,
-  },
   color_report: {
-    lookupKey: 'avarobe_color_report_v1',
+    lookupKey: 'avarobe_color_report_v2',
     name: 'Avarobe Color Report',
-    description: 'Your full palette and a visual color report on your own face.',
-    amount: () => env.COLOR_REPORT_PRICE_CENTS,
-    credits: () => env.COLOR_REPORT_CREDITS,
-    days: () => 0,
-    unlocksColor: true,
+    description: 'Your full palette and a visual color report on your own face: drape test, boards and guides.',
+    amount: () => env.PRICE_COLOR_REPORT_CENTS,
+    credits: () => 0,
+    unlocks: { color: true },
   },
-  kit_upgrade: {
-    lookupKey: 'avarobe_kit_upgrade_v1',
-    name: 'Avarobe Style Kit (upgrade)',
-    description: 'The Style Kit, with your Color Report counted toward it.',
-    amount: () => env.KIT_UPGRADE_PRICE_CENTS,
-    credits: () => env.STYLE_KIT_CREDITS,
-    days: () => env.STYLE_KIT_DAYS,
+  style_report: {
+    lookupKey: 'avarobe_style_report_v1',
+    name: 'Avarobe Style Report',
+    description: 'Your style profile: the cuts, necklines and pieces that flatter you, shown on your avatar.',
+    amount: () => env.PRICE_STYLE_REPORT_CENTS,
+    credits: () => 0,
+    unlocks: { style: true },
   },
-  plus: {
-    lookupKey: 'avarobe_plus_monthly_v1',
-    name: 'Avarobe Plus',
-    description: 'Everything in the Style Kit, with new credits every month.',
-    amount: () => env.PLUS_PRICE_CENTS,
-    credits: () => env.PLUS_MONTHLY_CREDITS,
-    days: () => 0,
+  reports_bundle: {
+    lookupKey: 'avarobe_reports_bundle_v1',
+    name: 'Avarobe Color + Style Reports',
+    description: 'Both reports: your full color report and your style profile.',
+    amount: () => env.PRICE_REPORTS_BUNDLE_CENTS,
+    credits: () => 0,
+    unlocks: { color: true, style: true },
+  },
+  color_addon: {
+    lookupKey: 'avarobe_color_addon_v1',
+    name: 'Avarobe Color Report (completes your set)',
+    description: 'The Color Report at the bundle price, with your Style Report counted toward it.',
+    amount: colorAddonCents,
+    credits: () => 0,
+    unlocks: { color: true },
+  },
+  style_addon: {
+    lookupKey: 'avarobe_style_addon_v1',
+    name: 'Avarobe Style Report (completes your set)',
+    description: 'The Style Report at the bundle price, with your Color Report counted toward it.',
+    amount: styleAddonCents,
+    credits: () => 0,
+    unlocks: { style: true },
+  },
+  look_pack: {
+    lookupKey: 'avarobe_look_pack_v1',
+    name: 'Avarobe look pack',
+    description: 'More looks for your occasions. They never expire.',
+    amount: () => env.PRICE_LOOK_PACK_CENTS,
+    credits: () => env.LOOK_PACK_CREDITS,
+  },
+  pro_monthly: {
+    lookupKey: 'avarobe_pro_monthly_v1',
+    name: 'Avarobe Pro (monthly)',
+    description: 'New looks every month, try-ons, every piece in stores and more.',
+    amount: () => env.PRICE_PRO_MONTHLY_CENTS,
+    credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'month',
   },
+  pro_annual: {
+    lookupKey: 'avarobe_pro_annual_v1',
+    name: 'Avarobe Pro (annual)',
+    description: 'Everything in Pro for a year, with your Color and Style Reports included.',
+    amount: () => env.PRICE_PRO_ANNUAL_CENTS,
+    credits: () => env.PRO_MONTHLY_CREDITS,
+    recurring: 'year',
+    unlocks: { color: true, style: true },
+  },
 }
+
+const isPro = (product: string): product is 'pro_monthly' | 'pro_annual' =>
+  product === 'pro_monthly' || product === 'pro_annual'
 
 export class BillingNotConfiguredError extends Error {}
 
@@ -134,15 +158,54 @@ async function priceFor(product: PurchaseProduct) {
   return price.id
 }
 
+// A one-time discount of `cents` for the first payment (reports counted
+// toward Pro annual). One coupon per amount, created on first use.
+async function creditCoupon(cents: number) {
+  const id = `avarobe_report_credit_${cents}`
+
+  try {
+    return (await stripe().coupons.retrieve(id)).id
+  } catch {
+    return (
+      await stripe().coupons.create({
+        id,
+        name: 'Your reports, counted toward Pro',
+        amount_off: cents,
+        currency: 'usd',
+        duration: 'once',
+        metadata: { app: APP },
+      })
+    ).id
+  }
+}
+
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
+
+// What checkout says next to the pay button: how a subscription renews and
+// how to cancel it, as auto-renewal laws ask; for one-time payments, that
+// there is nothing recurring.
+function submitMessage(product: PurchaseProduct) {
+  const config = PRODUCTS[product]
+
+  if (config.recurring) {
+    return `Renews automatically at ${money(config.amount())} per ${config.recurring} until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`
+  }
+
+  return 'One-time payment. No subscription.'
+}
+
 export async function createCheckout(input: {
   user: Pick<UserDocument, '_id' | 'email'>
   product: PurchaseProduct
   returnPath: string
+  // Reports bought recently, counted toward Pro annual.
+  discountCents?: number
   // Analytics ids for server-side purchase events (conversions.ts).
   attribution?: Record<string, string>
 }) {
   const userId = input.user._id.toString()
   const metadata = { ...input.attribution, app: APP, product: input.product, userId }
+  const discount = input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents) : null
   const common = {
     line_items: [{ price: await priceFor(input.product), quantity: 1 }],
     // Not a bare ObjectId, so Trimry's webhook can never take it for one of
@@ -150,7 +213,9 @@ export async function createCheckout(input: {
     client_reference_id: `${APP}_${userId}`,
     customer_email: input.user.email,
     metadata,
-    allow_promotion_codes: true,
+    // Stripe takes either a discount or the promotion code field.
+    ...(discount ? { discounts: [{ coupon: discount }] } : { allow_promotion_codes: true }),
+    custom_text: { submit: { message: submitMessage(input.product) } },
     success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
   }
@@ -187,7 +252,7 @@ export function verifyWebhook(payload: string, signature: string) {
   return stripe().webhooks.constructEvent(payload, signature, env.STRIPE_WEBHOOK_SECRET)
 }
 
-// Paid, or free through a 100% promotion code (gifted Kits, live tests).
+// Paid, or free through a 100% promotion code (gifts, live tests).
 export function sessionSettled(session: Stripe.Checkout.Session) {
   return session.payment_status === 'paid' || session.payment_status === 'no_payment_required'
 }
@@ -203,6 +268,12 @@ function avarobeUserId(metadata: Stripe.Metadata | null | undefined) {
   return new ObjectId(metadata.userId)
 }
 
+export function addMonths(date: Date, months: number) {
+  const next = new Date(date)
+  next.setUTCMonth(next.getUTCMonth() + months)
+  return next
+}
+
 type Grant = {
   userId: ObjectId
   product: PurchaseProduct
@@ -210,13 +281,13 @@ type Grant = {
   paymentIntentId: string | null
   amount: number
   currency: string
-  // Extra fields to set on the user alongside credits and Kit time.
+  // Extra fields to set on the user alongside credits and reports.
   set?: (user: UserDocument) => Partial<UserDocument>
 }
 
 // Records one payment and applies it to the user in a transaction: credits,
-// Style Kit time (extended from the later of now and the current end), and
-// any product-specific fields. Returns false if it was already applied.
+// the reports it unlocks and any product-specific fields. Returns false if
+// it was already applied.
 async function applyGrant(app: FastifyInstance, grant: Grant) {
   if (await app.collections.purchases.findOne({ stripeSessionId: grant.paymentKey }, { projection: { _id: 1 } })) {
     return false
@@ -224,7 +295,6 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
 
   const config = PRODUCTS[grant.product]
   const credits = config.credits()
-  const kitDays = config.days()
   const mongoSession = app.mongoClient.startSession()
 
   try {
@@ -241,7 +311,6 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           amountTotal: grant.amount,
           currency: grant.currency,
           credits,
-          kitDays,
           createdAt: new Date(),
         },
         { session: mongoSession },
@@ -253,17 +322,18 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
         throw new Error(`Payment ${grant.paymentKey} for a missing user.`)
       }
 
-      const kitFrom = Math.max(Date.now(), user.styleKitUntil?.getTime() ?? 0)
+      const now = new Date()
 
       await app.collections.users.updateOne(
         { _id: grant.userId },
         {
           $set: {
             credits: (user.credits ?? env.FREE_CREDITS) + credits,
-            ...(kitDays > 0 ? { styleKitUntil: new Date(kitFrom + kitDays * DAY_MS) } : {}),
-            ...(config.unlocksColor ? { colorReportAt: user.colorReportAt ?? new Date() } : {}),
+            paidAt: user.paidAt ?? now,
+            ...(config.unlocks?.color ? { colorReportAt: user.colorReportAt ?? now } : {}),
+            ...(config.unlocks?.style ? { styleReportAt: user.styleReportAt ?? now } : {}),
             ...(grant.set?.(user) ?? {}),
-            updatedAt: new Date(),
+            updatedAt: now,
           },
         },
         { session: mongoSession },
@@ -293,11 +363,11 @@ async function subscriptionPeriodEnd(subscriptionId: string) {
   }
 }
 
-// Grants a paid Avarobe checkout session. For Plus it grants the first
-// month through its invoice, the same key the invoice webhook uses.
+// Grants a paid Avarobe checkout session. For Pro it grants the first
+// payment through its invoice, the same key the invoice webhook uses.
 export async function grantSession(app: FastifyInstance, session: Stripe.Checkout.Session) {
   const userId = avarobeUserId(session.metadata)
-  const product = session.metadata?.product as PurchaseProduct | undefined
+  const product = session.metadata?.product
 
   if (!userId || !product || !(product in PRODUCTS) || !sessionSettled(session)) {
     return null
@@ -306,16 +376,17 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
   if (session.mode === 'subscription') {
     const subscriptionId = readId(session.subscription)
 
-    if (!subscriptionId) {
+    if (!subscriptionId || !isPro(product)) {
       return null
     }
 
-    const applied = await grantPlusMonth(app, {
+    const applied = await grantProPayment(app, {
       userId,
+      product,
       paymentKey: readId(session.invoice) ?? session.id,
       subscriptionId,
       customerId: readId(session.customer),
-      periodEnd: (await subscriptionPeriodEnd(subscriptionId)) ?? new Date(Date.now() + 31 * DAY_MS),
+      periodEnd: (await subscriptionPeriodEnd(subscriptionId)) ?? addMonths(new Date(), product === 'pro_annual' ? 12 : 1),
       amount: session.amount_total ?? 0,
       currency: session.currency ?? 'usd',
     })
@@ -329,7 +400,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
 
   const applied = await applyGrant(app, {
     userId,
-    product,
+    product: product as PurchaseProduct,
     paymentKey: session.id,
     paymentIntentId: readId(session.payment_intent),
     amount: session.amount_total ?? 0,
@@ -344,7 +415,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
 }
 
 // Once per purchase, whichever of the success page or the webhook grants it.
-function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, product: PurchaseProduct) {
+function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, product: string) {
   return reportPurchase(app, {
     metadata: session.metadata,
     transactionId: session.id,
@@ -354,11 +425,15 @@ function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, p
   }).catch(() => undefined)
 }
 
-// One paid month of Plus: its credits, and the subscription's state.
-async function grantPlusMonth(
+// One Pro payment (the first one, a renewal, or the switch to annual): its
+// credits, the reports annual includes, and the subscription's state.
+// Annual plans get the rest of each year's monthly looks from
+// refillAnnualCredits, starting a month after every annual payment.
+async function grantProPayment(
   app: FastifyInstance,
   input: {
     userId: ObjectId
+    product: 'pro_monthly' | 'pro_annual'
     paymentKey: string
     subscriptionId: string
     customerId: string | null
@@ -367,20 +442,23 @@ async function grantPlusMonth(
     currency: string
   },
 ) {
+  const interval = input.product === 'pro_annual' ? 'year' : 'month'
   const applied = await applyGrant(app, {
     userId: input.userId,
-    product: 'plus',
+    product: input.product,
     paymentKey: input.paymentKey,
     paymentIntentId: null,
     amount: input.amount,
     currency: input.currency,
     set: (user) => ({
-      plus: {
+      pro: {
         subscriptionId: input.subscriptionId,
         customerId: input.customerId,
         status: 'active',
+        interval,
         periodEnd: input.periodEnd,
-        cancelAtPeriodEnd: user.plus?.subscriptionId === input.subscriptionId ? user.plus.cancelAtPeriodEnd : false,
+        cancelAtPeriodEnd: user.pro?.subscriptionId === input.subscriptionId ? user.pro.cancelAtPeriodEnd : false,
+        nextCreditsAt: interval === 'year' ? addMonths(new Date(), 1) : null,
       },
     }),
   })
@@ -389,39 +467,49 @@ async function grantPlusMonth(
   // keep the period end current.
   if (!applied) {
     await app.collections.users.updateOne(
-      { _id: input.userId, 'plus.subscriptionId': input.subscriptionId },
-      { $max: { 'plus.periodEnd': input.periodEnd } },
+      { _id: input.userId, 'pro.subscriptionId': input.subscriptionId },
+      { $max: { 'pro.periodEnd': input.periodEnd } },
     )
   }
 
   return applied
 }
 
-// invoice.paid: the first month (if the success page didn't get there
-// first) and every renewal.
+// invoice.paid: the first payment (if the success page didn't get there
+// first), every renewal and the switch from monthly to annual.
 export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.Invoice) {
   const details = invoice.parent?.subscription_details
   const userId = avarobeUserId(details?.metadata)
   const subscriptionId = readId(details?.subscription)
+  const product = details?.metadata?.product ?? ''
 
-  if (!userId || !subscriptionId || !invoice.id) {
+  if (!userId || !subscriptionId || !invoice.id || !isPro(product)) {
     return
   }
 
-  const lineEnd = invoice.lines.data[0]?.period.end
+  // The line for the new period (a plan switch also carries a proration
+  // credit line for the unused time).
+  const lineEnd = Math.max(0, ...invoice.lines.data.map((line) => line.period.end))
 
-  await grantPlusMonth(app, {
+  await grantProPayment(app, {
     userId,
+    product,
     paymentKey: invoice.id,
     subscriptionId,
     customerId: readId(invoice.customer),
-    periodEnd: lineEnd ? new Date(lineEnd * 1000) : new Date(Date.now() + 31 * DAY_MS),
+    periodEnd: lineEnd ? new Date(lineEnd * 1000) : addMonths(new Date(), product === 'pro_annual' ? 12 : 1),
     amount: invoice.amount_paid,
     currency: invoice.currency,
   })
 }
 
-// customer.subscription.updated / deleted: cancellations, failed payments.
+function intervalOf(subscription: Stripe.Subscription): ProSubscription['interval'] {
+  return subscription.items.data[0]?.price.recurring?.interval === 'year' ? 'year' : 'month'
+}
+
+// customer.subscription.updated / deleted: cancellations, failed payments,
+// plan changes. The monthly-looks schedule of annual plans is left to the
+// payments, except that a monthly plan has none.
 export async function handleSubscriptionChange(app: FastifyInstance, subscription: Stripe.Subscription) {
   const userId = avarobeUserId(subscription.metadata)
 
@@ -435,30 +523,116 @@ export async function handleSubscriptionChange(app: FastifyInstance, subscriptio
     : end
       ? new Date(end * 1000)
       : null
+  const interval = intervalOf(subscription)
 
   await app.collections.users.updateOne(
     { _id: userId },
     {
       $set: {
-        plus: {
-          subscriptionId: subscription.id,
-          customerId: readId(subscription.customer),
-          status: subscription.status,
-          periodEnd,
-          cancelAtPeriodEnd: subscription.cancel_at_period_end,
-        },
+        'pro.subscriptionId': subscription.id,
+        'pro.customerId': readId(subscription.customer),
+        'pro.status': subscription.status,
+        'pro.interval': interval,
+        'pro.periodEnd': periodEnd,
+        'pro.cancelAtPeriodEnd': subscription.cancel_at_period_end,
+        ...(interval === 'month' ? { 'pro.nextCreditsAt': null } : {}),
         updatedAt: new Date(),
       },
     },
   )
 }
 
-// Cancels Plus at the end of the paid period, or undoes that. Done here
+// Cancels Pro at the end of the paid period, or undoes that. Done here
 // rather than in Stripe's Customer Portal: portal settings are shared with
 // Trimry's account, and the first configuration becomes the account default.
-export async function setPlusCancellation(app: FastifyInstance, subscriptionId: string, cancel: boolean) {
+export async function setProCancellation(app: FastifyInstance, subscriptionId: string, cancel: boolean) {
   const subscription = await stripe().subscriptions.update(subscriptionId, { cancel_at_period_end: cancel })
 
   await handleSubscriptionChange(app, subscription)
   return subscription
+}
+
+export class SwitchDeclinedError extends Error {}
+
+// Moves a monthly plan to annual right away. Stripe charges the annual
+// price minus the unused part of the month, and the year starts today.
+// The payment has to go through or nothing changes.
+export async function switchToAnnual(app: FastifyInstance, subscriptionId: string) {
+  const current = await stripe().subscriptions.retrieve(subscriptionId)
+  const item = current.items.data[0]
+
+  if (!item) {
+    throw new Error(`Subscription ${subscriptionId} has no items.`)
+  }
+
+  let updated: Stripe.Subscription
+
+  try {
+    updated = await stripe().subscriptions.update(subscriptionId, {
+      items: [{ id: item.id, price: await priceFor('pro_annual') }],
+      proration_behavior: 'always_invoice',
+      payment_behavior: 'error_if_incomplete',
+      cancel_at_period_end: false,
+      metadata: { ...current.metadata, product: 'pro_annual' },
+      expand: ['latest_invoice'],
+    })
+  } catch (error) {
+    if (error instanceof Stripe.errors.StripeCardError) {
+      throw new SwitchDeclinedError(error.message)
+    }
+
+    throw error
+  }
+
+  await handleSubscriptionChange(app, updated)
+
+  const invoice = updated.latest_invoice
+
+  if (invoice && typeof invoice !== 'string' && invoice.status === 'paid') {
+    await handleInvoicePaid(app, invoice)
+  }
+
+  return updated
+}
+
+// The monthly looks of annual plans, a month apart until the paid year ends
+// (the renewal payment grants the next year's first month).
+export async function refillAnnualCredits(app: FastifyInstance, now = new Date()) {
+  const due = await app.collections.users
+    .find({ 'pro.interval': 'year', 'pro.nextCreditsAt': { $lte: now } }, { projection: { pro: 1 } })
+    .limit(500)
+    .toArray()
+  let refilled = 0
+
+  for (const user of due) {
+    const pro = user.pro
+    const next = pro?.nextCreditsAt
+
+    if (!pro || !next || !proIsLive(pro, now.getTime()) || !pro.periodEnd || next.getTime() >= pro.periodEnd.getTime()) {
+      continue
+    }
+
+    const result = await app.collections.users.updateOne(
+      { _id: user._id, 'pro.nextCreditsAt': next },
+      { $inc: { credits: env.PRO_MONTHLY_CREDITS }, $set: { 'pro.nextCreditsAt': addMonths(next, 1), updatedAt: now } },
+    )
+    refilled += result.modifiedCount
+  }
+
+  return refilled
+}
+
+export function startCreditRefills(app: FastifyInstance) {
+  const run = () => {
+    void refillAnnualCredits(app)
+      .then((count) => {
+        if (count > 0) {
+          app.log.info({ count }, 'Annual Pro looks refilled')
+        }
+      })
+      .catch((error: unknown) => app.log.error({ err: error }, 'Annual refill crashed'))
+  }
+
+  setTimeout(run, 90 * 1000).unref()
+  setInterval(run, 10 * 60 * 1000).unref()
 }

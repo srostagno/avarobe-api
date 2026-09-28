@@ -19,7 +19,7 @@ import {
 import {
   PaywallError,
   refundCredits,
-  requireKit,
+  requirePro,
   sendPaywall,
   spendCredits,
 } from '../billing/entitlements.js'
@@ -325,7 +325,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireKit(app, userId, 'Shopping the pieces')
+        await requirePro(app, userId, 'Shopping the pieces')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -382,7 +382,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // The stylist's full read of one look (Style Kit). Kept on the look.
+  // The stylist's full read of one look (Pro). Kept on the look.
   app.post(
     '/:id/analysis',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -396,7 +396,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireKit(app, userId, 'The full look analysis')
+        await requirePro(app, userId, 'The full look analysis')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -465,7 +465,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireKit(app, userId, 'Store search')
+        await requirePro(app, userId, 'Store search')
 
         return await findPieceMatches(app, {
           userId,

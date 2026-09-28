@@ -7,6 +7,7 @@ import type {
   AuthChallengeDocument,
   AvatarDocument,
   CollectionDocument,
+  EmailSendDocument,
   LookDocument,
   PasskeyDocument,
   PurchaseDocument,
@@ -29,6 +30,7 @@ export type MongoCollections = {
   authChallenges: Collection<AuthChallengeDocument>
   shopSearches: Collection<ShopSearchDocument>
   purchases: Collection<PurchaseDocument>
+  emailSends: Collection<EmailSendDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -48,6 +50,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     authChallenges: mongoDb.collection<AuthChallengeDocument>('auth_challenges'),
     shopSearches: mongoDb.collection<ShopSearchDocument>('shop_searches'),
     purchases: mongoDb.collection<PurchaseDocument>('purchases'),
+    emailSends: mongoDb.collection<EmailSendDocument>('email_sends'),
   }
 }
 
@@ -97,6 +100,9 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     ),
     collections.purchases.createIndex({ stripeSessionId: 1 }, { unique: true }),
     collections.purchases.createIndex({ userId: 1, createdAt: -1 }),
+    collections.purchases.createIndex({ createdAt: -1 }),
+    collections.emailSends.createIndex({ userId: 1, sentAt: -1 }),
+    collections.emailSends.createIndex({ sentAt: -1 }),
   ])
 }
 

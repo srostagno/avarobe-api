@@ -4,7 +4,14 @@ import { describe, it } from 'node:test'
 import { ObjectId } from 'mongodb'
 
 import { unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
-import { appLink, kitOfferEmail, looksNudgeEmail, welcomeEmail } from '../templates.js'
+import {
+  appLink,
+  looksNudgeEmail,
+  upgradeLastCallEmail,
+  upgradeOfferEmail,
+  upgradeReminderEmail,
+  welcomeEmail,
+} from '../templates.js'
 
 const recipient = { firstName: 'Nora', email: 'nora@example.com', unsubscribeUrl: 'https://www.avarobe.com/email/unsubscribe?t=x' }
 
@@ -45,12 +52,33 @@ describe('lifecycle templates', () => {
   it('always carries an unsubscribe link and a text part', () => {
     for (const email of [
       welcomeEmail({ ...recipient, stage: 'avatar', season: null }),
-      kitOfferEmail(recipient),
+      upgradeOfferEmail(recipient),
+      upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [] }),
+      upgradeLastCallEmail(recipient),
     ]) {
       assert.ok(email.html.includes(recipient.unsubscribeUrl))
       assert.ok(email.text.includes(recipient.unsubscribeUrl))
       assert.ok(email.text.length > 200)
     }
+  })
+})
+
+describe('offer emails', () => {
+  it('show the current prices and say how Pro renews', () => {
+    const offer = upgradeOfferEmail(recipient)
+    assert.ok(offer.html.includes('$59.90/yr'))
+    assert.ok(offer.html.includes('$10.90/mo'))
+    assert.ok(offer.html.includes('$4.99 a month'))
+    assert.ok(offer.text.includes('renews automatically'))
+    const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
+    assert.ok(reminder.subject.includes('Soft Summer'))
+    assert.ok(reminder.html.includes('$14.90'))
+    assert.ok(reminder.html.includes('save $4.90'))
+  })
+
+  it('carry the postal address only when it is set', () => {
+    // No EMAIL_POSTAL_ADDRESS in tests: the footer has no address line.
+    assert.ok(!upgradeOfferEmail(recipient).text.includes('undefined'))
   })
 })
 

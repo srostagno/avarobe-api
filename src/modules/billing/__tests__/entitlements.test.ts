@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+
+import { env } from '../../../config/env.js'
+import type { UserDocument } from '../../../types/mongo.js'
+import { billingState } from '../entitlements.js'
+
+const DAY = 24 * 60 * 60 * 1000
+const now = new Date('2026-10-01T12:00:00Z').getTime()
+const daysAgo = (days: number) => new Date(now - days * DAY)
+const inDays = (days: number) => new Date(now + days * DAY)
+
+function user(overrides: Partial<UserDocument> = {}) {
+  return { email: 'customer@example.com', ...overrides } as UserDocument
+}
+
+const pro = (interval: 'month' | 'year', overrides: Partial<NonNullable<UserDocument['pro']>> = {}) => ({
+  subscriptionId: 'sub_1',
+  customerId: 'cus_1',
+  status: 'active',
+  interval,
+  periodEnd: inDays(20),
+  cancelAtPeriodEnd: false,
+  ...overrides,
+})
+
+describe('billingState', () => {
+  it('starts free with the sign-up looks and nothing unlocked', () => {
+    const state = billingState(user(), now)
+    assert.equal(state.credits, env.FREE_CREDITS)
+    assert.equal(state.proActive, false)
+    assert.equal(state.colorReport, false)
+    assert.equal(state.styleReport, false)
+    assert.equal(state.paid, false)
+    assert.equal(state.reportCreditCents, 0)
+  })
+
+  it('offers the other report at the bundle price for a while after buying one', () => {
+    const fresh = billingState(user({ colorReportAt: daysAgo(3) }), now)
+    assert.equal(fresh.colorReport, true)
+    assert.ok(fresh.styleAddonUntil)
+    assert.equal(fresh.colorAddonUntil, null)
+    assert.equal(fresh.paid, true)
+
+    const late = billingState(user({ colorReportAt: daysAgo(env.REPORT_CREDIT_WINDOW_DAYS + 1) }), now)
+    assert.equal(late.styleAddonUntil, null)
+  })
+
+  it('counts recent reports toward Pro annual, up to the bundle price', () => {
+    assert.equal(billingState(user({ colorReportAt: daysAgo(2) }), now).reportCreditCents, env.PRICE_COLOR_REPORT_CENTS)
+    assert.equal(
+      billingState(user({ colorReportAt: daysAgo(2), styleReportAt: daysAgo(1) }), now).reportCreditCents,
+      env.PRICE_REPORTS_BUNDLE_CENTS,
+    )
+    assert.equal(billingState(user({ colorReportAt: daysAgo(40) }), now).reportCreditCents, 0)
+    // Not for someone already on Pro.
+    assert.equal(billingState(user({ colorReportAt: daysAgo(2), pro: pro('month') }), now).reportCreditCents, 0)
+  })
+
+  it('keeps Pro through a short grace period after a failed renewal, then drops it', () => {
+    assert.equal(billingState(user({ pro: pro('month', { status: 'past_due', periodEnd: daysAgo(1) }) }), now).proActive, true)
+    assert.equal(billingState(user({ pro: pro('month', { status: 'past_due', periodEnd: daysAgo(5) }) }), now).proActive, false)
+    assert.equal(billingState(user({ pro: pro('month', { status: 'canceled' }) }), now).proActive, false)
+  })
+
+  it('knows the plan interval, and that annual reports stay after it ends', () => {
+    assert.equal(billingState(user({ pro: pro('year') }), now).proInterval, 'year')
+    const lapsed = billingState(
+      user({ pro: pro('year', { status: 'canceled', periodEnd: daysAgo(30) }), colorReportAt: daysAgo(400), styleReportAt: daysAgo(400) }),
+      now,
+    )
+    assert.equal(lapsed.proActive, false)
+    assert.equal(lapsed.colorReport && lapsed.styleReport, true)
+  })
+
+  it('lifts the avatar limit with Pro', () => {
+    assert.equal(billingState(user({ freeAvatarRuns: 5 }), now).freeAvatarRunsLeft, 0)
+    assert.equal(billingState(user({ freeAvatarRuns: 5, pro: pro('month') }), now).freeAvatarRunsLeft, null)
+  })
+})

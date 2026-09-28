@@ -9,25 +9,37 @@ import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { attributionMetadata } from './conversions.js'
-import { adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
+import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
+  SwitchDeclinedError,
+  addMonths,
   createCheckout,
   grantSession,
   handleInvoicePaid,
   handleSubscriptionChange,
   retrieveSession,
   sessionSettled,
-  setPlusCancellation,
+  setProCancellation,
   stripeConfigured,
+  switchToAnnual,
   verifyWebhook,
 } from './stripe.js'
 
 const idPattern = /^[A-Za-z0-9._-]{1,200}$/
 
 const checkoutSchema = z.object({
-  product: z.enum(['style_kit', 'top_up', 'color_report', 'kit_upgrade', 'plus']),
+  product: z.enum([
+    'color_report',
+    'style_report',
+    'reports_bundle',
+    'color_addon',
+    'style_addon',
+    'look_pack',
+    'pro_monthly',
+    'pro_annual',
+  ]),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
   attribution: z
@@ -49,13 +61,15 @@ const previewSchema = z.object({ asCustomer: z.boolean() })
 // Plan stages an admin can jump to, to see each offer without buying.
 const SIMULATED_STAGES = [
   'free',
+  'free_used',
   'color_report',
-  'kit',
-  'kit_low',
-  'kit_ending',
-  'kit_ended',
-  'plus',
-  'plus_low',
+  'style_report',
+  'reports',
+  'pack',
+  'pro_monthly',
+  'pro_low',
+  'pro_ending',
+  'pro_annual',
 ] as const
 
 const simulateSchema = z.object({ stage: z.enum(SIMULATED_STAGES) })
@@ -64,35 +78,41 @@ const simulateSchema = z.object({ stage: z.enum(SIMULATED_STAGES) })
 const SIMULATED_SUBSCRIPTION = 'sim_admin'
 
 function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
+  const now = new Date()
   const day = 24 * 60 * 60 * 1000
-  const inDays = (days: number) => new Date(Date.now() + days * day)
-  const plus = (credits: number) => ({
+  const pro = (interval: 'month' | 'year', credits: number, options: { ending?: boolean } = {}) => ({
     credits,
-    styleKitUntil: inDays(-10),
-    plus: {
+    paidAt: now,
+    pro: {
       subscriptionId: SIMULATED_SUBSCRIPTION,
       customerId: null,
       status: 'active',
-      periodEnd: inDays(25),
-      cancelAtPeriodEnd: false,
+      interval,
+      periodEnd: options.ending ? new Date(now.getTime() + 5 * day) : addMonths(now, interval === 'year' ? 12 : 1),
+      cancelAtPeriodEnd: Boolean(options.ending),
+      nextCreditsAt: interval === 'year' ? addMonths(now, 1) : null,
     },
   })
 
   switch (stage) {
+    case 'free_used':
+      return { credits: 0 }
     case 'color_report':
-      return { credits: 6, colorReportAt: new Date() }
-    case 'kit':
-      return { credits: 30, styleKitUntil: inDays(60) }
-    case 'kit_low':
-      return { credits: 2, styleKitUntil: inDays(40) }
-    case 'kit_ending':
-      return { credits: 12, styleKitUntil: inDays(5) }
-    case 'kit_ended':
-      return { credits: 0, styleKitUntil: inDays(-1) }
-    case 'plus':
-      return plus(40)
-    case 'plus_low':
-      return plus(2)
+      return { credits: 0, colorReportAt: now, paidAt: now }
+    case 'style_report':
+      return { credits: 0, styleReportAt: now, paidAt: now }
+    case 'reports':
+      return { credits: 0, colorReportAt: now, styleReportAt: now, paidAt: now }
+    case 'pack':
+      return { credits: 10, paidAt: now }
+    case 'pro_monthly':
+      return pro('month', 30)
+    case 'pro_low':
+      return pro('month', 2)
+    case 'pro_ending':
+      return pro('month', 12, { ending: true })
+    case 'pro_annual':
+      return { ...pro('year', 30), colorReportAt: now, styleReportAt: now }
     default:
       return {}
   }
@@ -101,8 +121,6 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
 const isSimulated = (subscriptionId: string | undefined) => subscriptionId === SIMULATED_SUBSCRIPTION
 
 const funnelSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
-
-const LIVE_PLUS = ['active', 'trialing', 'past_due']
 
 const confirmSchema = z.object({
   sessionId: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/),
@@ -116,31 +134,41 @@ function offer() {
         amount: product.amount(),
         currency: 'usd',
         credits: product.credits(),
-        days: product.days(),
         interval: product.recurring ?? null,
       },
     ]),
   )
 }
 
-// Who can buy what: top-ups and Plus continue a Style Kit, the upgrade
-// follows a recent Color Report, and nobody buys what they already have.
+// Who can buy what: nobody buys what they already have, the add-ons follow
+// a recent report, and a monthly plan moves to annual from the account (a
+// plan switch, not a second subscription).
 function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billingState>) {
   switch (product) {
-    case 'top_up':
-      return state.everHadKit ? null : 'Top-ups are for Style Kit owners.'
-    case 'plus':
-      if (!state.everHadKit) {
-        return 'Plus is for Style Kit owners.'
+    case 'color_report':
+      return state.colorReport ? 'You already have your Color Report.' : null
+    case 'style_report':
+      return state.styleReport ? 'You already have your Style Report.' : null
+    case 'reports_bundle':
+      return state.colorReport || state.styleReport ? 'You already have one of the reports. Add the other one on its own.' : null
+    case 'color_addon':
+      return state.colorAddonUntil ? null : 'This price has ended. The Color Report is still available.'
+    case 'style_addon':
+      return state.styleAddonUntil ? null : 'This price has ended. The Style Report is still available.'
+    case 'look_pack':
+      return state.comp ? 'Your account already has unlimited looks.' : null
+    case 'pro_monthly':
+      return state.proLive || state.comp ? 'You already have Avarobe Pro.' : null
+    case 'pro_annual':
+      if (state.comp) {
+        return 'You already have Avarobe Pro.'
       }
 
-      return state.plusActive ? 'You already have Plus.' : null
-    case 'color_report':
-      return state.colorAccess ? 'You already have your full color report.' : null
-    case 'kit_upgrade':
-      return state.kitUpgradeUntil ? null : 'The upgrade price has expired. The Style Kit is still available.'
-    default:
-      return null
+      return state.proInterval === 'year'
+        ? 'You already have Pro annual.'
+        : state.proLive
+          ? 'Switch your plan to annual from your account.'
+          : null
   }
 }
 
@@ -149,6 +177,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     available: stripeConfigured(),
     products: offer(),
     free: { credits: env.FREE_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
+    reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
   }))
 
   app.post(
@@ -168,7 +197,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ message: 'Sign in again to continue.' })
       }
 
-      const reason = ineligibility(parsed.data.product, billingState(user))
+      const state = billingState(user)
+      const reason = ineligibility(parsed.data.product, state)
 
       if (reason) {
         return reply.code(409).send({ message: reason })
@@ -179,6 +209,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
+          discountCents: parsed.data.product === 'pro_annual' ? state.reportCreditCents : 0,
           attribution: attributionMetadata(parsed.data.attribution, request),
         })
         return { url }
@@ -282,13 +313,21 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
 
     const since = new Date(Date.now() - parsed.data.days * 24 * 60 * 60 * 1000)
     const adminIds = await adminUserIds(app)
+    const countPro = (interval: 'month' | 'year') =>
+      app.collections.users.countDocuments({
+        _id: { $nin: adminIds },
+        'pro.interval': interval,
+        'pro.status': { $in: [...PRO_LIVE_STATUSES] },
+        'pro.periodEnd': { $gt: new Date() },
+        'pro.subscriptionId': { $ne: SIMULATED_SUBSCRIPTION },
+      })
     const cohort = (
       await app.collections.users
         .find({ createdAt: { $gte: since }, _id: { $nin: adminIds } }, { projection: { _id: 1 } })
         .toArray()
     ).map((user) => user._id)
     const inCohort = { userId: { $in: cohort } }
-    const [avatarReady, styled, triedOn, purchased, purchases, plusActive, kitActive] = await Promise.all([
+    const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual] = await Promise.all([
       app.collections.avatars.countDocuments({ ...inCohort, readyAt: { $ne: null } }),
       app.collections.looks.distinct('userId', inCohort),
       app.collections.looks.distinct('userId', { ...inCohort, source: 'tryon' }),
@@ -299,12 +338,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           { $group: { _id: '$product', count: { $sum: 1 }, revenue: { $sum: '$amountTotal' }, buyers: { $addToSet: '$userId' } } },
         ])
         .toArray(),
-      app.collections.users.countDocuments({
-        _id: { $nin: adminIds },
-        'plus.status': { $in: LIVE_PLUS },
-        'plus.periodEnd': { $gt: new Date() },
-      }),
-      app.collections.users.countDocuments({ _id: { $nin: adminIds }, styleKitUntil: { $gt: new Date() } }),
+      countPro('month'),
+      countPro('year'),
     ])
 
     return {
@@ -320,20 +355,32 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .map((row) => ({ product: row._id, count: row.count, buyers: row.buyers.length, revenue: row.revenue }))
         .sort((a, b) => b.revenue - a.revenue),
       revenue: purchases.reduce((sum, row) => sum + row.revenue, 0),
-      plus: { active: plusActive, mrr: plusActive * env.PLUS_PRICE_CENTS },
-      kitActive,
+      pro: {
+        monthly: proMonthly,
+        annual: proAnnual,
+        // Annual plans count a twelfth of their price.
+        mrr: Math.round(proMonthly * env.PRICE_PRO_MONTHLY_CENTS + (proAnnual * env.PRICE_PRO_ANNUAL_CENTS) / 12),
+      },
     }
   })
 
   // Puts an admin's own account in a plan stage (and in test mode), with
   // today's usage cleared. 'free' is a brand-new account. Refused while a
-  // real Plus subscription is live: its next invoice would undo it.
+  // real Pro subscription is live: its next invoice would undo it.
   async function simulate(userId: ObjectId, stage: (typeof SIMULATED_STAGES)[number]) {
     const [updated] = await Promise.all([
       app.collections.users.findOneAndUpdate(
         { _id: userId },
         {
-          $unset: { credits: '', styleKitUntil: '', colorReportAt: '', plus: '', freeAvatarRuns: '' },
+          $unset: {
+            credits: '',
+            styleKitUntil: '',
+            colorReportAt: '',
+            styleReportAt: '',
+            pro: '',
+            paidAt: '',
+            freeAvatarRuns: '',
+          },
           $set: { compPaused: true, updatedAt: new Date() },
         },
         { returnDocument: 'after' },
@@ -367,8 +414,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message: parsed.message })
       }
 
-      if (billingState(user).plusActive && !user.plus?.cancelAtPeriodEnd && !isSimulated(user.plus?.subscriptionId)) {
-        return reply.code(409).send({ message: 'Cancel your real Plus subscription first.' })
+      if (billingState(user).proLive && !user.pro?.cancelAtPeriodEnd && !isSimulated(user.pro?.subscriptionId)) {
+        return reply.code(409).send({ message: 'Cancel your real Pro subscription first.' })
       }
 
       const updated = await simulate(userId, parsed.data.stage)
@@ -377,10 +424,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     })
   }
 
-  // Plus: cancel at the end of the paid period, or keep it after all.
+  // Pro: cancel at the end of the paid period, or keep it after all.
   for (const [path, cancel] of [
-    ['/plus/cancel', true],
-    ['/plus/resume', false],
+    ['/pro/cancel', true],
+    ['/pro/resume', false],
   ] as const) {
     app.post(
       path,
@@ -388,20 +435,20 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       async (request, reply) => {
         const userId = requireUserId(request)
         const user = await loadBillingUser(app, userId)
-        const subscriptionId = user?.plus?.subscriptionId
+        const subscriptionId = user?.pro?.subscriptionId
 
-        if (!subscriptionId || !billingState(user).plusActive) {
-          return reply.code(404).send({ message: 'There is no active Plus subscription.' })
+        if (!subscriptionId || !billingState(user).proLive) {
+          return reply.code(404).send({ message: 'There is no active Pro subscription.' })
         }
 
         try {
           if (isSimulated(subscriptionId)) {
-            await app.collections.users.updateOne({ _id: userId }, { $set: { 'plus.cancelAtPeriodEnd': cancel } })
+            await app.collections.users.updateOne({ _id: userId }, { $set: { 'pro.cancelAtPeriodEnd': cancel } })
           } else {
-            await setPlusCancellation(app, subscriptionId, cancel)
+            await setProCancellation(app, subscriptionId, cancel)
           }
         } catch (error) {
-          request.log.error({ err: errorMessage(error) }, 'Plus cancellation change failed')
+          request.log.error({ err: errorMessage(error) }, 'Pro cancellation change failed')
           return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
         }
 
@@ -410,6 +457,59 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       },
     )
   }
+
+  // Monthly to annual: charged now (minus the unused part of the month),
+  // with both reports and a new year of monthly looks.
+  app.post(
+    '/pro/annual',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const user = await loadBillingUser(app, userId)
+      const state = user ? billingState(user) : null
+      const subscriptionId = user?.pro?.subscriptionId
+
+      if (!user || !state?.proLive || !subscriptionId) {
+        return reply.code(404).send({ message: 'There is no active Pro subscription.' })
+      }
+
+      if (state.proInterval === 'year') {
+        return reply.code(409).send({ message: 'You already have Pro annual.' })
+      }
+
+      try {
+        if (isSimulated(subscriptionId)) {
+          const now = new Date()
+          await app.collections.users.updateOne(
+            { _id: userId },
+            {
+              $set: {
+                'pro.interval': 'year',
+                'pro.periodEnd': addMonths(now, 12),
+                'pro.cancelAtPeriodEnd': false,
+                'pro.nextCreditsAt': addMonths(now, 1),
+                colorReportAt: user.colorReportAt ?? now,
+                styleReportAt: user.styleReportAt ?? now,
+              },
+              $inc: { credits: env.PRO_MONTHLY_CREDITS },
+            },
+          )
+        } else {
+          await switchToAnnual(app, subscriptionId)
+        }
+      } catch (error) {
+        if (error instanceof SwitchDeclinedError) {
+          return reply.code(402).send({ message: `Your card was declined: ${error.message}` })
+        }
+
+        request.log.error({ err: errorMessage(error) }, 'Switch to annual failed')
+        return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
+      }
+
+      const updated = await app.collections.users.findOne({ _id: userId })
+      return { user: updated ? serializeUser(updated) : null }
+    },
+  )
 }
 
 // Stripe needs the exact raw body to check the signature, so the webhook

@@ -20,7 +20,7 @@ export function serializeUser(user: UserDocument) {
   }
 }
 
-// Without the Style Kit the palette shows the season and a first taste of
+// Without the Color Report the palette shows the season and a first taste of
 // colors; the rest stays on the server, with counts so the page can hint at it.
 function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean) {
   if (!analysis || full) {

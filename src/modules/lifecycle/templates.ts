@@ -173,6 +173,25 @@ function priceBox(price: string, detail: string, guarantee: string): Block {
   }
 }
 
+// Plan options side by side, stacked for phones: name and price on one
+// line, what it includes under it; the featured one gets a border and badge.
+function plans(rows: { name: string; price: string; detail: string; badge?: string }[]): Block {
+  const html = rows
+    .map((row) => {
+      const featured = Boolean(row.badge)
+      const badge = row.badge
+        ? `<span style="display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:${COLOR.accentSoft};font-family:${SANS};font-size:11px;line-height:16px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:${COLOR.accent};vertical-align:1px;">${esc(row.badge)}</span>`
+        : ''
+      return `<tr><td style="padding:0 0 10px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:${featured ? 2 : 1}px solid ${featured ? COLOR.accent : COLOR.line};border-radius:16px;padding:${featured ? 15 : 16}px 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="top" style="font-family:${SANS};font-size:16px;line-height:22px;font-weight:600;color:${COLOR.ink};">${esc(row.name)}${badge}</td><td valign="top" align="right" style="font-family:${SERIF};font-size:19px;line-height:22px;color:${COLOR.ink};white-space:nowrap;">${esc(row.price)}</td></tr><tr><td colspan="2" style="padding:4px 0 0 0;font-family:${SANS};font-size:14px;line-height:20px;color:${COLOR.muted};">${esc(row.detail)}</td></tr></table></td></tr></table></td></tr>`
+    })
+    .join('')
+
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 16px 0;">${html}</table>`,
+    text: rows.map((row) => `- ${row.name}${row.badge ? ` (${row.badge})` : ''}: ${row.price}. ${row.detail}`).join('\n'),
+  }
+}
+
 function signature(): Block {
   return {
     html: `<p style="margin:8px 0 0 0;font-family:${SANS};font-size:15px;line-height:24px;color:${COLOR.inkSoft};">See you inside,<br><span style="font-family:${SERIF};font-size:17px;font-style:italic;color:${COLOR.ink};">The Avarobe team</span></p>`,
@@ -386,32 +405,123 @@ export function looksNudgeEmail(input: Recipient & { season: string | null; colo
   })
 }
 
-export function kitOfferEmail(input: Recipient): EmailContent {
+// ---------------------------------------------------------------- offers
+// Out of free looks and nothing bought: the offer, then two reminders. They
+// are promotional, so they carry the postal address, and each one says how
+// Pro renews.
+
+const perMonth = (yearCents: number) => money(Math.floor(yearCents / 12))
+const RENEWAL_NOTE =
+  'Pro renews automatically until you cancel, and you can cancel anytime in your account settings. Changed your mind? Write to hello@avarobe.com within 7 days of your first payment.'
+
+function proPlans(): Block {
+  return plans([
+    {
+      name: 'Pro annual',
+      price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
+      detail: `${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month, with your Color and Style Reports included`,
+      badge: 'Best value',
+    },
+    { name: 'Pro monthly', price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`, detail: 'Cancel anytime' },
+    { name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks, no subscription` },
+  ])
+}
+
+export function upgradeOfferEmail(input: Recipient): EmailContent {
   return layout({
-    subject: 'Keep styling every occasion on your calendar',
-    preheader: `The Style Kit: ${env.STYLE_KIT_CREDITS} looks or try-ons, your full color report and your style profile.`,
-    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, espresso, lavender and teal' },
+    subject: `Your next ${env.PRO_MONTHLY_CREDITS} looks, for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month`,
+    preheader: `Avarobe Pro: ${env.PRO_MONTHLY_CREDITS} looks every month, try-ons from any photo, and your color and style reports.`,
+    hero: {
+      src: `${ASSETS}/occasions.jpg`,
+      alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date',
+    },
     recipient: input,
     promotional: true,
     blocks: [
       eyebrow('Your free looks are done'),
-      heading('Liked your first looks? Keep going.'),
+      heading('Style every occasion on your calendar.'),
+      greeting(input.firstName),
+      paragraph(`You’ve used your ${env.FREE_CREDITS} free looks. Avarobe Pro keeps your stylist working for everything coming up:`),
+      checklist([
+        `${env.PRO_MONTHLY_CREDITS} new looks every month, planned for the dress code and shown on you`,
+        'Try on any outfit from a photo before you buy it',
+        'Every piece of a look, found in stores',
+        'Your Color Report and Style Report, included with the annual plan',
+      ]),
+      proPlans(),
+      button('See my options', appLink('/studio', 'upgrade_offer', { upgrade: 'look' })),
+      small(RENEWAL_NOTE),
+      signature(),
+    ],
+  })
+}
+
+export function upgradeReminderEmail(input: Recipient & { season: string | null; colors: ColorSwatch[] }): EmailContent {
+  const { season, colors } = input
+  const bundleSavings = env.PRICE_COLOR_REPORT_CENTS + env.PRICE_STYLE_REPORT_CENTS - env.PRICE_REPORTS_BUNDLE_CENTS
+
+  return layout({
+    subject: season ? `The rest of your ${season} palette` : 'The colors that light you up',
+    preheader: 'Your full palette, a drape test on your own face and guides for everything you wear.',
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, espresso, lavender and teal' },
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow('Your Color Report'),
+      heading('See every color that lights you up.'),
+      greeting(input.firstName),
+      ...(season && colors.length > 0
+        ? [palette(season, colors, `You’ve seen ${colors.length} of your colors. Your report shows all of them.`)]
+        : []),
+      paragraph('Your Color Report is a visual report made from your own photo, yours to keep:'),
+      checklist([
+        'Your full palette: 30+ colors in basics, accents and statements',
+        'A drape test: your face next to your best and worst colors, like the one above',
+        'The colors to keep away from your face, and your best metals',
+        'Guides for prints, denim, makeup and eyewear',
+      ]),
+      plans([
+        { name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'One time, yours to keep' },
+        {
+          name: 'Color + Style Reports',
+          price: money(env.PRICE_REPORTS_BUNDLE_CENTS),
+          detail: `Add the cuts and necklines that flatter you, and save ${money(bundleSavings)}`,
+        },
+        {
+          name: 'Included with Pro annual',
+          price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
+          detail: `Both reports and ${env.PRO_MONTHLY_CREDITS} looks every month`,
+        },
+      ]),
+      button('Get my Color Report', appLink('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
+      signature(),
+    ],
+  })
+}
+
+export function upgradeLastCallEmail(input: Recipient): EmailContent {
+  const reports = money(env.PRICE_REPORTS_BUNDLE_CENTS)
+
+  return layout({
+    subject: 'One last note about your stylist',
+    preheader: `Pro annual: both reports and ${env.PRO_MONTHLY_CREDITS} looks a month for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}. This is our last reminder.`,
+    hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for a cocktail wedding' },
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow('Our last reminder'),
+      heading(`Everything, for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month.`),
       greeting(input.firstName),
       paragraph(
-        `You’ve used your free looks. The Style Kit keeps your stylist working for ${env.STYLE_KIT_DAYS} days, for every event on your calendar:`,
+        'This is our last note about plans. If Avarobe helped you dress for your first occasion, the annual plan is the simplest way to keep your stylist for every one after it.',
       ),
-      checklist([
-        `${env.STYLE_KIT_CREDITS} looks or try-ons for your occasions`,
-        'Your full color report: 30+ colors and a drape test on your own face, like the one above',
-        'Your style profile: the cuts and necklines that flatter you, shown on your avatar',
-        'Try on any outfit from a photo, and find every piece in stores',
-      ]),
       priceBox(
-        money(env.STYLE_KIT_PRICE_CENTS),
-        'One time. No subscription.',
-        'Not for you? Write to hello@avarobe.com within 7 days and we’ll refund it in full, as long as you’ve used 5 credits or fewer.',
+        `${money(env.PRICE_PRO_ANNUAL_CENTS)} a year`,
+        `${env.PRO_MONTHLY_CREDITS} looks every month, try-ons, stores, and both reports (${reports} on their own).`,
+        RENEWAL_NOTE,
       ),
-      button('Get the Style Kit', appLink('/studio', 'kit_offer', { upgrade: 'look' })),
+      button('Go Pro annual', appLink('/studio', 'upgrade_last_call', { upgrade: 'look' })),
+      small('Not ready? Your avatar, your season and your looks stay in your account, and you can pick up anytime.'),
       signature(),
     ],
   })

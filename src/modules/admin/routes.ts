@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
-import type { ObjectId } from 'mongodb'
+import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
-import type { AvatarDocument, LookDocument } from '../../types/mongo.js'
+import type { AvatarDocument, LifecycleEmailKind, LookDocument } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
@@ -16,6 +16,19 @@ const avatarsSchema = z.object({
   before: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(48).default(24),
 })
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+const emailsSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+
+const EMAIL_ORDER: LifecycleEmailKind[] = [
+  'welcome',
+  'avatar_nudge',
+  'looks_nudge',
+  'upgrade_offer',
+  'upgrade_reminder',
+  'upgrade_last_call',
+]
 
 const LOOK_FILTERS = ['all', 'down', 'up', 'failed', 'tryon', 'remix'] as const
 
@@ -295,6 +308,99 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       down: stats[0]?.down ?? 0,
       items,
       nextBefore: found.length > limit ? page.at(-1)?.createdAt ?? null : null,
+    }
+  })
+
+  // How the lifecycle emails do: for each kind, how many went out, were
+  // opened, clicked and led to a purchase. A purchase counts for the last
+  // email the person clicked in the 7 days before buying ("after a click");
+  // "within 7 days" counts any purchase in the week after receiving one,
+  // clicked or not. Opens include Apple Mail's automatic ones.
+  app.get('/emails', { preHandler: authenticate }, async (request, reply) => {
+    const viewerId = await viewerIfAdmin(app, request, reply)
+
+    if (!viewerId) {
+      return reply
+    }
+
+    const parsed = parseBody(emailsSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const since = new Date(Date.now() - parsed.data.days * DAY_MS)
+    const adminIds = await adminUserIds(app)
+    const sends = await app.collections.emailSends
+      .find({ sentAt: { $gte: since }, userId: { $nin: adminIds } })
+      .sort({ sentAt: -1 })
+      .toArray()
+    const userIds = [...new Set(sends.map((send) => send.userId.toString()))].map((id) => new ObjectId(id))
+    const purchases = await app.collections.purchases
+      .find({ userId: { $in: userIds }, createdAt: { $gte: since } }, { projection: { userId: 1, amountTotal: 1, createdAt: 1, product: 1 } })
+      .toArray()
+    const sendsByUser = new Map<string, typeof sends>()
+
+    for (const send of sends) {
+      const key = send.userId.toString()
+      sendsByUser.set(key, [...(sendsByUser.get(key) ?? []), send])
+    }
+
+    // Last-click attribution, one email per purchase.
+    const attributed = new Map<string, { purchases: number; revenue: number }>()
+    const withinWeek = new Map<string, number>()
+
+    for (const purchase of purchases) {
+      const bought = purchase.createdAt.getTime()
+      const userSends = sendsByUser.get(purchase.userId.toString()) ?? []
+      const clicked = userSends
+        .filter((send) => send.firstClickAt && send.firstClickAt.getTime() <= bought && bought - send.firstClickAt.getTime() <= 7 * DAY_MS)
+        .sort((a, b) => (b.lastClickAt?.getTime() ?? 0) - (a.lastClickAt?.getTime() ?? 0))[0]
+
+      if (clicked) {
+        const key = clicked._id.toString()
+        const current = attributed.get(key) ?? { purchases: 0, revenue: 0 }
+        attributed.set(key, { purchases: current.purchases + 1, revenue: current.revenue + purchase.amountTotal })
+      }
+
+      for (const send of userSends) {
+        const received = send.sentAt.getTime()
+
+        if (received <= bought && bought - received <= 7 * DAY_MS) {
+          withinWeek.set(send._id.toString(), (withinWeek.get(send._id.toString()) ?? 0) + 1)
+        }
+      }
+    }
+
+    const kinds = new Map<string, { sent: number; opened: number; clicked: number; unsubscribed: number; purchases: number; revenue: number; boughtWithinWeek: number }>()
+
+    for (const send of sends) {
+      const row = kinds.get(send.kind) ?? { sent: 0, opened: 0, clicked: 0, unsubscribed: 0, purchases: 0, revenue: 0, boughtWithinWeek: 0 }
+      const credit = attributed.get(send._id.toString())
+      row.sent += 1
+      row.opened += send.opens > 0 || send.firstOpenAt ? 1 : 0
+      row.clicked += send.clicks > 0 ? 1 : 0
+      row.unsubscribed += send.unsubscribedAt ? 1 : 0
+      row.purchases += credit?.purchases ?? 0
+      row.revenue += credit?.revenue ?? 0
+      row.boughtWithinWeek += withinWeek.has(send._id.toString()) ? 1 : 0
+      kinds.set(send.kind, row)
+    }
+
+    return {
+      days: parsed.data.days,
+      kinds: EMAIL_ORDER.filter((kind) => kinds.has(kind)).map((kind) => ({ kind, ...kinds.get(kind)! })),
+      recent: sends.slice(0, 40).map((send) => ({
+        id: send._id.toString(),
+        account: send.userId.toString().slice(-6),
+        kind: send.kind,
+        subject: send.subject,
+        sentAt: send.sentAt,
+        opened: send.opens > 0 || Boolean(send.firstOpenAt),
+        clicks: send.clicks,
+        unsubscribed: Boolean(send.unsubscribedAt),
+        purchased: attributed.has(send._id.toString()),
+      })),
     }
   })
 }

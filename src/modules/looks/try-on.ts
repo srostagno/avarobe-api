@@ -6,13 +6,13 @@ import { errorMessage } from '../../utils/http.js'
 import { serializeLook } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
-import { PaywallError, refundCredits, requireKit, sendPaywall, spendCredits } from '../billing/entitlements.js'
+import { PaywallError, refundCredits, requirePro, sendPaywall, spendCredits } from '../billing/entitlements.js'
 import type { IconLook } from './icons.js'
 import { reserveLookQuota } from './quota.js'
 import { NoOutfitError, analyzeOutfit, startLookRender } from './service.js'
 
 // The try-on flow once the outfit photo is in hand (an upload or an icon
-// look): quota, Kit and credit, the stylist's read of the photo, then the
+// look): quota, Pro and credit, the stylist's read of the photo, then the
 // render in the background. Every failure gives the credit back.
 export async function startTryOn(
   app: FastifyInstance,
@@ -30,7 +30,7 @@ export async function startTryOn(
   let creditSpent: boolean
 
   try {
-    await requireKit(app, userId, 'Trying on outfits')
+    await requirePro(app, userId, 'Trying on outfits')
     creditSpent = await spendCredits(app, userId, 1)
   } catch (error) {
     await releaseGenerations(app, userId, 'look', 1)

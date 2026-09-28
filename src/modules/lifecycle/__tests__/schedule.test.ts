@@ -16,6 +16,7 @@ function state(overrides: Partial<LifecycleState> = {}): LifecycleState {
     looks: 0,
     lastLookAt: null,
     outOfFreeLooks: false,
+    paid: false,
     promotionsAllowed: true,
     ...overrides,
   }
@@ -57,7 +58,7 @@ describe('pickLifecycleEmail', () => {
     assert.equal(pickLifecycleEmail({ ...base, avatarReadyAt: ago(22 * HOUR), looks: 2 }, now), null)
   })
 
-  it('offers the Kit only after the free looks are spent, and only with a postal address', () => {
+  it('offers an upgrade only after the free looks are spent, and only with a postal address', () => {
     const base = state({
       createdAt: ago(2 * 24 * HOUR),
       sent: { welcome: ago(47 * HOUR) },
@@ -66,11 +67,37 @@ describe('pickLifecycleEmail', () => {
       lastLookAt: ago(5 * HOUR),
       outOfFreeLooks: true,
     })
-    assert.equal(pickLifecycleEmail(base, now), 'kit_offer')
+    assert.equal(pickLifecycleEmail(base, now), 'upgrade_offer')
     assert.equal(pickLifecycleEmail({ ...base, lastLookAt: ago(HOUR) }, now), null)
     assert.equal(pickLifecycleEmail({ ...base, outOfFreeLooks: false }, now), null)
+    assert.equal(pickLifecycleEmail({ ...base, paid: true }, now), null)
     assert.equal(pickLifecycleEmail({ ...base, promotionsAllowed: false }, now), null)
-    assert.equal(pickLifecycleEmail({ ...base, sent: { ...base.sent, kit_offer: ago(3 * HOUR) } }, now), null)
+  })
+
+  it('follows the offer with two reminders, and stops once they buy', () => {
+    const base = state({
+      createdAt: ago(9 * 24 * HOUR),
+      avatarReadyAt: ago(9 * 24 * HOUR),
+      looks: 3,
+      lastLookAt: ago(8 * 24 * HOUR),
+      outOfFreeLooks: true,
+    })
+    const offered = (hoursAgo: number, extra = {}) => ({
+      ...base,
+      sent: { welcome: ago(9 * 24 * HOUR), upgrade_offer: ago(hoursAgo * HOUR), ...extra },
+      lastSentAt: ago(Math.min(hoursAgo, 20) * HOUR),
+    })
+    assert.equal(pickLifecycleEmail(offered(30), now), null)
+    assert.equal(pickLifecycleEmail(offered(50), now), 'upgrade_reminder')
+    assert.equal(pickLifecycleEmail({ ...offered(50), paid: true }, now), null)
+    assert.equal(pickLifecycleEmail(offered(100, { upgrade_reminder: ago(50 * HOUR) }), now), null)
+    assert.equal(pickLifecycleEmail(offered(125, { upgrade_reminder: ago(75 * HOUR) }), now), 'upgrade_last_call')
+    assert.equal(
+      pickLifecycleEmail(offered(170, { upgrade_reminder: ago(120 * HOUR), upgrade_last_call: ago(40 * HOUR) }), now),
+      null,
+    )
+    // A reminder that would come weeks late is skipped.
+    assert.equal(pickLifecycleEmail(offered(LIFECYCLE_RULES.reminderWindow / HOUR + 1), now), null)
   })
 
   it('sends the welcome first even when the person already did everything', () => {

@@ -8,10 +8,10 @@ import { signedUrlOrNull } from '../../utils/storage.js'
 import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import {
   PaywallError,
-  hasColorAccess,
-  hasKit,
-  requireColorAccess,
-  requireKit,
+  billingState,
+  loadBillingUser,
+  requireColorReport,
+  requireStyleReport,
   sendPaywall,
 } from '../billing/entitlements.js'
 import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, buildColorBoards, buildStyleBoards, startBoards, writeBoards } from './boards.js'
@@ -49,26 +49,41 @@ async function serializeBoards(boards: AvatarDocument['reportBoards'], kinds: re
   return Object.fromEntries(entries.filter((entry) => entry !== null))
 }
 
-// The style half (profile and boards) needs the Style Kit; the Color Report
-// unlocks the rest.
-async function serializeReport(avatar: AvatarDocument | null, kit: boolean) {
+type ReportAccess = { color: boolean; style: boolean }
+
+// Each half goes out only with its report: the Color Report (the color
+// report, drape test and color boards) and the Style Report (the style
+// profile and its boards).
+async function serializeReport(avatar: AvatarDocument | null, access: ReportAccess) {
+  const kinds = BOARD_KINDS.filter((kind) => (isColorBoard(kind) ? access.color : access.style))
+
   return {
-    color: avatar?.colorReport?.data ?? null,
-    drape: avatar?.drape
-      ? {
-          status: avatar.drape.status,
-          url: await signedUrlOrNull(avatar.drape.key),
-          wear: avatar.drape.wear,
-          avoid: avatar.drape.avoid,
-        }
-      : null,
-    style: kit ? (avatar?.styleProfile?.data ?? null) : null,
-    boards: await serializeBoards(avatar?.reportBoards, kit ? BOARD_KINDS : COLOR_BOARDS),
+    colorAvailable: access.color,
+    styleAvailable: access.style,
+    color: access.color ? (avatar?.colorReport?.data ?? null) : null,
+    drape:
+      access.color && avatar?.drape
+        ? {
+            status: avatar.drape.status,
+            url: await signedUrlOrNull(avatar.drape.key),
+            wear: avatar.drape.wear,
+            avoid: avatar.drape.avoid,
+          }
+        : null,
+    style: access.style ? (avatar?.styleProfile?.data ?? null) : null,
+    boards: await serializeBoards(avatar?.reportBoards, kinds),
   }
 }
 
-// The Style Kit reports: advanced color analysis with a drape test, and the
-// style profile, each with its visual boards. Generated on request and kept
+async function reportAccess(app: Parameters<FastifyPluginAsync>[0], userId: Parameters<typeof loadBillingUser>[1]) {
+  const user = await loadBillingUser(app, userId)
+  const state = user ? billingState(user) : null
+
+  return { color: Boolean(state?.colorReport), style: Boolean(state?.styleReport) }
+}
+
+// The reports: the Color Report (advanced color analysis with a drape test)
+// and the Style Report (the style profile), each with its visual boards. Generated on request and kept
 // until the selfie (color) or the body (style) changes. Writing them never
 // costs credits, so a report from before the boards is simply written again.
 const reportRoutes: FastifyPluginAsync = async (app) => {
@@ -77,15 +92,13 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (request) => {
     const userId = requireUserId(request)
 
-    const [kit, color] = await Promise.all([hasKit(app, userId), hasColorAccess(app, userId)])
+    const access = await reportAccess(app, userId)
 
-    if (!color) {
-      return { available: false, colorAvailable: false, color: null, drape: null, style: null, boards: {} }
+    if (!access.color && !access.style) {
+      return serializeReport(null, access)
     }
 
-    const report = await serializeReport(await app.collections.avatars.findOne({ userId }), kit)
-
-    return { available: kit, colorAvailable: true, ...report }
+    return serializeReport(await app.collections.avatars.findOne({ userId }), access)
   })
 
   app.post(
@@ -100,7 +113,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireColorAccess(app, userId, 'The advanced color report')
+        await requireColorReport(app, userId, 'The advanced color report')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -115,10 +128,10 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Your avatar and colors need to be ready first.' })
       }
 
-      const kit = await hasKit(app, userId)
+      const access = await reportAccess(app, userId)
 
       if (avatar.colorReport && !parsed.data.refresh) {
-        return serializeReport(avatar, kit)
+        return serializeReport(avatar, access)
       }
 
       if (!(await reserveGenerations(app, userId, 'report', 1))) {
@@ -149,7 +162,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       startDrapeTest(app, avatar._id)
       startBoards(app, avatar._id, COLOR_BOARDS)
 
-      return serializeReport(updated, kit)
+      return serializeReport(updated, access)
     },
   )
 
@@ -161,7 +174,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       const userId = requireUserId(request)
 
       try {
-        await requireColorAccess(app, userId, 'The drape test')
+        await requireColorReport(app, userId, 'The drape test')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -182,7 +195,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
       startDrapeTest(app, avatar._id)
 
-      return serializeReport(avatar, await hasKit(app, userId))
+      return serializeReport(avatar, await reportAccess(app, userId))
     },
   )
 
@@ -204,9 +217,9 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
       try {
         if (color) {
-          await requireColorAccess(app, userId, 'This color test')
+          await requireColorReport(app, userId, 'This color test')
         } else {
-          await requireKit(app, userId, 'This style test')
+          await requireStyleReport(app, userId, 'This style test')
         }
       } catch (error) {
         if (error instanceof PaywallError) {
@@ -228,7 +241,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
       startBoards(app, avatar._id, [kind])
 
-      return serializeReport(avatar, color ? await hasKit(app, userId) : true)
+      return serializeReport(avatar, await reportAccess(app, userId))
     },
   )
 
@@ -244,7 +257,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requireKit(app, userId, 'Your style profile')
+        await requireStyleReport(app, userId, 'Your style profile')
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -259,8 +272,10 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Your avatar and colors need to be ready first.' })
       }
 
+      const access = await reportAccess(app, userId)
+
       if (avatar.styleProfile && !parsed.data.refresh) {
-        return serializeReport(avatar, true)
+        return serializeReport(avatar, access)
       }
 
       if (!(await reserveGenerations(app, userId, 'report', 1))) {
@@ -275,7 +290,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
         startBoards(app, avatar._id, STYLE_BOARDS)
 
-        return serializeReport(updated, true)
+        return serializeReport(updated, access)
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Style profile failed')
         await releaseGenerations(app, userId, 'report', 1)

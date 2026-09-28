@@ -8,7 +8,14 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { avatarNudgeEmail, kitOfferEmail, looksNudgeEmail, welcomeEmail } from '../src/modules/lifecycle/templates.js'
+import {
+  avatarNudgeEmail,
+  looksNudgeEmail,
+  upgradeLastCallEmail,
+  upgradeOfferEmail,
+  upgradeReminderEmail,
+  welcomeEmail,
+} from '../src/modules/lifecycle/templates.js'
 import { deliverEmail } from '../src/utils/email.js'
 
 const OUT = path.join(process.cwd(), '.email-previews')
@@ -29,7 +36,9 @@ const emails = {
   'welcome-looks': welcomeEmail({ ...recipient, stage: 'looks', season: 'Warm Autumn' }),
   'avatar-nudge': avatarNudgeEmail(recipient),
   'looks-nudge': looksNudgeEmail({ ...recipient, season: 'Warm Autumn', colors }),
-  'kit-offer': kitOfferEmail(recipient),
+  'upgrade-offer': upgradeOfferEmail(recipient),
+  'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
+  'upgrade-last-call': upgradeLastCallEmail(recipient),
 }
 
 const log = {

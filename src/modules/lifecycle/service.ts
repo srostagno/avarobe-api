@@ -9,8 +9,10 @@ import { billingState, isAdmin } from '../billing/entitlements.js'
 import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from './schedule.js'
 import {
   avatarNudgeEmail,
-  kitOfferEmail,
   looksNudgeEmail,
+  upgradeLastCallEmail,
+  upgradeOfferEmail,
+  upgradeReminderEmail,
   welcomeEmail,
   type EmailContent,
   type WelcomeStage,
@@ -43,8 +45,90 @@ export function userIdFromUnsubscribeToken(token: string) {
   return new ObjectId(id)
 }
 
-export function unsubscribeUrl(userId: ObjectId) {
-  return `${env.APP_URL}/email/unsubscribe?t=${encodeURIComponent(unsubscribeToken(userId))}`
+// `sendId` credits the unsubscribe to the email it came from.
+export function unsubscribeUrl(userId: ObjectId, sendId?: ObjectId) {
+  const url = new URL('/email/unsubscribe', `${env.APP_URL}/`)
+  url.searchParams.set('t', unsubscribeToken(userId))
+
+  if (sendId) {
+    url.searchParams.set('e', sendId.toString())
+  }
+
+  return url.toString()
+}
+
+// ---------------------------------------------------------------- tracking
+// Opens come from a 1x1 image and clicks from a redirect, both on the API.
+// Only links back to the app (tagged utm_source=email) are wrapped; the
+// footer's preferences and unsubscribe links stay direct. The redirect is
+// signed per link, so it can't be used to send people anywhere else.
+
+const clickSignature = (sendId: string, target: string) =>
+  hmacSign(env.JWT_ACCESS_SECRET, `email-click:${sendId}:${target}`)
+
+export function trackedLink(sendId: ObjectId, target: string) {
+  const id = sendId.toString()
+  const url = new URL(`/api/v1/email/c/${id}`, `${env.API_PUBLIC_URL}/`)
+  url.searchParams.set('u', target)
+  url.searchParams.set('s', clickSignature(id, target))
+  return url.toString()
+}
+
+// The destination of a tracked link, if the link is genuine and still
+// points at the app.
+export function clickTarget(sendId: string, target: string, signature: string) {
+  if (!ObjectId.isValid(sendId) || !hmacVerify(env.JWT_ACCESS_SECRET, `email-click:${sendId}:${target}`, signature)) {
+    return null
+  }
+
+  try {
+    const url = new URL(target)
+    const app = new URL(env.APP_URL)
+    const host = (value: string) => value.replace(/^www\./, '')
+    return host(url.hostname) === host(app.hostname) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+const unescapeHtml = (value: string) => value.replace(/&amp;/g, '&')
+const escapeAttribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+const isAppLink = (url: string) => url.startsWith(env.APP_URL) && url.includes('utm_source=email')
+
+export function trackContent(content: EmailContent, sendId: ObjectId): EmailContent {
+  const pixel = `<img src="${escapeAttribute(`${env.API_PUBLIC_URL}/api/v1/email/o/${sendId.toString()}.gif`)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">`
+  const html = content.html
+    .replace(/href="([^"]+)"/g, (match, raw: string) => {
+      const url = unescapeHtml(raw)
+      return isAppLink(url) ? `href="${escapeAttribute(trackedLink(sendId, url))}"` : match
+    })
+    .replace('</body>', `${pixel}\n</body>`)
+  const text = content.text.replace(/https?:\/\/\S+/g, (url) => (isAppLink(url) ? trackedLink(sendId, url) : url))
+
+  return { ...content, html, text }
+}
+
+export async function recordOpen(app: FastifyInstance, sendId: ObjectId) {
+  const now = new Date()
+  await app.collections.emailSends.updateOne({ _id: sendId }, { $inc: { opens: 1 }, $min: { firstOpenAt: now } })
+}
+
+export async function recordClick(app: FastifyInstance, sendId: ObjectId) {
+  const now = new Date()
+  // A click means it was opened too, even with images off.
+  await app.collections.emailSends.updateOne(
+    { _id: sendId },
+    { $inc: { clicks: 1 }, $min: { firstClickAt: now, firstOpenAt: now }, $set: { lastClickAt: now } },
+  )
+}
+
+export async function recordUnsubscribe(app: FastifyInstance, sendId: string, userId: ObjectId) {
+  if (ObjectId.isValid(sendId)) {
+    await app.collections.emailSends.updateOne(
+      { _id: new ObjectId(sendId), userId },
+      { $min: { unsubscribedAt: new Date() } },
+    )
+  }
 }
 
 // ---------------------------------------------------------------- sending
@@ -55,15 +139,23 @@ type LookFacts = { count: number; lastAt: Date | null }
 function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, looks: LookFacts): LifecycleState {
   const billing = billingState(user)
   const avatarReady = avatar?.status === 'ready'
+  const sent = { ...(user.lifecycleEmails ?? {}) }
+  // The first price list's offer counts as this one's.
+  const legacyOffer = (user.lifecycleEmails as Record<string, Date> | undefined)?.kit_offer
+
+  if (!sent.upgrade_offer && legacyOffer) {
+    sent.upgrade_offer = legacyOffer
+  }
 
   return {
     createdAt: user.createdAt,
-    sent: user.lifecycleEmails ?? {},
+    sent,
     lastSentAt: user.lifecycleEmailLastAt ?? null,
     avatarReadyAt: avatarReady ? (avatar.readyAt ?? user.createdAt) : null,
     looks: looks.count,
     lastLookAt: looks.lastAt,
-    outOfFreeLooks: billing.credits <= 0 && !billing.kitActive && !billing.everHadKit && !billing.colorReport,
+    outOfFreeLooks: billing.credits <= 0 && !billing.proActive,
+    paid: billing.paid || billing.comp,
     promotionsAllowed: Boolean(env.EMAIL_POSTAL_ADDRESS),
   }
 }
@@ -74,9 +166,13 @@ export function lifecycleContentFor(
   user: UserDocument,
   avatar: AvatarFacts | undefined,
   looks: LookFacts,
+  sendId?: ObjectId,
 ): EmailContent {
-  const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id) }
+  const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
+  // Free accounts see their first three colors in the app; the emails show
+  // the same ones, never the locked rest.
+  const freeColors = analysis?.bestColors.slice(0, 3) ?? []
 
   switch (kind) {
     case 'welcome': {
@@ -86,18 +182,26 @@ export function lifecycleContentFor(
     case 'avatar_nudge':
       return avatarNudgeEmail(recipient)
     case 'looks_nudge':
-      // Free accounts see their first three colors in the app; the email
-      // shows the same ones, never the locked rest.
-      return looksNudgeEmail({ ...recipient, season: analysis?.season ?? null, colors: analysis?.bestColors.slice(0, 3) ?? [] })
-    case 'kit_offer':
-      return kitOfferEmail(recipient)
+      return looksNudgeEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
+    case 'upgrade_offer':
+      return upgradeOfferEmail(recipient)
+    case 'upgrade_reminder':
+      return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
+    case 'upgrade_last_call':
+      return upgradeLastCallEmail(recipient)
   }
 }
 
 // Marks the email as sent before sending, so two API processes (or a slow
 // run overlapping the next) can never send it twice. A failed send is
 // rolled back and retried on a later run.
-async function sendOne(app: FastifyInstance, user: UserDocument, kind: LifecycleEmailKind, content: EmailContent, now: Date) {
+async function sendOne(
+  app: FastifyInstance,
+  user: UserDocument,
+  kind: LifecycleEmailKind,
+  facts: { avatar: AvatarFacts | undefined; looks: LookFacts },
+  now: Date,
+) {
   const field = `lifecycleEmails.${kind}`
   const claimed = await app.collections.users.updateOne(
     { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
@@ -108,22 +212,38 @@ async function sendOne(app: FastifyInstance, user: UserDocument, kind: Lifecycle
     return false
   }
 
+  const sendId = new ObjectId()
+  const content = lifecycleContentFor(kind, user, facts.avatar, facts.looks, sendId)
+
   try {
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind,
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content,
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'Lifecycle email')
     return delivered
   } catch (error) {
     app.log.error({ err: error, userId: user._id.toString(), kind }, 'Lifecycle email failed; will retry')
-    await app.collections.users.updateOne(
-      { _id: user._id },
-      user.lifecycleEmailLastAt
-        ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
-        : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
-    )
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
     return false
   }
 }
@@ -173,7 +293,7 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
       const looks = looksByUser.get(id) ?? { count: 0, lastAt: null }
       const kind = pickLifecycleEmail(stateFor(user, avatar, looks), now)
 
-      if (kind && (await sendOne(app, user, kind, lifecycleContentFor(kind, user, avatar, looks), now))) {
+      if (kind && (await sendOne(app, user, kind, { avatar, looks }, now))) {
         sent += 1
       }
     }
