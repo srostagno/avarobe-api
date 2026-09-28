@@ -64,6 +64,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     ),
     collections.avatars.createIndex({ userId: 1 }, { unique: true }),
     collections.avatars.createIndex({ status: 1, updatedAt: 1 }),
+    collections.avatars.createIndex({ createdAt: -1 }),
     collections.looks.createIndex({ userId: 1, createdAt: -1 }),
     collections.looks.createIndex({ userId: 1, batchId: 1 }),
     collections.looks.createIndex({ userId: 1, collectionIds: 1, createdAt: -1 }),

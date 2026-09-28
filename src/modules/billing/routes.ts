@@ -9,7 +9,7 @@ import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { attributionMetadata } from './conversions.js'
-import { billingState, isAdmin, loadBillingUser } from './entitlements.js'
+import { adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
@@ -281,10 +281,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const since = new Date(Date.now() - parsed.data.days * 24 * 60 * 60 * 1000)
-    const admins = env.COMP_EMAILS.split(',').map((email) => email.trim().toLowerCase()).filter(Boolean)
-    const adminIds = (
-      await app.collections.users.find({ email: { $in: admins } }, { projection: { _id: 1 } }).toArray()
-    ).map((user) => user._id)
+    const adminIds = await adminUserIds(app)
     const cohort = (
       await app.collections.users
         .find({ createdAt: { $gte: since }, _id: { $nin: adminIds } }, { projection: { _id: 1 } })

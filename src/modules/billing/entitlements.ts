@@ -37,6 +37,15 @@ export function isAdmin(user: Pick<UserDocument, 'email'>) {
   return compEmails().has(user.email.toLowerCase())
 }
 
+// Admin accounts, to leave them out of numbers and reviews.
+export async function adminUserIds(app: FastifyInstance): Promise<ObjectId[]> {
+  const users = await app.collections.users
+    .find({ email: { $in: [...compEmails()] } }, { projection: { _id: 1 } })
+    .toArray()
+
+  return users.map((user) => user._id)
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000
 // A failed renewal gets a few days while Stripe retries the card.
 const PLUS_GRACE_MS = 3 * DAY_MS
