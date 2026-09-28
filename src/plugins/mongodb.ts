@@ -69,6 +69,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.looks.createIndex({ userId: 1, batchId: 1 }),
     collections.looks.createIndex({ userId: 1, collectionIds: 1, createdAt: -1 }),
     collections.looks.createIndex({ status: 1, updatedAt: 1 }),
+    collections.looks.createIndex({ createdAt: -1 }),
     collections.looks.createIndex(
       { userId: 1, 'feedback.at': -1 },
       { partialFilterExpression: { 'feedback.at': { $exists: true } } },
