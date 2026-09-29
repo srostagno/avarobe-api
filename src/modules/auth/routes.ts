@@ -39,13 +39,20 @@ const passwordField = z.string().min(1).max(MAX_PASSWORD_LENGTH)
 const firstNameField = z.string().trim().max(60).optional()
 const tokenField = z.string().min(20).max(2_000)
 
-const idField = z.string().regex(/^[A-Za-z0-9._-]{1,200}$/)
+// Meta's _fbc carries the whole ad click id, often well over 200
+// characters. An id that still doesn't fit is dropped: measurement must
+// never be the reason a sign-up fails (it cost Meta sign-ups in Sep 2026).
+const idField = z
+  .string()
+  .regex(/^[A-Za-z0-9._-]{1,1024}$/)
+  .optional()
+  .catch(undefined)
 
 // Analytics ids from the browser (absent when the visitor opted out), and
 // the id the pixel used for this sign-up, so Meta merges both reports.
 const signupTracking = {
-  attribution: z.object({ gaClientId: idField.optional(), fbp: idField.optional(), fbc: idField.optional() }).optional(),
-  eventId: z.string().uuid().optional(),
+  attribution: z.object({ gaClientId: idField, fbp: idField, fbc: idField }).optional().catch(undefined),
+  eventId: z.string().uuid().optional().catch(undefined),
   // First-party analytics: the visitor's first touch (channel, campaign).
   acquisition: acquisitionSchema.optional().catch(undefined),
 }
