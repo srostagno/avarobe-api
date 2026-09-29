@@ -12,6 +12,7 @@ import { analyticsReport } from '../analytics/report.js'
 import { adminUserIds, isAdmin } from '../billing/entitlements.js'
 import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
+import { hairReport } from './hair-report.js'
 
 const avatarsSchema = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),
@@ -23,6 +24,7 @@ const avatarsSchema = z.object({
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const emailsSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+const hairSchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 
 const EMAIL_ORDER: LifecycleEmailKind[] = [
   'welcome',
@@ -340,6 +342,21 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return analyticsReport(app, parsed.data)
+  })
+
+  // The Hair studio: its funnel and the accounts using it (hair-report.ts).
+  app.get('/hair', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(hairSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return hairReport(app, parsed.data.days)
   })
 
   // Checkouts as Stripe has them: opened, paid, abandoned (expired) or open.
