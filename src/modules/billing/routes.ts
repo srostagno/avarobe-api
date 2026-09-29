@@ -8,6 +8,7 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { attributionMetadata } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
@@ -49,6 +50,8 @@ const checkoutSchema = z.object({
       fbc: z.string().regex(idPattern).optional(),
     })
     .optional(),
+  // Which offer led here (first-party analytics), e.g. new_look_results.
+  placement: z.string().regex(/^[a-z0-9_]{1,40}$/).optional(),
   // Where to come back to if they cancel; only paths inside the studio.
   returnPath: z
     .string()
@@ -205,12 +208,22 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
+        const discountCents = parsed.data.product === 'pro_annual' ? state.reportCreditCents : 0
         const url = await createCheckout({
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
-          discountCents: parsed.data.product === 'pro_annual' ? state.reportCreditCents : 0,
+          discountCents,
           attribution: attributionMetadata(parsed.data.attribution, request),
+        })
+        void trackServerEvent(app, {
+          name: 'checkout_created',
+          userId,
+          props: {
+            product: parsed.data.product,
+            amount: Math.max(0, PRODUCTS[parsed.data.product].amount() - discountCents),
+            placement: parsed.data.placement ?? 'unknown',
+          },
         })
         return { url }
       } catch (error) {

@@ -11,6 +11,7 @@ import { InvalidImageError, normalizeBodyPhoto, normalizeSelfie } from '../../ut
 import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, hasColorReport, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
@@ -208,6 +209,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         kind: 'create',
         analyze: Boolean(selfieKey) || !existing?.colorAnalysis,
       })
+      void trackServerEvent(app, { name: 'avatar_started', userId, props: { kind: 'create' } })
 
       const avatar = await app.collections.avatars.findOne({ _id: avatarId })
 

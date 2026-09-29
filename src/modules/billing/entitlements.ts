@@ -3,6 +3,8 @@ import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import type { UserDocument } from '../../types/mongo.js'
+import { toObjectId } from '../../utils/object-id.js'
+import { trackServerEvent } from '../analytics/service.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
 // season and a few colors, and FREE_CREDITS looks. The Color Report unlocks
@@ -265,6 +267,14 @@ export async function useAvatarRun(app: FastifyInstance, userId: ObjectId) {
   }
 }
 
+// Every offer shown instead of a result is counted where it happens, with
+// the route that asked for it (first-party analytics).
 export function sendPaywall(reply: FastifyReply, error: PaywallError) {
+  void trackServerEvent(reply.server, {
+    name: 'paywall_blocked',
+    userId: toObjectId(reply.request.authUserId),
+    props: { code: error.code, route: reply.request.routeOptions.url ?? '' },
+  })
+
   return reply.code(402).send({ message: error.message, code: error.code })
 }

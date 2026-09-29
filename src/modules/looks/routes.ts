@@ -23,6 +23,7 @@ import {
   sendPaywall,
   spendCredits,
 } from '../billing/entitlements.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { generateLookAnalysis } from '../report/service.js'
 import { MARKET_IDS, MARKETS } from '../shop/markets.js'
 import { ShopSearchError, shopSearchConfigured } from '../shop/serpapi.js'
@@ -240,6 +241,12 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       for (const look of looks) {
         startLookRender(app, look._id)
       }
+
+      void trackServerEvent(app, {
+        name: 'looks_styled',
+        userId,
+        props: { count: looks.length, dress_code: looks[0]?.occasion.dressCode ?? 'unknown' },
+      })
 
       return reply.code(202).send({
         batchId: batchId.toString(),

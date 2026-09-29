@@ -7,7 +7,10 @@ import type { AvatarDocument, LifecycleEmailKind, LookDocument } from '../../typ
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
+import { CHANNELS } from '../analytics/service.js'
+import { analyticsReport } from '../analytics/report.js'
 import { adminUserIds, isAdmin } from '../billing/entitlements.js'
+import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
 
 const avatarsSchema = z.object({
@@ -51,6 +54,13 @@ const LOOK_FILTER_QUERIES: Record<(typeof LOOK_FILTERS)[number], Record<string, 
 }
 
 const ICON_NAMES = new Map(ICON_LOOKS.map((icon) => [icon.id, icon.name]))
+
+const analyticsSchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).default(7),
+  channel: z.enum(['all', ...CHANNELS]).default('all'),
+})
+
+const checkoutsSchema = z.object({ days: z.coerce.number().int().min(1).max(30).default(7) })
 
 async function viewerIfAdmin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
   const viewerId = requireUserId(request)
@@ -316,6 +326,46 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   // email the person clicked in the 7 days before buying ("after a click");
   // "within 7 days" counts any purchase in the week after receiving one,
   // clicked or not. Opens include Apple Mail's automatic ones.
+  // First-party analytics: the funnel, sources, offers and checkouts.
+  app.get('/analytics', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(analyticsSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return analyticsReport(app, parsed.data)
+  })
+
+  // Checkouts as Stripe has them: opened, paid, abandoned (expired) or open.
+  app.get('/checkouts', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(checkoutsSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    try {
+      const admins = new Set((await adminUserIds(app)).map((id) => id.toString()))
+      const checkouts = (await recentCheckouts(parsed.data.days)).filter((item) => !item.userId || !admins.has(item.userId))
+
+      return {
+        checkouts: checkouts.map((item) => ({ ...item, userId: item.userId ? item.userId.slice(-6) : null })),
+      }
+    } catch (error) {
+      request.log.warn({ err: error instanceof Error ? error.message : String(error) }, 'Stripe checkouts not listed')
+      return reply.code(502).send({ message: 'Stripe did not answer. Try again in a moment.' })
+    }
+  })
+
   app.get('/emails', { preHandler: authenticate }, async (request, reply) => {
     const viewerId = await viewerIfAdmin(app, request, reply)
 

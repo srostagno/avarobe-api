@@ -17,6 +17,7 @@ import {
 } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
 import {
   COLOR_ANALYSIS_INSTRUCTIONS,
@@ -193,6 +194,13 @@ export async function runAvatarJob(
   await Promise.all(
     [previewKey, ...prunedKeys].map((key) => storage.remove(key).catch(() => undefined)),
   )
+
+  if (options.kind === 'create') {
+    await trackServerEvent(app, {
+      name: failures.length > 0 ? 'avatar_failed' : 'avatar_ready',
+      userId: avatar.userId,
+    })
+  }
 }
 
 export function startAvatarJob(

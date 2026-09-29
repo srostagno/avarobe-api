@@ -4,6 +4,7 @@ import fp from 'fastify-plugin'
 
 import { env } from '../config/env.js'
 import type {
+  AnalyticsEventDocument,
   ArrivalDocument,
   AuthChallengeDocument,
   AvatarDocument,
@@ -33,6 +34,7 @@ export type MongoCollections = {
   purchases: Collection<PurchaseDocument>
   emailSends: Collection<EmailSendDocument>
   arrivals: Collection<ArrivalDocument>
+  analyticsEvents: Collection<AnalyticsEventDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -54,6 +56,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     purchases: mongoDb.collection<PurchaseDocument>('purchases'),
     emailSends: mongoDb.collection<EmailSendDocument>('email_sends'),
     arrivals: mongoDb.collection<ArrivalDocument>('arrivals'),
+    analyticsEvents: mongoDb.collection<AnalyticsEventDocument>('analytics_events'),
   }
 }
 
@@ -111,6 +114,11 @@ async function ensureMongoIndexes(collections: MongoCollections) {
       { unique: true, partialFilterExpression: { click: { $type: 'string' } } },
     ),
     collections.arrivals.createIndex({ at: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }),
+    // First-party analytics: kept 400 days, read by time, by event and by person.
+    collections.analyticsEvents.createIndex({ at: 1 }, { expireAfterSeconds: 400 * 24 * 60 * 60 }),
+    collections.analyticsEvents.createIndex({ name: 1, at: 1 }),
+    collections.analyticsEvents.createIndex({ visitorId: 1, at: 1 }),
+    collections.analyticsEvents.createIndex({ userId: 1, at: 1 }),
   ])
 }
 

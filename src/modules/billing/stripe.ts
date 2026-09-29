@@ -5,6 +5,7 @@ import Stripe from 'stripe'
 import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { reportPurchase } from './conversions.js'
 import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
 
@@ -250,6 +251,33 @@ export async function createCheckout(input: {
   return session.url
 }
 
+// The latest Avarobe checkouts as Stripe has them (the admin's checkout
+// table): what was opened, and whether it was paid, abandoned or is open.
+export async function recentCheckouts(days: number) {
+  const since = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000)
+  const sessions: Stripe.Checkout.Session[] = []
+
+  for await (const session of stripe().checkout.sessions.list({ created: { gte: since }, limit: 100 })) {
+    if (session.metadata?.app === APP) {
+      sessions.push(session)
+    }
+
+    if (sessions.length >= 200) {
+      break
+    }
+  }
+
+  return sessions.map((session) => ({
+    id: session.id.slice(-8),
+    createdAt: new Date(session.created * 1000).toISOString(),
+    product: session.metadata?.product ?? 'unknown',
+    userId: session.metadata?.userId ?? null,
+    amount: session.amount_total ?? 0,
+    status: session.status ?? 'unknown',
+    paid: session.payment_status === 'paid' || session.payment_status === 'no_payment_required',
+  }))
+}
+
 export async function retrieveSession(sessionId: string) {
   return stripe().checkout.sessions.retrieve(sessionId)
 }
@@ -358,6 +386,12 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
   } finally {
     await mongoSession.endSession()
   }
+
+  await trackServerEvent(app, {
+    name: 'purchase_completed',
+    userId: grant.userId,
+    props: { product: grant.product, amount: grant.amount, currency: grant.currency },
+  })
 
   return true
 }

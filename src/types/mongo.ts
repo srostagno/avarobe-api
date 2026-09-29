@@ -41,6 +41,50 @@ export type UserDocument = {
   // Opted out of tips and reminders (unsubscribe link or account settings).
   // Account and security emails still go out.
   emailTipsOptOutAt?: Date | null
+  // Where this person first came from, as the web saw it at sign-up
+  // (first-party analytics); server events inherit it.
+  acquisition?: Acquisition | null
+}
+
+// A visitor's first touch: the channel and campaign that brought them. Ad
+// click ids are kept only as far as offline conversions need them.
+export type Acquisition = {
+  visitorId: string | null
+  channel: AnalyticsChannel
+  source: string | null
+  medium: string | null
+  campaign: string | null
+  content: string | null
+  term: string | null
+  landing: string | null
+  gclid?: string | null
+  gbraid?: string | null
+  wbraid?: string | null
+  fbclid?: string | null
+}
+
+export type AnalyticsChannel = 'meta' | 'google' | 'email' | 'organic' | 'social' | 'referral' | 'direct'
+
+// One first-party analytics event: from the web (page views, clicks, offers
+// seen) or from the server (checkouts, payments, paywalls). Never personal
+// data: no email, no free text, no IP.
+export type AnalyticsEventDocument = {
+  _id: ObjectId
+  at: Date
+  name: string
+  origin: 'web' | 'server'
+  visitorId: string | null
+  sessionId: string | null
+  userId: ObjectId | null
+  path: string | null
+  props: Record<string, string | number | boolean>
+  // First touch (acquisition) and this session's touch.
+  channel: AnalyticsChannel | null
+  campaign: string | null
+  content: string | null
+  sessionChannel: AnalyticsChannel | null
+  mobile: boolean | null
+  inApp: boolean | null
 }
 
 export type LifecycleEmailKind =

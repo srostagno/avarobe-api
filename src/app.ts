@@ -8,6 +8,7 @@ import Fastify from 'fastify'
 
 import { env } from './config/env.js'
 import adminRoutes from './modules/admin/routes.js'
+import analyticsRoutes from './modules/analytics/routes.js'
 import passkeyRoutes from './modules/auth/passkeys.js'
 import authRoutes from './modules/auth/routes.js'
 import avatarRoutes from './modules/avatar/routes.js'
@@ -97,6 +98,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(lifecycleRoutes, { prefix: '/email' })
     await v1.register(adminRoutes, { prefix: '/admin' })
     await v1.register(eventRoutes, { prefix: '/events' })
+    await v1.register(analyticsRoutes, { prefix: '/analytics' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
 
     if (env.STORAGE_DRIVER === 'local') {
