@@ -175,7 +175,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const page = found.slice(0, limit)
     const looks = await app.collections.looks
       .aggregate<LookStats>([
-        { $match: { avatarId: { $in: page.map((avatar) => avatar._id) } } },
+        { $match: { avatarId: { $in: page.map((avatar) => avatar._id) }, status: { $ne: 'locked' } } },
         {
           $group: {
             _id: '$avatarId',
@@ -289,7 +289,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         .toArray(),
       app.collections.looks
         .aggregate<{ _id: null; total: number; ready: number; failed: number; up: number; down: number }>([
-          { $match: inPeriod },
+          // Locked looks were never drawn: they'd read as renders stuck.
+          { $match: { ...inPeriod, status: { $ne: 'locked' } } },
           {
             $group: {
               _id: null,

@@ -609,7 +609,9 @@ export type LookDocument = {
   referenceKey?: string | null
   // Try-ons of an icon look (modules/looks/icons.ts): which one.
   iconId?: string | null
-  status: GenerationStatus
+  // 'locked': a look the stylist designed past the person's last credit,
+  // shown with its pieces but not drawn until they unlock it.
+  status: GenerationStatus | 'locked'
   error: string | null
   imageKey: string | null
   previewKey?: string | null
@@ -621,6 +623,8 @@ export type LookDocument = {
   favorite: boolean
   createdAt: Date
   updatedAt: Date
+  // When its render last started, if not at creation (a retry or unlock).
+  renderStartedAt?: Date | null
   readyAt: Date | null
 }
 

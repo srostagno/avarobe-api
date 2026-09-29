@@ -18,6 +18,8 @@ import {
 } from '../../utils/usage.js'
 import {
   PaywallError,
+  billingState,
+  loadBillingUser,
   refundCredits,
   requirePro,
   sendPaywall,
@@ -193,10 +195,21 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
+      // These were their last looks: the stylist designs one more, shown with
+      // its pieces but not drawn, so the offer comes with a look made for
+      // this occasion rather than a generic "go Pro". Planning it is just text.
+      const billingUser = creditSpent ? await loadBillingUser(app, userId) : null
+      const bonus = billingUser && billingState(billingUser).credits === 0 ? 1 : 0
       let plan: Awaited<ReturnType<typeof planLooks>>
 
       try {
-        plan = await planLooks({ avatar, occasion, notes, count, taste: toStylistTaste(await readTaste(app, userId)) })
+        plan = await planLooks({
+          avatar,
+          occasion,
+          notes,
+          count: count + bonus,
+          taste: toStylistTaste(await readTaste(app, userId)),
+        })
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Look planning failed')
         await releaseGenerations(app, userId, 'look', count)
@@ -206,14 +219,16 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
           .send({ message: 'Our stylist could not plan this one. Please try again.' })
       }
 
-      if (plan.looks.length < count) {
-        await releaseGenerations(app, userId, 'look', count - plan.looks.length)
-        await refundCredits(app, userId, creditSpent ? count - plan.looks.length : 0)
+      const rendered = Math.min(plan.looks.length, count)
+
+      if (rendered < count) {
+        await releaseGenerations(app, userId, 'look', count - rendered)
+        await refundCredits(app, userId, creditSpent ? count - rendered : 0)
       }
 
       const now = new Date()
       const batchId = new ObjectId()
-      const looks: LookDocument[] = plan.looks.map((lookPlan) => ({
+      const looks: LookDocument[] = plan.looks.map((lookPlan, index) => ({
         _id: new ObjectId(),
         userId,
         avatarId: avatar._id,
@@ -225,10 +240,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
           asks: plan.asks,
         },
         plan: lookPlan,
-        status: 'processing',
+        status: index < rendered ? 'processing' : 'locked',
         error: null,
         imageKey: null,
-        creditSpent,
+        creditSpent: index < rendered && creditSpent,
         collectionIds: [],
         favorite: false,
         createdAt: now,
@@ -239,13 +254,19 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       await app.collections.looks.insertMany(looks)
 
       for (const look of looks) {
-        startLookRender(app, look._id)
+        if (look.status === 'processing') {
+          startLookRender(app, look._id)
+        }
       }
 
       void trackServerEvent(app, {
         name: 'looks_styled',
         userId,
-        props: { count: looks.length, dress_code: looks[0]?.occasion.dressCode ?? 'unknown' },
+        props: {
+          count: rendered,
+          locked: looks.length - rendered,
+          dress_code: looks[0]?.occasion.dressCode ?? 'unknown',
+        },
       })
 
       return reply.code(202).send({
@@ -539,9 +560,74 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
       await app.collections.looks.updateOne(
         { _id: look._id },
-        { $set: { status: 'processing', error: null, creditSpent, updatedAt: new Date() } },
+        { $set: { status: 'processing', error: null, creditSpent, renderStartedAt: new Date(), updatedAt: new Date() } },
       )
       startLookRender(app, look._id)
+
+      const updated = await app.collections.looks.findOne({ _id: look._id })
+
+      return reply.code(202).send({ look: updated ? await serializeLook(updated) : null })
+    },
+  )
+
+  // Draws a locked look (see POST /): one credit, like any other look. Out
+  // of credits, the 402 opens the offer with this look waiting behind it.
+  app.post(
+    '/:id/unlock',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const lookId = toObjectId((request.params as { id?: string }).id)
+      const look = lookId ? await app.collections.looks.findOne({ _id: lookId, userId }) : null
+
+      if (!look) {
+        return reply.code(404).send({ message: 'Look not found.' })
+      }
+
+      if (look.status !== 'locked') {
+        return reply.code(409).send({ message: 'This look is already styled.' })
+      }
+
+      const avatar = await app.collections.avatars.findOne({ userId })
+
+      if (!avatar?.avatarKey || avatar.status !== 'ready') {
+        return reply.code(409).send({ message: 'Your avatar needs to be ready before styling looks.' })
+      }
+
+      const quota = await reserveLookQuota(app, userId, 1)
+
+      if (!quota.ok) {
+        return reply.code(quota.status).send(quota.body)
+      }
+
+      let creditSpent: boolean
+
+      try {
+        creditSpent = await spendCredits(app, userId, 1)
+      } catch (error) {
+        await releaseGenerations(app, userId, 'look', 1)
+
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      // Claimed atomically, so a double tap draws (and charges) it once.
+      const claimed = await app.collections.looks.updateOne(
+        { _id: look._id, status: 'locked' },
+        { $set: { status: 'processing', error: null, creditSpent, renderStartedAt: new Date(), updatedAt: new Date() } },
+      )
+
+      if (claimed.modifiedCount === 0) {
+        await releaseGenerations(app, userId, 'look', 1)
+        await refundCredits(app, userId, creditSpent ? 1 : 0)
+        return reply.code(409).send({ message: 'This look is already styled.' })
+      }
+
+      startLookRender(app, look._id)
+      void trackServerEvent(app, { name: 'look_unlocked', userId, props: { dress_code: look.occasion.dressCode } })
 
       const updated = await app.collections.looks.findOne({ _id: look._id })
 
@@ -593,6 +679,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
     if (!look) {
       return reply.code(404).send({ message: 'Look not found.' })
+    }
+
+    if (look.status === 'locked') {
+      return reply.code(409).send({ message: 'Style this look first.' })
     }
 
     const { rating, aspects, pieces, note } = parsed.data
@@ -658,6 +748,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
       if (!base) {
         return reply.code(404).send({ message: 'Look not found.' })
+      }
+
+      if (base.status === 'locked') {
+        return reply.code(409).send({ message: 'Style this look first.' })
       }
 
       const { change } = parsed.data

@@ -278,7 +278,7 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
         .toArray(),
       app.collections.looks
         .aggregate<{ _id: ObjectId; count: number; lastAt: Date | null }>([
-          { $match: { userId: { $in: ids } } },
+          { $match: { userId: { $in: ids }, status: { $ne: 'locked' } } },
           { $group: { _id: '$userId', count: { $sum: 1 }, lastAt: { $max: '$createdAt' } } },
         ])
         .toArray(),

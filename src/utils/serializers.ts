@@ -136,6 +136,7 @@ export async function serializeLook(look: LookDocument) {
     remixOf: look.remixOf?.toString() ?? null,
     remix: look.remix ?? null,
     createdAt: look.createdAt.toISOString(),
+    renderStartedAt: (look.renderStartedAt ?? look.createdAt).toISOString(),
     readyAt: look.readyAt?.toISOString() ?? null,
   }
 }
