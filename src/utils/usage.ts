@@ -11,6 +11,7 @@ const LIMITS: Record<UsageKind, () => number> = {
   pieces: () => env.DAILY_PIECES_LIMIT,
   shop: () => env.DAILY_SHOP_SEARCH_LIMIT,
   report: () => env.DAILY_REPORT_LIMIT,
+  hair: () => env.DAILY_HAIR_LIMIT,
 }
 
 function limitFor(kind: UsageKind) {

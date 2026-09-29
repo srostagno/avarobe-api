@@ -15,6 +15,7 @@ import { errorMessage } from '../../utils/http.js'
 import { toStoredWebp } from '../../utils/images.js'
 import { type ImageInput, generateImage, generateImageFromReferences } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
+import { hairReference } from '../avatar/hair.js'
 import {
   buildCapsuleBoardPrompt,
   buildDrapeBoardPrompt,
@@ -243,7 +244,9 @@ export async function writeBoards(
   return app.collections.avatars.findOne({ _id: avatarId })
 }
 
-type References = Record<'portrait' | 'body', ImageInput[]>
+// 'hairLine' tells portrait boards which hair wins when the avatar wears a
+// haircut from the Hair studio (a close-up of it is the last portrait image).
+type References = Record<'portrait' | 'body', ImageInput[]> & { hairLine?: string }
 
 // The avatar for every board but the capsule, plus the selfie as a close-up
 // of the face for the portraits. Without an avatar image only the capsule
@@ -262,6 +265,13 @@ async function readReferences(avatar: AvatarDocument, boards: ReportBoard[]): Pr
       ...references.body,
       { data: await storage.read(avatar.selfieKey), filename: 'face.jpg', contentType: 'image/jpeg' },
     ]
+
+    const hair = await hairReference(avatar, references.portrait.length + 1)
+
+    if (hair) {
+      references.portrait.push(hair.image)
+      references.hairLine = hair.line
+    }
   }
 
   return references
@@ -299,7 +309,11 @@ async function renderBoard(
     const png =
       board.refs === 'none'
         ? await generateImage({ prompt: board.prompt, size: board.size })
-        : await generateImageFromReferences({ images: references[board.refs], prompt: board.prompt, size: board.size })
+        : await generateImageFromReferences({
+            images: references[board.refs],
+            prompt: board.refs === 'portrait' && references.hairLine ? `${board.prompt} ${references.hairLine}` : board.prompt,
+            size: board.size,
+          })
     const key = `users/${avatar.userId.toString()}/board-${kind}-${Date.now()}.webp`
 
     await storage.put(key, await toStoredWebp(png), 'image/webp')

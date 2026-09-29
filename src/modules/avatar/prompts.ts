@@ -109,7 +109,7 @@ function neutralOutfit(body: AvatarBody) {
 // The failure people notice most is a head that looks pasted onto a stock
 // body: wrong scale, a neck that doesn't fit, or skin that changes tone below
 // the jaw. These lines ask for one coherent photograph.
-const COHERENCE_RULES = [
+export const COHERENCE_RULES = [
   'It must look like ONE real photograph taken in a single shot, never a composite.',
   'The head is in natural proportion to the body for an adult of this height (roughly one-seventh to one-eighth of total height), with a neck whose width and length fit the build.',
   'Skin tone, texture, lighting and color temperature are identical on the face, neck, arms and hands; the body looks the same age as the face.',

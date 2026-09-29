@@ -10,6 +10,7 @@ import type {
   AvatarDocument,
   CollectionDocument,
   EmailSendDocument,
+  HairstyleDocument,
   LookDocument,
   PasskeyDocument,
   PurchaseDocument,
@@ -25,6 +26,7 @@ export type MongoCollections = {
   refreshTokens: Collection<RefreshTokenDocument>
   avatars: Collection<AvatarDocument>
   looks: Collection<LookDocument>
+  hairstyles: Collection<HairstyleDocument>
   collections: Collection<CollectionDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
@@ -47,6 +49,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     refreshTokens: mongoDb.collection<RefreshTokenDocument>('refresh_tokens'),
     avatars: mongoDb.collection<AvatarDocument>('avatars'),
     looks: mongoDb.collection<LookDocument>('looks'),
+    hairstyles: mongoDb.collection<HairstyleDocument>('hairstyles'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
@@ -84,6 +87,8 @@ async function ensureMongoIndexes(collections: MongoCollections) {
       { partialFilterExpression: { 'feedback.at': { $exists: true } } },
     ),
     collections.looks.createIndex({ userId: 1, remixOf: 1 }, { partialFilterExpression: { remixOf: { $exists: true } } }),
+    collections.hairstyles.createIndex({ userId: 1, createdAt: -1 }),
+    collections.hairstyles.createIndex({ status: 1, updatedAt: 1 }),
     collections.tastes.createIndex({ userId: 1 }, { unique: true }),
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(

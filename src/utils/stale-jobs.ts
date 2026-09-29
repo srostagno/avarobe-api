@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 
 import { refundCredits } from '../modules/billing/entitlements.js'
+import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
 
 // Generation runs in-process. If the API restarts mid-render the document
@@ -28,9 +29,9 @@ export async function failStaleJobs(app: FastifyInstance) {
     }
   }
   const [refinements, avatars, looks, , pieces] = await Promise.all([
-    // An interrupted refinement leaves the previous avatar usable.
+    // An interrupted refinement or haircut leaves the previous avatar usable.
     app.collections.avatars.updateMany(
-      { status: 'processing', 'job.kind': 'refine', updatedAt: { $lt: cutoff } },
+      { status: 'processing', 'job.kind': { $in: ['refine', 'hair'] }, updatedAt: { $lt: cutoff } },
       {
         $set: {
           status: 'ready',
@@ -41,7 +42,7 @@ export async function failStaleJobs(app: FastifyInstance) {
       },
     ),
     app.collections.avatars.updateMany(
-      { status: 'processing', 'job.kind': { $ne: 'refine' }, updatedAt: { $lt: cutoff } },
+      { status: 'processing', 'job.kind': { $nin: ['refine', 'hair'] }, updatedAt: { $lt: cutoff } },
       {
         $set: {
           status: 'failed',
@@ -80,6 +81,35 @@ export async function failStaleJobs(app: FastifyInstance) {
       ),
     ),
   ])
+
+  // Hair studio: an interrupted read can be started again; an interrupted
+  // haircut gives back what it took (a credit or the free hairstyle).
+  const [hairProfiles, stuckHairstyles] = await Promise.all([
+    app.collections.avatars.updateMany(
+      { 'hairProfile.status': 'processing', 'hairProfile.updatedAt': { $lt: cutoff } },
+      {
+        $set: {
+          'hairProfile.status': 'failed',
+          'hairProfile.error': 'We could not finish reading your hair. Try again.',
+          'hairProfile.updatedAt': now,
+        },
+      },
+    ),
+    app.collections.hairstyles
+      .find({ status: 'processing', updatedAt: { $lt: cutoff } }, { projection: { _id: 1 } })
+      .toArray(),
+  ])
+
+  for (const hairstyle of stuckHairstyles) {
+    await markHairstyleFailed(app, hairstyle._id)
+  }
+
+  if (hairProfiles.modifiedCount || stuckHairstyles.length) {
+    app.log.warn(
+      { hairProfiles: hairProfiles.modifiedCount, hairstyles: stuckHairstyles.length },
+      'Marked interrupted hair generations as failed',
+    )
+  }
 
   if (refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount || pieces.modifiedCount) {
     app.log.warn(

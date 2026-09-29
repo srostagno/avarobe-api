@@ -13,6 +13,7 @@ import {
 } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
+import { hairReference } from '../avatar/hair.js'
 import { refundCredits } from '../billing/entitlements.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
@@ -212,14 +213,20 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     images.push({ data: reference, filename: 'outfit.jpg', contentType: 'image/jpeg' })
   }
 
+  // A haircut from the Hair studio, over the selfie's hair.
+  const hair = await hairReference(avatar, images.length + 1)
+
+  if (hair) {
+    images.push(hair.image)
+  }
+
   const previewKey = `users/${look.userId.toString()}/look-${look._id.toString()}-preview.webp`
+  const basePrompt = reference ? buildTryOnRenderPrompt(look.plan) : buildLookRenderPrompt(look.plan, look.occasion.text)
 
   try {
     const png = await generateImageFromReferences({
       images,
-      prompt: reference
-        ? buildTryOnRenderPrompt(look.plan)
-        : buildLookRenderPrompt(look.plan, look.occasion.text),
+      prompt: hair ? `${basePrompt} ${hair.line}` : basePrompt,
       // Previews let the card show the look forming instead of a shimmer.
       onPartial: async (partial) => {
         await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')

@@ -13,7 +13,9 @@ import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, hasColorReport, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
+import { deleteHairstyles } from '../hair/service.js'
 import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
+import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { startAvatarJob } from './service.js'
 
@@ -184,7 +186,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             readyAt: existing?.readyAt ?? null,
             avatarKey: existing?.avatarKey ?? null,
             styleProfile: null,
-            ...(selfieKey ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null, reportBoards: null } : {}),
+            ...(selfieKey
+              ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null, reportBoards: null, hairProfile: null }
+              : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
@@ -205,9 +209,15 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
 
+      // Haircuts were read from, and drawn with, the old selfie.
+      if (selfieKey) {
+        await deleteHairstyles(app, userId)
+      }
+
       startAvatarJob(app, avatarId, {
         kind: 'create',
         analyze: Boolean(selfieKey) || !existing?.colorAnalysis,
+        keepHair: !selfieKey,
       })
       void trackServerEvent(app, { name: 'avatar_started', userId, props: { kind: 'create' } })
 
@@ -277,7 +287,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
 
-      startAvatarJob(app, existing._id, { kind: 'create', analyze: !existing.colorAnalysis })
+      startAvatarJob(app, existing._id, { kind: 'create', analyze: !existing.colorAnalysis, keepHair: true })
 
       const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
@@ -399,7 +409,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    await storage.remove(version.key).catch(() => undefined)
+    await Promise.all(
+      [version.key, ...orphanHairKeys([version], remaining)].map((key) => storage.remove(key).catch(() => undefined)),
+    )
 
     return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null }
   })
@@ -427,13 +439,15 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.job?.previewKey,
           existing.drape?.key,
           ...boardKeys(existing.reportBoards),
-          ...(existing.versions ?? []).map((version) => version.key),
+          ...(existing.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ].filter((key): key is string => Boolean(key)),
       ),
     ]
 
     await app.collections.avatars.deleteOne({ _id: existing._id })
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
+    // The haircuts on them were drawn from these photos.
+    await deleteHairstyles(app, userId)
 
     return { ok: true }
   })

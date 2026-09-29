@@ -13,8 +13,13 @@ import { trackServerEvent } from '../analytics/service.js'
 // try-ons, pieces and stores, the look analysis and more avatar changes; the
 // annual plan includes both reports. Looks, remixes and try-ons spend one
 // credit each; look packs add credits that never expire.
+//
+// Hair studio: the read of their hair and the ideal cut on them are free
+// (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
+// Style Report (it's their style, like silhouettes) or Pro; a haircut they
+// describe or bring in a photo is a Pro try-on and spends a credit.
 
-export type PaywallCode = 'needs_pro' | 'needs_color_report' | 'needs_style_report' | 'no_credits'
+export type PaywallCode = 'needs_pro' | 'needs_color_report' | 'needs_style_report' | 'needs_hair' | 'no_credits'
 
 export class PaywallError extends Error {
   constructor(
@@ -42,6 +47,7 @@ type BillingFields = Pick<
   | 'styleKitUntil'
   | 'paidAt'
   | 'freeAvatarRuns'
+  | 'freeHairRuns'
   | 'compPaused'
 >
 
@@ -116,6 +122,9 @@ export function billingState(user: BillingFields, now = Date.now()) {
     paid: Boolean(user.paidAt || colorReportAt || styleReportAt || pro || user.styleKitUntil),
     credits: user.credits ?? env.FREE_CREDITS,
     freeAvatarRunsLeft: proActive ? null : Math.max(0, env.FREE_AVATAR_RUNS - (user.freeAvatarRuns ?? 0)),
+    // Every recommended haircut on them; otherwise the free one(s).
+    hairCuts: styleReport || proActive,
+    freeHairRunsLeft: styleReport || proActive ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
   }
 }
 
@@ -143,6 +152,8 @@ export function serializeBilling(user: BillingFields) {
     credits: state.credits,
     unlimited: state.comp,
     freeAvatarRunsLeft: state.freeAvatarRunsLeft,
+    hairCuts: state.hairCuts,
+    freeHairRunsLeft: state.freeHairRunsLeft,
     admin: state.admin,
     testingAsCustomer: state.admin && !state.comp,
   }
@@ -157,6 +168,7 @@ const BILLING_PROJECTION = {
   styleKitUntil: 1,
   paidAt: 1,
   freeAvatarRuns: 1,
+  freeHairRuns: 1,
   compPaused: 1,
 }
 
@@ -265,6 +277,33 @@ export async function useAvatarRun(app: FastifyInstance, userId: ObjectId) {
   if (result.modifiedCount === 0) {
     throw new PaywallError('needs_pro', 'More avatar changes come with Avarobe Pro.')
   }
+}
+
+// One recommended haircut on the person: free with the Style Report or Pro,
+// otherwise their free hairstyle (FREE_HAIR_RUNS). Returns whether a free
+// run was used, so a failed render can give it back.
+export async function useHairRun(app: FastifyInstance, userId: ObjectId) {
+  if ((await loadState(app, userId)).hairCuts) {
+    return false
+  }
+
+  const result = await app.collections.users.updateOne(
+    {
+      _id: userId,
+      $or: [{ freeHairRuns: { $exists: false } }, { freeHairRuns: { $lt: env.FREE_HAIR_RUNS } }],
+    },
+    { $inc: { freeHairRuns: 1 } },
+  )
+
+  if (result.modifiedCount === 0) {
+    throw new PaywallError('needs_hair', 'All your recommended cuts, shown on you, come with the Style Report or Pro.')
+  }
+
+  return true
+}
+
+export async function releaseHairRun(app: FastifyInstance, userId: ObjectId) {
+  await app.collections.users.updateOne({ _id: userId, freeHairRuns: { $gt: 0 } }, { $inc: { freeHairRuns: -1 } })
 }
 
 // Every offer shown instead of a result is counted where it happens, with

@@ -4,6 +4,7 @@ import type {
   LookDocument,
   UserDocument,
 } from '../types/mongo.js'
+import { currentHair } from '../modules/avatar/hair.js'
 import { serializeBilling } from '../modules/billing/entitlements.js'
 import { signedUrlOrNull } from './storage.js'
 
@@ -58,6 +59,8 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
         id: version.id,
         url: await signedUrlOrNull(version.key),
         source: version.source,
+        // The Hair studio haircut this version wears, if not the selfie's.
+        hair: version.hair ? { hairstyleId: version.hair.hairstyleId, name: version.hair.name } : null,
         createdAt: version.createdAt.toISOString(),
         current: version.key === avatar.avatarKey,
       })),
@@ -74,6 +77,10 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     selfieUrl,
     bodyPhotoUrl,
     versions,
+    hair: (() => {
+      const hair = currentHair(avatar)
+      return hair ? { hairstyleId: hair.hairstyleId, name: hair.name } : null
+    })(),
     job: avatar.job
       ? {
           kind: avatar.job.kind,

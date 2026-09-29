@@ -30,8 +30,10 @@ export type UserDocument = {
   styleKitUntil?: Date | null
   // First purchase of anything (reports, a look pack or Pro).
   paidAt?: Date | null
-  // Avatar renders used without Pro (create, redo, adjust).
+  // Avatar renders used without Pro (create, redo, adjust, a new haircut).
   freeAvatarRuns?: number
+  // Hairstyle renders used without the Style Report or Pro (FREE_HAIR_RUNS).
+  freeHairRuns?: number
   // Admins (COMP_EMAILS) testing the app as a regular customer.
   compPaused?: boolean
   // Onboarding emails (modules/lifecycle): when each one went out, and the
@@ -249,17 +251,31 @@ export type GenerationStatus = 'processing' | 'ready' | 'failed'
 export type AvatarVersion = {
   id: string
   key: string
-  source: 'create' | 'refine'
+  // 'hair': the same avatar with a new haircut from the Hair studio.
+  source: 'create' | 'refine' | 'hair'
   createdAt: Date
+  // A haircut that isn't the one in the selfie: renders from this version
+  // use it instead (`refKey` is a close-up of it, owned by the avatar).
+  hair?: AvatarHair | null
+}
+
+export type AvatarHair = {
+  hairstyleId: string
+  name: string
+  // What the image model is told the haircut is.
+  render: string
+  refKey: string
 }
 
 // The generation in flight, so the app can show real progress: the palette
 // lands first, then previews of the render as the model refines it.
 export type AvatarJob = {
-  kind: 'create' | 'refine'
+  kind: 'create' | 'refine' | 'hair'
   startedAt: Date
   previewKey: string | null
   previewCount: number
+  // 'hair': the hairstyle being put on the avatar.
+  hairstyleId?: string | null
 }
 
 export type AvatarAdjustment =
@@ -294,9 +310,79 @@ export type AvatarDocument = {
   // The visual boards of both reports: one image each, comparing options on
   // the avatar (color boards follow the selfie, style boards the body).
   reportBoards?: Partial<Record<BoardKind, ReportBoard>> | null
+  // The Hair studio's read of the selfie (face shape, hair type and the cuts
+  // that suit them). Follows the selfie, like the color report.
+  hairProfile?: HairProfileState | null
   consentVersion: string
   consentAt: Date
   generations: number
+  createdAt: Date
+  updatedAt: Date
+  readyAt: Date | null
+}
+
+export type HairLength = 'short' | 'medium' | 'long'
+
+// One cut picked for the person. `render` is written for the image model;
+// `stylistBrief` is what they can show at the salon.
+export type HairRecommendation = {
+  id: string
+  name: string
+  length: HairLength
+  why: string
+  maintenance: 'low' | 'medium' | 'high'
+  stylingMinutes: number
+  stylistBrief: string
+  render: string
+}
+
+export type HairProfile = {
+  faceShape: string
+  faceShapeNote: string
+  hairType: { texture: string; density: string; currentLength: HairLength; currentCut: string }
+  summary: string
+  flatters: string[]
+  avoid: string[]
+  // Best first: the first one is "your ideal cut".
+  recommendations: HairRecommendation[]
+}
+
+export type HairProfileState = {
+  status: GenerationStatus
+  data: HairProfile | null
+  error: string | null
+  startedAt: Date
+  updatedAt: Date
+}
+
+// How a haircut the person asked for (not one of the recommendations) works
+// for them: 'great', 'good' or 'tricky', and why.
+export type HairFit = { verdict: 'great' | 'good' | 'tricky'; note: string }
+
+// One haircut rendered on the person (a chest-up portrait): one of their
+// recommendations, a style they described, or one from a photo.
+export type HairstyleDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  avatarId: ObjectId
+  source: 'recommended' | 'described' | 'photo'
+  recommendationId: string | null
+  name: string
+  why: string | null
+  stylistBrief: string | null
+  fit: HairFit | null
+  render: string
+  // What they typed, and the photo they uploaded (only its haircut is used).
+  request: string | null
+  referenceKey: string | null
+  status: GenerationStatus
+  error: string | null
+  imageKey: string | null
+  previewKey: string | null
+  // What rendering it took, given back if it fails: a look credit (styles
+  // they asked for, with Pro) or their free hairstyle.
+  creditSpent: boolean
+  freeRun: boolean
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
@@ -546,7 +632,7 @@ export type CollectionDocument = {
   updatedAt: Date
 }
 
-export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report'
+export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report' | 'hair'
 
 export type UsageCounterDocument = {
   _id: string

@@ -77,4 +77,17 @@ describe('billingState', () => {
     assert.equal(billingState(user({ freeAvatarRuns: 5 }), now).freeAvatarRunsLeft, 0)
     assert.equal(billingState(user({ freeAvatarRuns: 5, pro: pro('month') }), now).freeAvatarRunsLeft, null)
   })
+
+  it('gives one free haircut, and every recommended cut with the Style Report or Pro', () => {
+    const fresh = billingState(user(), now)
+    assert.equal(fresh.hairCuts, false)
+    assert.equal(fresh.freeHairRunsLeft, 1)
+    assert.equal(billingState(user({ freeHairRuns: 1 }), now).freeHairRunsLeft, 0)
+    // The Color Report alone doesn't include them; the Style Report does.
+    assert.equal(billingState(user({ colorReportAt: daysAgo(1), freeHairRuns: 1 }), now).hairCuts, false)
+    const styled = billingState(user({ styleReportAt: daysAgo(1), freeHairRuns: 1 }), now)
+    assert.equal(styled.hairCuts, true)
+    assert.equal(styled.freeHairRunsLeft, null)
+    assert.equal(billingState(user({ pro: pro('month'), freeHairRuns: 1 }), now).hairCuts, true)
+  })
 })

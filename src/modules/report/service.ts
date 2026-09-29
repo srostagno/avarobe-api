@@ -16,6 +16,7 @@ import { errorMessage } from '../../utils/http.js'
 import { toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
+import { hairReference } from '../avatar/hair.js'
 import {
   COLOR_REPORT_INSTRUCTIONS,
   LOOK_ANALYSIS_INSTRUCTIONS,
@@ -124,13 +125,18 @@ export async function runDrapeTest(app: FastifyInstance, avatarId: ObjectId) {
   }
 
   try {
-    const [avatarImage, selfie] = await Promise.all([storage.read(avatar.avatarKey), storage.read(avatar.selfieKey)])
+    const [avatarImage, selfie, hair] = await Promise.all([
+      storage.read(avatar.avatarKey),
+      storage.read(avatar.selfieKey),
+      hairReference(avatar, 3),
+    ])
     const png = await generateImageFromReferences({
       images: [
         { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
         { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
+        ...(hair ? [hair.image] : []),
       ],
-      prompt: buildDrapePrompt(drape),
+      prompt: hair ? `${buildDrapePrompt(drape)} ${hair.line}` : buildDrapePrompt(drape),
       size: '1024x1024',
     })
     const key = `users/${avatar.userId.toString()}/drape-${Date.now()}.webp`

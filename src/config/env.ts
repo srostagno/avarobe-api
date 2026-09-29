@@ -72,6 +72,8 @@ const envSchema = z.object({
   // Writing a report renders its boards (up to 7 paid images), so rewrites are capped.
   DAILY_REPORT_LIMIT: z.coerce.number().int().min(1).max(50).default(6),
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
+  // Hair studio: reads of the selfie and hairstyle renders, per day.
+  DAILY_HAIR_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
   // SerpApi runs the Google Lens searches behind "Find it in stores".
   SERPAPI_API_KEY: z.string().optional(),
   // Billing (Stripe Checkout). Products and prices are created in Stripe on
@@ -96,6 +98,9 @@ const envSchema = z.object({
   // occasion), and avatar renders (create + one redo).
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
+  // Hairstyles rendered free: the ideal cut from the hair read. The rest of
+  // the recommendations come with the Style Report or Pro.
+  FREE_HAIR_RUNS: z.coerce.number().int().min(0).default(1),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
   // Server-side purchase events (see billing/conversions.ts). The ids are

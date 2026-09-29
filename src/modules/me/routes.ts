@@ -6,6 +6,7 @@ import { clearAuthCookies } from '../../utils/auth-session.js'
 import { parseBody } from '../../utils/http.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
+import { deleteHairstyles } from '../hair/service.js'
 import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
 
@@ -82,13 +83,14 @@ const meRoutes: FastifyPluginAsync = async (app) => {
           avatar?.job?.previewKey,
           avatar?.drape?.key,
           ...boardKeys(avatar?.reportBoards),
-          ...(avatar?.versions ?? []).map((version) => version.key),
+          ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
           ...looks.flatMap(lookStorageKeys),
         ].filter((key): key is string => Boolean(key)),
       ),
     ]
 
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
+    await deleteHairstyles(app, userId)
     await Promise.all([
       app.collections.looks.deleteMany({ userId }),
       app.collections.tastes.deleteMany({ userId }),

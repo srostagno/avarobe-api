@@ -4,6 +4,7 @@ import type { ObjectId } from 'mongodb'
 import type {
   AvatarAdjustment,
   AvatarDocument,
+  AvatarHair,
   AvatarVersion,
   ColorAnalysis,
 } from '../../types/mongo.js'
@@ -15,11 +16,15 @@ import {
   type ImageInput,
   toDataUrl,
 } from '../../utils/openai.js'
+import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { buildApplyHairPrompt } from '../hair/prompts.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
+import { currentHair, orphanHairKeys } from './hair.js'
 import {
+  COHERENCE_RULES,
   COLOR_ANALYSIS_INSTRUCTIONS,
   buildAvatarPrompt,
   buildRefinePrompt,
@@ -29,10 +34,24 @@ import {
 const MAX_VERSIONS = 6
 const CREATE_FAILED = 'We could not finish your avatar. Please try again.'
 const REFINE_FAILED = 'We could not apply those changes. Your avatar is unchanged; try again.'
+const HAIR_FAILED = 'We could not change your hair. Your avatar is unchanged; try again.'
 
+// 'create' with keepHair re-renders from the photos but keeps a haircut
+// from the Hair studio (new measurements); a new selfie brings its own hair.
 export type AvatarJobOptions =
-  | { kind: 'create'; analyze: boolean }
+  | { kind: 'create'; analyze: boolean; keepHair?: boolean }
   | { kind: 'refine'; adjustments: AvatarAdjustment[]; notes: string | null }
+  | { kind: 'hair'; hairstyleId: string }
+
+// Refinements and haircuts leave the avatar as it was when they fail;
+// only a failed creation leaves it failed.
+export function failureFor(kind: AvatarJobOptions['kind']) {
+  if (kind === 'hair') {
+    return { status: 'ready' as const, error: HAIR_FAILED }
+  }
+
+  return kind === 'refine' ? { status: 'ready' as const, error: REFINE_FAILED } : { status: 'failed' as const, error: CREATE_FAILED }
+}
 
 function requestColorAnalysis(selfie: Buffer) {
   return createStructuredResponse<ColorAnalysis>({
@@ -95,35 +114,76 @@ export async function runAvatarJob(
   }
 
   const userId = avatar.userId.toString()
-  const [selfie, bodyPhoto, current] = await Promise.all([
-    storage.read(avatar.selfieKey),
-    avatar.bodyPhotoKey ? storage.read(avatar.bodyPhotoKey) : Promise.resolve(null),
-    options.kind === 'refine' && avatar.avatarKey
-      ? storage.read(avatar.avatarKey)
-      : Promise.resolve(null),
-  ])
+  // The haircut the new version wears: the one being put on, or the one it
+  // already has (a refinement, or new measurements, keep it).
+  const keptHair = options.kind === 'refine' || (options.kind === 'create' && options.keepHair) ? currentHair(avatar) : null
+  let hair: AvatarHair | null = keptHair
+  let images: ImageInput[]
+  let prompt: string
+  let selfie: Buffer | null = null
 
-  if (options.kind === 'refine' && !current) {
-    throw new Error('There is no avatar to refine.')
+  if (options.kind === 'hair') {
+    const hairstyleId = toObjectId(options.hairstyleId)
+    const hairstyle = hairstyleId ? await app.collections.hairstyles.findOne({ _id: hairstyleId, userId: avatar.userId }) : null
+
+    if (!avatar.avatarKey || !hairstyle?.imageKey) {
+      throw new Error('There is no avatar or haircut to put together.')
+    }
+
+    const [current, portrait] = await Promise.all([storage.read(avatar.avatarKey), storage.read(hairstyle.imageKey)])
+    // The avatar keeps its own copy of the close-up, so deleting the
+    // hairstyle later doesn't take it from looks.
+    const refKey = `users/${userId}/avatar-hair-${Date.now()}.webp`
+
+    await storage.put(refKey, portrait, 'image/webp')
+    hair = { hairstyleId: hairstyle._id.toString(), name: hairstyle.name, render: hairstyle.render, refKey }
+    images = [
+      { data: current, filename: 'avatar.webp', contentType: 'image/webp' },
+      { data: portrait, filename: 'haircut.webp', contentType: 'image/webp' },
+    ]
+    prompt = buildApplyHairPrompt(hairstyle, COHERENCE_RULES)
+  } else {
+    const [selfieImage, bodyPhoto, current, hairRef] = await Promise.all([
+      storage.read(avatar.selfieKey),
+      avatar.bodyPhotoKey ? storage.read(avatar.bodyPhotoKey) : Promise.resolve(null),
+      options.kind === 'refine' && avatar.avatarKey ? storage.read(avatar.avatarKey) : Promise.resolve(null),
+      keptHair ? storage.read(keptHair.refKey).catch(() => null) : Promise.resolve(null),
+    ])
+
+    if (options.kind === 'refine' && !current) {
+      throw new Error('There is no avatar to refine.')
+    }
+
+    images = [
+      ...(current ? [{ data: current, filename: 'avatar.webp', contentType: 'image/webp' }] : []),
+      { data: selfieImage, filename: 'selfie.jpg', contentType: 'image/jpeg' },
+      ...(bodyPhoto ? [{ data: bodyPhoto, filename: 'body.jpg', contentType: 'image/jpeg' }] : []),
+      ...(hairRef ? [{ data: hairRef, filename: 'hair.webp', contentType: 'image/webp' }] : []),
+    ]
+    selfie = selfieImage
+
+    if (!hairRef) {
+      hair = null
+    }
+
+    const base =
+      options.kind === 'refine'
+        ? buildRefinePrompt({
+            adjustments: options.adjustments,
+            notes: options.notes,
+            hasBodyPhoto: Boolean(bodyPhoto),
+          })
+        : buildAvatarPrompt(avatar.body, Boolean(bodyPhoto))
+
+    prompt = hair
+      ? `${base} Image ${images.length} is a close-up of their current haircut (${hair.name}): the hair must be exactly this haircut, length, texture and color, not the hair in the selfie.`
+      : base
   }
 
-  const images: ImageInput[] = [
-    ...(current ? [{ data: current, filename: 'avatar.webp', contentType: 'image/webp' }] : []),
-    { data: selfie, filename: 'selfie.jpg', contentType: 'image/jpeg' },
-    ...(bodyPhoto ? [{ data: bodyPhoto, filename: 'body.jpg', contentType: 'image/jpeg' }] : []),
-  ]
-  const prompt =
-    options.kind === 'refine'
-      ? buildRefinePrompt({
-          adjustments: options.adjustments,
-          notes: options.notes,
-          hasBodyPhoto: Boolean(bodyPhoto),
-        })
-      : buildAvatarPrompt(avatar.body, Boolean(bodyPhoto))
   const previewKey = `users/${userId}/avatar-preview-${avatarId.toString()}.webp`
 
   const analysis =
-    options.kind === 'create' && options.analyze
+    options.kind === 'create' && options.analyze && selfie
       ? analyzeColors(selfie).then(async (result) => {
           await app.collections.avatars.updateOne(
             { _id: avatarId },
@@ -163,16 +223,23 @@ export async function runAvatarJob(
     const key = `users/${userId}/avatar-${Date.now()}.webp`
     await storage.put(key, await toStoredWebp(renderResult.value), 'image/webp')
 
-    const versions = [
-      { id: now.getTime().toString(36), key, source: options.kind, createdAt: now },
+    const versions: AvatarVersion[] = [
+      { id: now.getTime().toString(36), key, source: options.kind, createdAt: now, hair },
       ...currentVersions(avatar),
     ]
+    const kept = versions.slice(0, MAX_VERSIONS)
+    const pruned = versions.slice(MAX_VERSIONS)
 
-    prunedKeys = versions.slice(MAX_VERSIONS).map((version) => version.key)
-    update.versions = versions.slice(0, MAX_VERSIONS)
+    prunedKeys = [...pruned.map((version) => version.key), ...orphanHairKeys(pruned, kept)]
+    update.versions = kept
     update.avatarKey = key
   } else {
     failures.push(`render: ${errorMessage(renderResult.reason)}`)
+
+    // The close-up copied for a haircut that didn't make it onto the avatar.
+    if (options.kind === 'hair' && hair) {
+      prunedKeys = [hair.refKey]
+    }
   }
 
   if (failures.length > 0) {
@@ -180,9 +247,8 @@ export async function runAvatarJob(
       { avatarId: avatarId.toString(), kind: options.kind, failures },
       'Avatar job failed',
     )
-    // A failed refinement leaves the previous avatar in place and usable.
-    update.status = options.kind === 'refine' ? 'ready' : 'failed'
-    update.error = options.kind === 'refine' ? REFINE_FAILED : CREATE_FAILED
+    // A failed refinement or haircut leaves the previous avatar usable.
+    Object.assign(update, failureFor(options.kind))
     await releaseGenerations(app, avatar.userId, 'avatar', 1)
   } else {
     update.status = 'ready'
@@ -201,6 +267,13 @@ export async function runAvatarJob(
       userId: avatar.userId,
     })
   }
+
+  if (options.kind === 'hair') {
+    await trackServerEvent(app, {
+      name: failures.length > 0 ? 'hair_apply_failed' : 'hair_applied',
+      userId: avatar.userId,
+    })
+  }
 }
 
 export function startAvatarJob(
@@ -214,14 +287,7 @@ export function startAvatarJob(
     try {
       const avatar = await app.collections.avatars.findOneAndUpdate(
         { _id: avatarId, status: 'processing' },
-        {
-          $set: {
-            status: options.kind === 'refine' ? 'ready' : 'failed',
-            error: options.kind === 'refine' ? REFINE_FAILED : CREATE_FAILED,
-            job: null,
-            updatedAt: new Date(),
-          },
-        },
+        { $set: { ...failureFor(options.kind), job: null, updatedAt: new Date() } },
       )
 
       if (avatar) {

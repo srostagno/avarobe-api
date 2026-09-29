@@ -408,6 +408,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
             pro: '',
             paidAt: '',
             freeAvatarRuns: '',
+            freeHairRuns: '',
           },
           $set: { compPaused: true, updatedAt: new Date() },
         },
