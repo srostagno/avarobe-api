@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import { ACCESS_TOKEN_COOKIE } from '../../constants/auth.js'
 import type { Acquisition, AnalyticsChannel, AnalyticsEventDocument } from '../../types/mongo.js'
+import { geoCode } from './geo.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { extractBearerToken } from '../../utils/tokens.js'
 
@@ -123,6 +124,7 @@ export async function recordWebEvents(
   app: FastifyInstance,
   input: z.output<typeof trackSchema>,
   userId: ObjectId | null,
+  geo: string | null = null,
 ) {
   const now = Date.now()
   const docs: AnalyticsEventDocument[] = input.events.map((event) => ({
@@ -141,6 +143,7 @@ export async function recordWebEvents(
     sessionChannel: input.sessionChannel ?? null,
     mobile: input.mobile ?? null,
     inApp: input.inApp ?? null,
+    geo,
   }))
 
   await app.collections.analyticsEvents.insertMany(docs, { ordered: false })
@@ -156,7 +159,7 @@ export async function trackServerEvent(
 ) {
   try {
     const user = input.userId
-      ? await app.collections.users.findOne({ _id: input.userId }, { projection: { acquisition: 1 } })
+      ? await app.collections.users.findOne({ _id: input.userId }, { projection: { acquisition: 1, location: 1 } })
       : null
     const acquisition = user?.acquisition ?? null
 
@@ -176,6 +179,7 @@ export async function trackServerEvent(
       sessionChannel: null,
       mobile: null,
       inApp: null,
+      geo: geoCode(user?.location),
     })
   } catch (error) {
     app.log.warn({ err: error instanceof Error ? error.message : String(error), event: input.name }, 'analytics event not recorded')

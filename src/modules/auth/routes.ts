@@ -30,6 +30,7 @@ import {
 } from '../../utils/password.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { hashToken } from '../../utils/tokens.js'
+import { signupLocation } from '../analytics/geo.js'
 import { acquisitionSchema, toAcquisition, trackServerEvent } from '../analytics/service.js'
 import { attributionMetadata, reportRegistration } from '../billing/conversions.js'
 import { recordRegisteredClick } from '../events/service.js'
@@ -198,6 +199,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             passwordHash,
             passwordUpdatedAt: now,
             acquisition: toAcquisition(parsed.data.acquisition),
+            location: signupLocation(request, now),
           })
         } catch (error) {
           if (isDuplicateKeyError(error)) {
@@ -271,6 +273,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastLoginAt: null,
           emailVerifiedAt: null,
           acquisition: toAcquisition(parsed.data.acquisition),
+          location: signupLocation(request, now),
         }
 
         try {

@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import type { Filter } from 'mongodb'
 
-import type { AnalyticsChannel, AnalyticsEventDocument } from '../../types/mongo.js'
+import type { AnalyticsChannel, AnalyticsEventDocument, UserLocation } from '../../types/mongo.js'
 import { adminUserIds } from '../billing/entitlements.js'
+import { parseGeo } from './geo.js'
 
 // The admin's analytics: the funnel step by step, where people come from,
 // which offers they see and what happens next, checkouts per product, pages
@@ -25,7 +26,7 @@ export const FUNNEL = [
   { id: 'paid', label: 'Paid', names: ['purchase_completed'] },
 ] as const
 
-type Row = Pick<AnalyticsEventDocument, 'at' | 'name' | 'origin' | 'visitorId' | 'userId' | 'path' | 'props' | 'channel' | 'campaign' | 'content'>
+type Row = Pick<AnalyticsEventDocument, 'at' | 'name' | 'origin' | 'visitorId' | 'userId' | 'path' | 'props' | 'channel' | 'campaign' | 'content' | 'geo'>
 
 type Tally = { events: number; people: Set<string> }
 
@@ -37,6 +38,15 @@ function tally(map: Map<string, Tally>, key: string, person: string) {
   entry.events += 1
   entry.people.add(person)
   map.set(key, entry)
+}
+
+// A US state by its code ("TX"), anywhere else by its country ("CL").
+function stateKey(location: Pick<UserLocation, 'country' | 'region'> | null | undefined) {
+  if (!location) {
+    return 'unknown'
+  }
+
+  return location.country === 'US' ? (location.region ?? 'US') : location.country
 }
 
 // "2026-09-28" in Pacific time, the ad account's day.
@@ -59,7 +69,7 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
 
   const rows = (await app.collections.analyticsEvents
     .find(filter, {
-      projection: { at: 1, name: 1, origin: 1, visitorId: 1, userId: 1, path: 1, props: 1, channel: 1, campaign: 1, content: 1 },
+      projection: { at: 1, name: 1, origin: 1, visitorId: 1, userId: 1, path: 1, props: 1, channel: 1, campaign: 1, content: 1, geo: 1 },
       sort: { at: 1 },
     })
     .limit(200_000)
@@ -264,6 +274,52 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
     tally(events, row.name, personOf(row))
   }
 
+  // Where people sign up from (the state saved on the account) and how far
+  // they get; visitors per state come from the events that carry it.
+  const signups = await app.collections.users
+    .find(
+      {
+        _id: { $nin: admins },
+        createdAt: { $gte: since },
+        ...(input.channel === 'all' ? {} : { 'acquisition.channel': input.channel }),
+      },
+      { projection: { location: 1, paidAt: 1, colorReportAt: 1, styleReportAt: 1, pro: 1, styleKitUntil: 1 } },
+    )
+    .toArray()
+  const signupIds = signups.map((user) => user._id)
+  const [avatarUsers, lookUsers] = await Promise.all([
+    app.collections.avatars.distinct('userId', {
+      userId: { $in: signupIds },
+      $or: [{ status: 'ready' }, { readyAt: { $type: 'date' } }],
+    }),
+    app.collections.looks.distinct('userId', { userId: { $in: signupIds }, status: { $ne: 'locked' } }),
+  ])
+  const withAvatar = new Set(avatarUsers.map(String))
+  const withLooks = new Set(lookUsers.map(String))
+  const states = new Map<string, { visitors: Set<string>; signups: number; avatars: number; looks: number; payers: number }>()
+  const state = (key: string) => {
+    const entry = states.get(key) ?? { visitors: new Set<string>(), signups: 0, avatars: 0, looks: 0, payers: 0 }
+    states.set(key, entry)
+    return entry
+  }
+
+  for (const user of signups) {
+    const entry = state(stateKey(user.location))
+    const id = user._id.toString()
+    entry.signups += 1
+    if (withAvatar.has(id)) entry.avatars += 1
+    if (withLooks.has(id)) entry.looks += 1
+    if (user.paidAt || user.colorReportAt || user.styleReportAt || user.pro || user.styleKitUntil) entry.payers += 1
+  }
+
+  for (const row of scoped) {
+    const geo = row.name === 'page_view' ? parseGeo(row.geo) : null
+
+    if (geo) {
+      state(stateKey(geo)).visitors.add(personOf(row))
+    }
+  }
+
   const people = (entry: Tally) => ({ events: entry.events, people: entry.people.size })
 
   return {
@@ -324,6 +380,16 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
       }))
       .sort((a, b) => a.day.localeCompare(b.day)),
     events: [...events.entries()].map(([name, entry]) => ({ name, ...people(entry) })).sort((a, b) => b.events - a.events),
+    states: [...states.entries()]
+      .map(([key, entry]) => ({
+        state: key,
+        visitors: entry.visitors.size,
+        signups: entry.signups,
+        avatars: entry.avatars,
+        looks: entry.looks,
+        payers: entry.payers,
+      }))
+      .sort((a, b) => b.signups - a.signups || b.visitors - a.visitors),
     recent: scoped
       .slice(-80)
       .reverse()

@@ -46,7 +46,13 @@ export type UserDocument = {
   // Where this person first came from, as the web saw it at sign-up
   // (first-party analytics); server events inherit it.
   acquisition?: Acquisition | null
+  // Where they signed up from: country and state, never the IP.
+  location?: UserLocation | null
 }
+
+// 'edge': the web host's reading of the sign-up request (analytics/geo.ts).
+// 'ip': filled in later from the IP of their first session.
+export type UserLocation = { country: string; region: string | null; source: 'edge' | 'ip'; at: Date }
 
 // A visitor's first touch: the channel and campaign that brought them. Ad
 // click ids are kept only as far as offline conversions need them.
@@ -87,6 +93,8 @@ export type AnalyticsEventDocument = {
   sessionChannel: AnalyticsChannel | null
   mobile: boolean | null
   inApp: boolean | null
+  // "US-TX" (analytics/geo.ts); absent on events from before it was kept.
+  geo?: string | null
 }
 
 export type LifecycleEmailKind =

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 
 import { parseBody } from '../../utils/http.js'
+import { geoCode, requestGeo } from './geo.js'
 import { optionalUserId, recordWebEvents, trackSchema } from './service.js'
 
 // First-party analytics from the web. The browser sends batches as
@@ -27,7 +28,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message: parsed.message })
       }
 
-      await recordWebEvents(app, parsed.data, await optionalUserId(request))
+      await recordWebEvents(app, parsed.data, await optionalUserId(request), geoCode(requestGeo(request)))
 
       return reply.code(204).send()
     },
