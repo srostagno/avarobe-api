@@ -304,7 +304,7 @@ export function welcomeEmail(input: Recipient & { stage: WelcomeStage; season: s
   return layout({
     subject: name ? `Welcome to Avarobe, ${name}` : 'Welcome to Avarobe',
     preheader: 'Your personal stylist is ready: outfits for your next occasion, in your colors, on you.',
-    hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for a cocktail wedding' },
+    hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for her daughter’s wedding' },
     recipient: input,
     blocks: [
       eyebrow('Welcome to Avarobe'),
@@ -386,7 +386,7 @@ export function looksNudgeEmail(input: Recipient & { season: string | null; colo
     preheader: `Your first ${env.FREE_CREDITS} looks are free. Tell Avarobe where you’re going.`,
     hero: {
       src: `${ASSETS}/occasions.jpg`,
-      alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date',
+      alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
     },
     recipient: input,
     blocks: [
@@ -435,7 +435,7 @@ export function upgradeOfferEmail(input: Recipient): EmailContent {
     preheader: `Your full color and style reports, looks for every occasion on you, try-ons and every haircut. ${trialPrice()} for ${env.PRO_TRIAL_DAYS} days.`,
     hero: {
       src: `${ASSETS}/occasions.jpg`,
-      alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date',
+      alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
     },
     recipient: input,
     promotional: true,
@@ -460,7 +460,7 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
   return layout({
     subject: season ? `The rest of your ${season} palette` : 'The colors that light you up',
     preheader: 'Your full palette, a drape test on your own face and guides for everything you wear.',
-    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, espresso, lavender and teal' },
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
     recipient: input,
     promotional: true,
     blocks: [
@@ -499,7 +499,7 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
   return layout({
     subject: 'One last note about your stylist',
     preheader: `Everything in Pro for ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}. This is our last reminder.`,
-    hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for a cocktail wedding' },
+    hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for her daughter’s wedding' },
     recipient: input,
     promotional: true,
     blocks: [
@@ -535,7 +535,7 @@ export function trialStartedEmail(input: Recipient & { trialEnd: Date }): EmailC
   return layout({
     subject: `Your ${env.PRO_TRIAL_DAYS} days of Avarobe Pro start now`,
     preheader: `Everything in Pro until ${end}. Then ${monthly} a month, or cancel anytime before.`,
-    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, espresso, lavender and teal' },
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
     recipient: input,
     blocks: [
       eyebrow('Avarobe Pro trial'),
@@ -562,7 +562,7 @@ export function trialEndingEmail(input: Recipient & { trialEnd: Date; looksLeft:
   return layout({
     subject: `Your Pro trial ends ${end}`,
     preheader: `Then ${monthly} a month for ${env.PRO_MONTHLY_CREDITS} new looks, your reports and more. Cancel before if you'd rather not.`,
-    hero: { src: `${ASSETS}/occasions.jpg`, alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date' },
+    hero: { src: `${ASSETS}/occasions.jpg`, alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends' },
     recipient: input,
     blocks: [
       eyebrow('A reminder about your trial'),
