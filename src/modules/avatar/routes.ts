@@ -187,7 +187,15 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             avatarKey: existing?.avatarKey ?? null,
             styleProfile: null,
             ...(selfieKey
-              ? { selfieKey, colorAnalysis: null, colorReport: null, drape: null, reportBoards: null, hairProfile: null }
+              ? {
+                  selfieKey,
+                  colorAnalysis: null,
+                  colorReport: null,
+                  drape: null,
+                  drapePreview: null,
+                  reportBoards: null,
+                  hairProfile: null,
+                }
               : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
@@ -203,6 +211,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const replaced = [
         selfieKey ? previous?.selfieKey : null,
         selfieKey ? previous?.drape?.key : null,
+        selfieKey ? previous?.drapePreview?.key : null,
         bodyPhotoKey ? previous?.bodyPhotoKey : null,
         ...boardKeys(previous?.reportBoards, selfieKey ? BOARD_KINDS : STYLE_BOARDS),
       ].filter((key): key is string => Boolean(key))
@@ -438,6 +447,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.avatarKey,
           existing.job?.previewKey,
           existing.drape?.key,
+          existing.drapePreview?.key,
           ...boardKeys(existing.reportBoards),
           ...(existing.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ].filter((key): key is string => Boolean(key)),

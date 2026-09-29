@@ -411,45 +411,28 @@ export function looksNudgeEmail(input: Recipient & { season: string | null; colo
 // Pro renews.
 
 const perMonth = (yearCents: number) => money(Math.floor(yearCents / 12))
-const RENEWAL_NOTE =
-  'Pro renews automatically until you cancel, and you can cancel anytime in your account settings. Changed your mind? Write to hello@avarobe.com within 7 days of your first payment.'
 
-const bundleSavings = () => env.PRICE_COLOR_REPORT_CENTS + env.PRICE_STYLE_REPORT_CENTS - env.PRICE_REPORTS_BUNDLE_CENTS
+// The first-time offer: Pro for a few days at a small price, then monthly.
+const trialPrice = () => money(env.PRICE_PRO_TRIAL_CENTS)
+const TRIAL_NOTE = () =>
+  `${trialPrice()} today for ${env.PRO_TRIAL_DAYS} days, then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month until you cancel. Cancel anytime before your trial ends, in your account settings, and you won't be charged again.`
+const TRIAL_FEATURES = () => [
+  'Your full color report: every color that lights you up, on your own face',
+  'Your style report: the cuts, necklines and haircuts that flatter you',
+  `${env.PRO_TRIAL_CREDITS} looks for your occasions during the trial, then ${env.PRO_MONTHLY_CREDITS} every month, shown on you`,
+  'Try on any outfit from a photo, and every haircut picked for you',
+]
 
+// The one-time alternatives to the trial.
 const PLAN = {
-  annual: () => ({
-    name: 'Pro annual',
-    price: `${money(env.PRICE_PRO_ANNUAL_CENTS)}/yr`,
-    detail: `${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month, with your Color and Style Reports included`,
-    badge: 'Best value',
-  }),
-  monthly: () => ({
-    name: 'Pro monthly',
-    price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`,
-    detail: `${env.PRO_MONTHLY_CREDITS} looks every month. Cancel anytime`,
-  }),
   colorReport: () => ({ name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'Your full palette and drape test, yours to keep' }),
-  reports: () => ({
-    name: 'Color + Style Reports',
-    price: money(env.PRICE_REPORTS_BUNDLE_CENTS),
-    detail: `Your colors plus the cuts and necklines that flatter you. Save ${money(bundleSavings())}`,
-  }),
   pack: () => ({ name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks. They never expire` }),
-}
-
-// Every way to pay, with Pro annual first and highlighted.
-function allPlans(): Block[] {
-  return [
-    plans([PLAN.annual(), PLAN.monthly()]),
-    small('Or pay once, no subscription:'),
-    plans([PLAN.colorReport(), PLAN.reports(), PLAN.pack()]),
-  ]
 }
 
 export function upgradeOfferEmail(input: Recipient): EmailContent {
   return layout({
-    subject: `Your next ${env.PRO_MONTHLY_CREDITS} looks, from ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month`,
-    preheader: `Avarobe Pro: ${env.PRO_MONTHLY_CREDITS} looks every month, try-ons from any photo, and your color and style reports.`,
+    subject: `Try Avarobe Pro: ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`,
+    preheader: `Your full color and style reports, looks for every occasion on you, try-ons and every haircut. ${trialPrice()} for ${env.PRO_TRIAL_DAYS} days.`,
     hero: {
       src: `${ASSETS}/occasions.jpg`,
       alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date',
@@ -457,19 +440,15 @@ export function upgradeOfferEmail(input: Recipient): EmailContent {
     recipient: input,
     promotional: true,
     blocks: [
-      eyebrow('Your free looks are done'),
+      eyebrow('Your free look is done'),
       heading('Style every occasion on your calendar.'),
       greeting(input.firstName),
-      paragraph(`You’ve used your ${env.FREE_CREDITS} free looks. Avarobe Pro keeps your stylist working for everything coming up:`),
-      checklist([
-        `${env.PRO_MONTHLY_CREDITS} new looks every month, planned for the dress code and shown on you`,
-        'Try on any outfit from a photo before you buy it',
-        'Every piece of a look, found in stores',
-        'Your Color Report and Style Report, included with the annual plan',
-      ]),
-      ...allPlans(),
-      button('See my options', appLink('/studio', 'upgrade_offer', { upgrade: 'look' })),
-      small(RENEWAL_NOTE),
+      paragraph(`Your stylist has more looks waiting for you. Try everything in Avarobe Pro for ${env.PRO_TRIAL_DAYS} days:`),
+      checklist(TRIAL_FEATURES()),
+      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month. Cancel anytime.`, TRIAL_NOTE()),
+      button(`Start my ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`, appLink('/studio', 'upgrade_offer', { upgrade: 'plan' })),
+      small('Or pay once, no subscription:'),
+      plans([PLAN.colorReport(), PLAN.pack()]),
       signature(),
     ],
   })
@@ -500,16 +479,15 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
       ]),
       plans([
         {
-          ...PLAN.annual(),
-          detail: `Both reports included, plus ${env.PRO_MONTHLY_CREDITS} looks every month (${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}/mo)`,
+          name: `Pro, ${env.PRO_TRIAL_DAYS} days`,
+          price: trialPrice(),
+          detail: `Your full color report, your style report and looks on you. Then ${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo, cancel anytime`,
+          badge: 'Try it',
         },
         { ...PLAN.colorReport(), detail: 'One time, yours to keep' },
-        PLAN.reports(),
       ]),
-      small(
-        `Prefer month to month? Pro monthly is ${money(env.PRICE_PRO_MONTHLY_CENTS)}. Just need looks? ${env.LOOK_PACK_CREDITS} for ${money(env.PRICE_LOOK_PACK_CENTS)}.`,
-      ),
-      button('Get my Color Report', appLink('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
+      small(TRIAL_NOTE()),
+      button('See my full palette', appLink('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
       signature(),
     ],
   })
@@ -520,26 +498,85 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
 
   return layout({
     subject: 'One last note about your stylist',
-    preheader: `Pro annual: both reports and ${env.PRO_MONTHLY_CREDITS} looks a month for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}. This is our last reminder.`,
+    preheader: `Everything in Pro for ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}. This is our last reminder.`,
     hero: { src: `${ASSETS}/welcome-hero.jpg`, alt: 'Before and after: the outfit Avarobe planned for a cocktail wedding' },
     recipient: input,
     promotional: true,
     blocks: [
       eyebrow('Our last reminder'),
-      heading(`Everything, for ${perMonth(env.PRICE_PRO_ANNUAL_CENTS)} a month.`),
+      heading(`Everything in Pro, ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}.`),
       greeting(input.firstName),
       paragraph(
-        'This is our last note about plans. If Avarobe helped you dress for your first occasion, the annual plan is the simplest way to keep your stylist for every one after it.',
+        'This is our last note about plans. If Avarobe helped you dress for your first occasion, try your stylist for everything after it: your full color and style reports (' +
+          reports +
+          ' on their own), looks for every occasion on you, try-ons and every haircut.',
       ),
-      priceBox(
-        `${money(env.PRICE_PRO_ANNUAL_CENTS)} a year`,
-        `${env.PRO_MONTHLY_CREDITS} looks every month, try-ons, stores, and both reports (${reports} on their own).`,
-        RENEWAL_NOTE,
-      ),
-      button('Go Pro annual', appLink('/studio', 'upgrade_last_call', { upgrade: 'look' })),
-      small('Other ways to pay:'),
-      plans([PLAN.monthly(), PLAN.colorReport(), PLAN.pack()]),
+      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month. Cancel anytime.`, TRIAL_NOTE()),
+      button(`Start my ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`, appLink('/studio', 'upgrade_last_call', { upgrade: 'plan' })),
+      small('Or pay once, no subscription:'),
+      plans([PLAN.colorReport(), PLAN.pack()]),
       small('Not ready? Your avatar, your season and your looks stay in your account, and you can pick up anytime.'),
+      signature(),
+    ],
+  })
+}
+
+// ---------------------------------------------------------------- trial
+// Pro trial notices. Transactional (billing terms), so they go out even to
+// people who turned off tips, and carry no postal address.
+
+const longDate = (date: Date) =>
+  date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+
+export function trialStartedEmail(input: Recipient & { trialEnd: Date }): EmailContent {
+  const end = longDate(input.trialEnd)
+  const monthly = money(env.PRICE_PRO_MONTHLY_CENTS)
+
+  return layout({
+    subject: `Your ${env.PRO_TRIAL_DAYS} days of Avarobe Pro start now`,
+    preheader: `Everything in Pro until ${end}. Then ${monthly} a month, or cancel anytime before.`,
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, espresso, lavender and teal' },
+    recipient: input,
+    blocks: [
+      eyebrow('Avarobe Pro trial'),
+      heading(`Your stylist is all yours until ${end}.`),
+      greeting(input.firstName),
+      paragraph('Here’s what’s open for you now:'),
+      checklist(TRIAL_FEATURES()),
+      button('Open my studio', appLink('/studio', 'trial_started')),
+      priceBox(
+        `Then ${monthly} a month`,
+        `Your plan renews on ${end} and every month after, until you cancel.`,
+        `Today you paid ${trialPrice()}. Cancel anytime before ${end} in your account settings and you won't be charged again. We'll remind you two days before.`,
+      ),
+      small(`Manage or cancel your plan: ${env.APP_URL}/studio/account#plan`),
+      signature(),
+    ],
+  })
+}
+
+export function trialEndingEmail(input: Recipient & { trialEnd: Date; looksLeft: number }): EmailContent {
+  const end = longDate(input.trialEnd)
+  const monthly = money(env.PRICE_PRO_MONTHLY_CENTS)
+
+  return layout({
+    subject: `Your Pro trial ends ${end}`,
+    preheader: `Then ${monthly} a month for ${env.PRO_MONTHLY_CREDITS} new looks, your reports and more. Cancel before if you'd rather not.`,
+    hero: { src: `${ASSETS}/occasions.jpg`, alt: 'The same woman styled by Avarobe for a cocktail wedding, a job interview and a first date' },
+    recipient: input,
+    blocks: [
+      eyebrow('A reminder about your trial'),
+      heading(`Your trial ends ${end}.`),
+      greeting(input.firstName),
+      paragraph(
+        `On ${end} your Avarobe Pro plan renews at ${monthly} a month. Keep it and nothing changes: ${env.PRO_MONTHLY_CREDITS} new looks every month on you, your color and style reports, try-ons and every haircut.` +
+          (input.looksLeft > 0 ? ` You still have ${input.looksLeft} look${input.looksLeft === 1 ? '' : 's'} to use.` : ''),
+      ),
+      button('Keep styling', appLink('/studio/new', 'trial_ending')),
+      paragraph(
+        `Rather not continue? Cancel in your account settings before ${end} and you won't be charged. Prefer a year? Pro annual is ${money(env.PRICE_PRO_ANNUAL_CENTS)} (${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}/mo) and keeps both reports for good.`,
+      ),
+      small(`Manage or cancel your plan: ${env.APP_URL}/studio/account#plan`),
       signature(),
     ],
   })

@@ -7,6 +7,8 @@ import { unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
   looksNudgeEmail,
+  trialEndingEmail,
+  trialStartedEmail,
   upgradeLastCallEmail,
   upgradeOfferEmail,
   upgradeReminderEmail,
@@ -64,24 +66,44 @@ describe('lifecycle templates', () => {
 })
 
 describe('offer emails', () => {
-  it('show the current prices and say how Pro renews', () => {
+  it('lead with the trial, say how it renews, and keep the one-time options', () => {
     const offer = upgradeOfferEmail(recipient)
-    assert.ok(offer.subject.includes('from $4.99 a month'))
-    // Every way to pay, annual first.
-    for (const price of ['$59.90/yr', '$10.90/mo', '$14.90', '$19.90', '$9.90']) {
+    assert.ok(offer.subject.includes('7 days for $1.00'))
+    // The trial first, then what to pay once.
+    for (const price of ['$1.00', '$10.90 a month', '$14.90', '$9.90']) {
       assert.ok(offer.html.includes(price), price)
     }
-    assert.ok(offer.html.indexOf('Pro annual') < offer.html.indexOf('Pro monthly'))
-    assert.ok(offer.text.includes('renews automatically'))
+    assert.ok(offer.html.indexOf('7 days for $1.00') < offer.html.indexOf('Color Report'))
+    assert.ok(offer.text.includes("you won't be charged again"))
     const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
     assert.ok(reminder.subject.includes('Soft Summer'))
     assert.ok(reminder.html.includes('$14.90'))
-    assert.ok(reminder.html.includes('Save $4.90'))
+    assert.ok(reminder.html.includes('$1.00'))
   })
 
   it('carry the postal address only when it is set', () => {
     // No EMAIL_POSTAL_ADDRESS in tests: the footer has no address line.
     assert.ok(!upgradeOfferEmail(recipient).text.includes('undefined'))
+  })
+})
+
+describe('trial notices', () => {
+  const trialEnd = new Date('2026-10-07T15:00:00Z')
+
+  it('state what was paid, when it renews, for how much and how to cancel', () => {
+    const started = trialStartedEmail({ ...recipient, trialEnd })
+    assert.ok(started.text.includes('Today you paid $1.00'))
+    assert.ok(started.text.includes('Wednesday, October 7'))
+    assert.ok(started.text.includes('$10.90 a month'))
+    assert.ok(started.text.includes('/studio/account#plan'))
+    const ending = trialEndingEmail({ ...recipient, trialEnd, looksLeft: 1 })
+    assert.ok(ending.subject.includes('Wednesday, October 7'))
+    assert.ok(ending.text.includes("you won't be charged"))
+    assert.ok(ending.text.includes('You still have 1 look to use.'))
+  })
+
+  it('are transactional: no postal address, even when it is set', () => {
+    assert.ok(!trialStartedEmail({ ...recipient, trialEnd }).text.includes('Baggot'))
   })
 })
 

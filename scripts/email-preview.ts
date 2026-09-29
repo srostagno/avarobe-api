@@ -12,6 +12,8 @@ import path from 'node:path'
 import {
   avatarNudgeEmail,
   looksNudgeEmail,
+  trialEndingEmail,
+  trialStartedEmail,
   upgradeLastCallEmail,
   upgradeOfferEmail,
   upgradeReminderEmail,
@@ -40,6 +42,8 @@ const emails = {
   'upgrade-offer': upgradeOfferEmail(recipient),
   'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
   'upgrade-last-call': upgradeLastCallEmail(recipient),
+  'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
+  'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
 }
 
 const log = {

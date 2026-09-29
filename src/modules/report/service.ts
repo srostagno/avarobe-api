@@ -22,6 +22,7 @@ import {
   LOOK_ANALYSIS_INSTRUCTIONS,
   STYLE_PROFILE_INSTRUCTIONS,
   buildColorReportRequest,
+  buildDrapePreviewPrompt,
   buildDrapePrompt,
   buildLookAnalysisRequest,
   buildStyleProfileRequest,
@@ -153,6 +154,87 @@ export async function runDrapeTest(app: FastifyInstance, avatarId: ObjectId) {
   } catch (error) {
     app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Drape test failed')
     await markDrape(app, avatarId, { 'drape.status': 'failed', 'drape.updatedAt': new Date() })
+  }
+}
+
+// The free preview (their best and worst color on their face): starts once
+// per selfie, from the free color analysis. A failed one can start again.
+// Returns whether it started.
+export async function startDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
+  const avatar = await app.collections.avatars.findOne({ _id: avatarId })
+  const best = avatar?.colorAnalysis?.bestColors[0]
+  const worst = avatar?.colorAnalysis?.avoidColors[0]
+
+  if (!avatar?.avatarKey || avatar.status !== 'ready' || !best || !worst) {
+    return false
+  }
+
+  const claimed = await app.collections.avatars.updateOne(
+    {
+      _id: avatarId,
+      selfieKey: avatar.selfieKey,
+      // Not made yet, failed a while ago, or stuck after a restart.
+      $or: [
+        { drapePreview: null },
+        { 'drapePreview.status': 'failed', 'drapePreview.updatedAt': { $lt: new Date(Date.now() - 5 * 60 * 1000) } },
+        { 'drapePreview.status': 'processing', 'drapePreview.updatedAt': { $lt: new Date(Date.now() - 10 * 60 * 1000) } },
+      ],
+    },
+    { $set: { drapePreview: { status: 'processing', key: null, best, worst, updatedAt: new Date() } } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  void runDrapePreview(app, avatarId).catch((error: unknown) => {
+    app.log.error({ err: error, avatarId: avatarId.toString() }, 'Drape preview crashed')
+  })
+
+  return true
+}
+
+async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
+  const avatar = await app.collections.avatars.findOne({ _id: avatarId })
+  const preview = avatar?.drapePreview
+  const mark = (set: Record<string, unknown>) =>
+    app.collections.avatars.updateOne(
+      { _id: avatarId, 'drapePreview.status': 'processing', selfieKey: avatar?.selfieKey },
+      { $set: { ...set, 'drapePreview.updatedAt': new Date() } },
+    )
+
+  if (!avatar?.avatarKey || !preview) {
+    return
+  }
+
+  try {
+    const [avatarImage, selfie, hair] = await Promise.all([
+      storage.read(avatar.avatarKey),
+      storage.read(avatar.selfieKey),
+      hairReference(avatar, 3),
+    ])
+    const png = await generateImageFromReferences({
+      images: [
+        { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
+        { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
+        ...(hair ? [hair.image] : []),
+      ],
+      prompt: hair
+        ? `${buildDrapePreviewPrompt(preview.best, preview.worst)} ${hair.line}`
+        : buildDrapePreviewPrompt(preview.best, preview.worst),
+      size: '1536x1024',
+    })
+    const key = `users/${avatar.userId.toString()}/drape-preview-${Date.now()}.webp`
+
+    await storage.put(key, await toStoredWebp(png), 'image/webp')
+
+    // A new selfie while it rendered: the preview is of the old face.
+    if ((await mark({ 'drapePreview.status': 'ready', 'drapePreview.key': key })).matchedCount === 0) {
+      await storage.remove(key).catch(() => undefined)
+    }
+  } catch (error) {
+    app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Drape preview failed')
+    await mark({ 'drapePreview.status': 'failed' })
   }
 }
 

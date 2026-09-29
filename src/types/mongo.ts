@@ -30,6 +30,8 @@ export type UserDocument = {
   styleKitUntil?: Date | null
   // First purchase of anything (reports, a look pack or Pro).
   paidAt?: Date | null
+  // When they started their Pro trial: one per account.
+  proTrialAt?: Date | null
   // Avatar renders used without Pro (create, redo, adjust, a new haircut).
   freeAvatarRuns?: number
   // Hairstyle renders used without the Style Report or Pro (FREE_HAIR_RUNS).
@@ -105,6 +107,10 @@ export type LifecycleEmailKind =
   | 'upgrade_offer'
   | 'upgrade_reminder'
   | 'upgrade_last_call'
+  // Pro trial notices (transactional): its terms when it starts, and a
+  // reminder before the first monthly charge.
+  | 'trial_started'
+  | 'trial_ending'
 
 export type ProSubscription = {
   subscriptionId: string
@@ -115,6 +121,8 @@ export type ProSubscription = {
   cancelAtPeriodEnd: boolean
   // Annual plans get their monthly looks from a scheduler: the next drop.
   nextCreditsAt?: Date | null
+  // Trials (status 'trialing'): when the first monthly charge happens.
+  trialEnd?: Date | null
 }
 
 export type PurchaseProduct =
@@ -127,6 +135,8 @@ export type PurchaseProduct =
   | 'look_pack'
   | 'pro_monthly'
   | 'pro_annual'
+  // The trial fee: a few days of Pro that then renew as pro_monthly.
+  | 'pro_trial'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'
@@ -314,6 +324,9 @@ export type AvatarDocument = {
   // (cleared when it changes); the style profile follows the body.
   colorReport?: { data: ColorReport; createdAt: Date } | null
   drape?: DrapeTest | null
+  // Free: their face in their best color next to their worst one, from the
+  // color analysis. Follows the selfie, like the report.
+  drapePreview?: DrapePreview | null
   styleProfile?: { data: StyleProfile; createdAt: Date } | null
   // The visual boards of both reports: one image each, comparing options on
   // the avatar (color boards follow the selfie, style boards the body).
@@ -451,6 +464,16 @@ export type ReportBoard = {
   prompt: string
   refs: 'portrait' | 'body' | 'none'
   size: '1024x1024' | '1536x1024'
+  updatedAt: Date
+}
+
+// One image of two head-and-shoulders portraits side by side: the best
+// color from the free analysis on the left, the worst on the right.
+export type DrapePreview = {
+  status: GenerationStatus
+  key: string | null
+  best: ColorSwatch
+  worst: ColorSwatch
   updatedAt: Date
 }
 

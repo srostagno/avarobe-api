@@ -82,6 +82,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
           avatar?.avatarKey,
           avatar?.job?.previewKey,
           avatar?.drape?.key,
+          avatar?.drapePreview?.key,
           ...boardKeys(avatar?.reportBoards),
           ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
           ...looks.flatMap(lookStorageKeys),

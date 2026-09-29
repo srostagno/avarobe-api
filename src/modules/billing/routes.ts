@@ -40,6 +40,7 @@ const checkoutSchema = z.object({
     'look_pack',
     'pro_monthly',
     'pro_annual',
+    'pro_trial',
   ]),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
@@ -65,6 +66,7 @@ const previewSchema = z.object({ asCustomer: z.boolean() })
 const SIMULATED_STAGES = [
   'free',
   'free_used',
+  'pro_trial',
   'color_report',
   'style_report',
   'reports',
@@ -98,8 +100,29 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
   })
 
   switch (stage) {
+    // A brand-new account: its sign-up looks.
+    case 'free':
+      return { credits: env.SIGNUP_CREDITS }
     case 'free_used':
       return { credits: 0 }
+    case 'pro_trial': {
+      const trialEnd = new Date(now.getTime() + env.PRO_TRIAL_DAYS * day)
+      return {
+        credits: env.PRO_TRIAL_CREDITS,
+        paidAt: now,
+        proTrialAt: now,
+        pro: {
+          subscriptionId: SIMULATED_SUBSCRIPTION,
+          customerId: null,
+          status: 'trialing',
+          interval: 'month' as const,
+          periodEnd: trialEnd,
+          cancelAtPeriodEnd: false,
+          nextCreditsAt: null,
+          trialEnd,
+        },
+      }
+    }
     case 'color_report':
       return { credits: 0, colorReportAt: now, paidAt: now }
     case 'style_report':
@@ -162,6 +185,12 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
       return state.comp ? 'Your account already has unlimited looks.' : null
     case 'pro_monthly':
       return state.proLive || state.comp ? 'You already have Avarobe Pro.' : null
+    case 'pro_trial':
+      return state.proLive || state.comp
+        ? 'You already have Avarobe Pro.'
+        : state.trialEligible
+          ? null
+          : 'Your trial has been used. Pro monthly is still available.'
     case 'pro_annual':
       if (state.comp) {
         return 'You already have Avarobe Pro.'
@@ -179,7 +208,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
   app.get('/offer', async () => ({
     available: stripeConfigured(),
     products: offer(),
-    free: { credits: env.FREE_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
+    free: { credits: env.SIGNUP_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
+    trial: { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS },
     reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
   }))
 
@@ -326,11 +356,13 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
 
     const since = new Date(Date.now() - parsed.data.days * 24 * 60 * 60 * 1000)
     const adminIds = await adminUserIds(app)
-    const countPro = (interval: 'month' | 'year') =>
+    // Trials are counted apart: they aren't monthly revenue yet.
+    const countPro = (interval: 'month' | 'year' | 'trial') =>
       app.collections.users.countDocuments({
         _id: { $nin: adminIds },
-        'pro.interval': interval,
-        'pro.status': { $in: [...PRO_LIVE_STATUSES] },
+        ...(interval === 'trial'
+          ? { 'pro.status': 'trialing' }
+          : { 'pro.interval': interval, 'pro.status': { $in: [...PRO_LIVE_STATUSES].filter((status) => status !== 'trialing') } }),
         'pro.periodEnd': { $gt: new Date() },
         'pro.subscriptionId': { $ne: SIMULATED_SUBSCRIPTION },
       })
@@ -340,7 +372,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .toArray()
     ).map((user) => user._id)
     const inCohort = { userId: { $in: cohort } }
-    const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual, arrivals] = await Promise.all([
+    const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual, proTrials, arrivals] = await Promise.all([
       app.collections.avatars.countDocuments({ ...inCohort, readyAt: { $ne: null } }),
       app.collections.looks.distinct('userId', inCohort),
       app.collections.looks.distinct('userId', { ...inCohort, source: 'tryon' }),
@@ -353,6 +385,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         .toArray(),
       countPro('month'),
       countPro('year'),
+      countPro('trial'),
       app.collections.arrivals
         .aggregate<{ _id: string; count: number; inApp: number }>([
           { $match: { at: { $gte: since } } },
@@ -386,6 +419,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       pro: {
         monthly: proMonthly,
         annual: proAnnual,
+        trials: proTrials,
         // Annual plans count a twelfth of their price.
         mrr: Math.round(proMonthly * env.PRICE_PRO_MONTHLY_CENTS + (proAnnual * env.PRICE_PRO_ANNUAL_CENTS) / 12),
       },
@@ -402,6 +436,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         {
           $unset: {
             credits: '',
+            proTrialAt: '',
             styleKitUntil: '',
             colorReportAt: '',
             styleReportAt: '',

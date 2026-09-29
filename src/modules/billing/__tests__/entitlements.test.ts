@@ -73,6 +73,30 @@ describe('billingState', () => {
     assert.equal(lapsed.colorReport && lapsed.styleReport, true)
   })
 
+  it('keeps the older free allowance, and the stored sign-up looks of new accounts', () => {
+    assert.equal(billingState(user(), now).credits, env.FREE_CREDITS)
+    assert.equal(billingState(user({ credits: env.SIGNUP_CREDITS }), now).credits, env.SIGNUP_CREDITS)
+  })
+
+  it('offers the trial once: never to someone who had Pro or a trial', () => {
+    assert.equal(billingState(user(), now).trialEligible, true)
+    assert.equal(billingState(user({ colorReportAt: daysAgo(2) }), now).trialEligible, true)
+    assert.equal(billingState(user({ proTrialAt: daysAgo(40) }), now).trialEligible, false)
+    assert.equal(billingState(user({ pro: pro('month', { status: 'canceled', periodEnd: daysAgo(30) }) }), now).trialEligible, false)
+  })
+
+  it('gives everything in Pro during the trial, reports included, and takes the reports back if it ends', () => {
+    const trial = billingState(user({ proTrialAt: daysAgo(1), pro: pro('month', { status: 'trialing', periodEnd: inDays(6), trialEnd: inDays(6) }) }), now)
+    assert.equal(trial.proActive, true)
+    assert.equal(trial.trialing, true)
+    assert.equal(trial.colorReport && trial.styleReport, true)
+    assert.equal(trial.trialEligible, false)
+
+    const canceled = billingState(user({ proTrialAt: daysAgo(10), pro: pro('month', { status: 'canceled', periodEnd: daysAgo(3) }) }), now)
+    assert.equal(canceled.proActive, false)
+    assert.equal(canceled.colorReport || canceled.styleReport, false)
+  })
+
   it('lifts the avatar limit with Pro', () => {
     assert.equal(billingState(user({ freeAvatarRuns: 5 }), now).freeAvatarRunsLeft, 0)
     assert.equal(billingState(user({ freeAvatarRuns: 5, pro: pro('month') }), now).freeAvatarRunsLeft, null)

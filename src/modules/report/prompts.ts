@@ -264,6 +264,20 @@ function describeSwatch(swatch: ColorSwatch) {
   return `${swatch.name} (${swatch.hex})`
 }
 
+// The free preview: their best and worst color from the color analysis,
+// two head-and-shoulders portraits side by side.
+export function buildDrapePreviewPrompt(best: ColorSwatch, worst: ColorSwatch) {
+  return [
+    'Image 1 is this person. Image 2 is a close-up of the same face.',
+    'Create one landscape image divided into two side-by-side head-and-shoulders portraits of this SAME person, like a professional color analysis draping session.',
+    'In both portraits they have the identical face, hair, skin tone and expression, facing the camera, with the same neutral light-grey background and the same soft daylight.',
+    'In each portrait a plain, matte, solid-colored fabric drape covers their shoulders and chest up to the neck, hiding their clothes.',
+    `Drape colors: left ${describeSwatch(best)}, right ${describeSwatch(worst)}.`,
+    'Render the true effect of each color on their complexion, the way it really looks in daylight; do not retouch the skin differently between portraits.',
+    'A thin white gutter between the two portraits. No text, no labels, no logos.',
+  ].join(' ')
+}
+
 // The drape test: four head-and-shoulders portraits in one image.
 export function buildDrapePrompt(drape: { wear: ColorSwatch[]; avoid: ColorSwatch[] }) {
   const [wear1, wear2] = drape.wear

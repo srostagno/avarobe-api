@@ -15,7 +15,7 @@ import {
   sendPaywall,
 } from '../billing/entitlements.js'
 import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, buildColorBoards, buildStyleBoards, startBoards, writeBoards } from './boards.js'
-import { generateColorReport, generateStyleProfile, startDrapeTest } from './service.js'
+import { generateColorReport, generateStyleProfile, startDrapePreview, startDrapeTest } from './service.js'
 
 const refreshSchema = z.object({ refresh: z.boolean().default(false) })
 
@@ -100,6 +100,25 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
     return serializeReport(await app.collections.avatars.findOne({ userId }), access)
   })
+
+  // The free best-vs-worst preview, for avatars made before it existed (new
+  // avatars start it when they're ready). Idempotent: it starts once per
+  // selfie, and again only after a failure.
+  app.post(
+    '/preview',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const avatar = await app.collections.avatars.findOne({ userId }, { projection: { _id: 1, status: 1 } })
+
+      if (!avatar || avatar.status !== 'ready') {
+        return reply.code(409).send({ message: 'Your avatar needs to be ready first.' })
+      }
+
+      const started = await startDrapePreview(app, avatar._id)
+      return { started }
+    },
+  )
 
   app.post(
     '/color',

@@ -7,12 +7,14 @@ import { toObjectId } from '../../utils/object-id.js'
 import { trackServerEvent } from '../analytics/service.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
-// season and a few colors, and FREE_CREDITS looks. The Color Report unlocks
-// the full palette and the visual color report; the Style Report, the style
-// profile. Pro (monthly or annual) adds looks every month and the tools:
+// season, a few colors and their best and worst color on their face, and
+// their sign-up looks (SIGNUP_CREDITS; FREE_CREDITS for older accounts). The
+// Color Report unlocks the full palette and the visual color report; the
+// Style Report, the style profile. Pro (monthly, annual, or its first-time
+// trial) adds looks every month, both reports while it lasts and the tools:
 // try-ons, pieces and stores, the look analysis and more avatar changes; the
-// annual plan includes both reports. Looks, remixes and try-ons spend one
-// credit each; look packs add credits that never expire.
+// annual plan keeps the reports for good. Looks, remixes and try-ons spend
+// one credit each; look packs add credits that never expire.
 //
 // Hair studio: the read of their hair and the ideal cut on them are free
 // (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
@@ -49,6 +51,7 @@ type BillingFields = Pick<
   | 'freeAvatarRuns'
   | 'freeHairRuns'
   | 'compPaused'
+  | 'proTrialAt'
 >
 
 export function isAdmin(user: Pick<UserDocument, 'email'>) {
@@ -87,8 +90,9 @@ export function billingState(user: BillingFields, now = Date.now()) {
   const proActive = comp || proLive || legacyKit
   const colorReportAt = user.colorReportAt ?? null
   const styleReportAt = user.styleReportAt ?? null
-  const colorReport = comp || legacyKit || Boolean(colorReportAt)
-  const styleReport = comp || legacyKit || Boolean(styleReportAt)
+  // Pro includes both reports while it lasts; bought ones are for good.
+  const colorReport = proActive || Boolean(colorReportAt)
+  const styleReport = proActive || Boolean(styleReportAt)
   const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS
   const within = (at: Date | null) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
   const colorRecent = within(colorReportAt)
@@ -111,6 +115,9 @@ export function billingState(user: BillingFields, now = Date.now()) {
     proLive,
     proActive,
     proInterval: proLive && pro ? pro.interval : null,
+    trialing: proLive && pro?.status === 'trialing',
+    // The first-time offer: never had a subscription, not even a trial.
+    trialEligible: !comp && !pro && !user.proTrialAt,
     colorReport,
     styleReport,
     // Completing the pair at the bundle price, soon after buying one report.
@@ -141,6 +148,7 @@ export function serializeBilling(user: BillingFields) {
           status: state.pro.status,
           periodEnd: iso(state.pro.periodEnd),
           cancelAtPeriodEnd: state.pro.cancelAtPeriodEnd,
+          trialEnd: state.trialing ? iso(state.pro.trialEnd ?? state.pro.periodEnd) : null,
         }
       : null,
     colorReport: state.colorReport,
@@ -148,6 +156,7 @@ export function serializeBilling(user: BillingFields) {
     colorAddonUntil: iso(state.colorAddonUntil),
     styleAddonUntil: iso(state.styleAddonUntil),
     reportCredit: state.reportCreditCents > 0 ? { amount: state.reportCreditCents, until: iso(state.reportCreditUntil) } : null,
+    trialEligible: state.trialEligible,
     paid: state.paid,
     credits: state.credits,
     unlimited: state.comp,
@@ -170,6 +179,7 @@ const BILLING_PROJECTION = {
   freeAvatarRuns: 1,
   freeHairRuns: 1,
   compPaused: 1,
+  proTrialAt: 1,
 }
 
 export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {

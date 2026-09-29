@@ -33,6 +33,8 @@ const EMAIL_ORDER: LifecycleEmailKind[] = [
   'upgrade_offer',
   'upgrade_reminder',
   'upgrade_last_call',
+  'trial_started',
+  'trial_ending',
 ]
 
 const LOOK_FILTERS = ['all', 'down', 'up', 'failed', 'tryon', 'remix'] as const

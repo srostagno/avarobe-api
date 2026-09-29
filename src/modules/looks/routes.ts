@@ -44,6 +44,9 @@ import { startTryOn } from './try-on.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
+// A batch that spends the last credit is filled with locked looks up to this.
+const LOCKED_BATCH = 3
+
 const createSchema = z.object({
   occasion: z.string().trim().min(3).max(280),
   notes: z.string().trim().max(280).optional(),
@@ -195,11 +198,13 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      // These were their last looks: the stylist designs one more, shown with
-      // its pieces but not drawn, so the offer comes with a look made for
-      // this occasion rather than a generic "go Pro". Planning it is just text.
+      // These were their last looks: the stylist designs more, shown with
+      // their pieces but not drawn, so the offer comes with looks made for
+      // this occasion rather than a generic "go Pro". Planning them is just
+      // text. A batch fills up to three looks (a new account's one drawn
+      // look comes with two locked ones), and always gets at least one.
       const billingUser = creditSpent ? await loadBillingUser(app, userId) : null
-      const bonus = billingUser && billingState(billingUser).credits === 0 ? 1 : 0
+      const bonus = billingUser && billingState(billingUser).credits === 0 ? Math.max(1, LOCKED_BATCH - count) : 0
       let plan: Awaited<ReturnType<typeof planLooks>>
 
       try {

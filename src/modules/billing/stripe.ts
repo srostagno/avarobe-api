@@ -6,6 +6,7 @@ import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
 import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
 
@@ -78,7 +79,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   pro_monthly: {
     lookupKey: 'avarobe_pro_monthly_v1',
     name: 'Avarobe Pro (monthly)',
-    description: 'New looks every month, try-ons, every piece in stores and more.',
+    description: 'New looks every month, your color and style reports, try-ons, every piece in stores and more.',
     amount: () => env.PRICE_PRO_MONTHLY_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'month',
@@ -91,6 +92,16 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'year',
     unlocks: { color: true, style: true },
+  },
+  // The fee for the first days of Pro. It's charged with the monthly
+  // subscription's first (trial) invoice; the subscription itself is
+  // pro_monthly and starts charging when the trial ends.
+  pro_trial: {
+    lookupKey: 'avarobe_pro_trial_fee_v1',
+    name: 'Avarobe Pro trial',
+    description: 'Your first days of Avarobe Pro. Then monthly, until you cancel.',
+    amount: () => env.PRICE_PRO_TRIAL_CENTS,
+    credits: () => env.PRO_TRIAL_CREDITS,
   },
 }
 
@@ -182,6 +193,14 @@ async function creditCoupon(cents: number) {
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
+const longDate = (date: Date) =>
+  date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+
+// When a trial started now would end (Stripe counts whole days from now).
+export function trialEndFrom(now = new Date()) {
+  return new Date(now.getTime() + env.PRO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
+}
+
 // Checkout shows the Stripe account's name, Trimry's, unless told otherwise.
 // This covers the top of the page; Stripe keeps the account name in its
 // terms line and receipts. (Accepted by the API; not yet in this SDK's types.)
@@ -199,6 +218,10 @@ const BRANDING = {
 // there is nothing recurring.
 function submitMessage(product: PurchaseProduct) {
   const config = PRODUCTS[product]
+
+  if (product === 'pro_trial') {
+    return `${money(config.amount())} today for ${env.PRO_TRIAL_DAYS} days of Pro. Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} per month starting ${longDate(trialEndFrom())}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged again.`
+  }
 
   if (config.recurring) {
     return `Renews automatically at ${money(config.amount())} per ${config.recurring} until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`
@@ -233,7 +256,24 @@ export async function createCheckout(input: {
     success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
   }
-  const params: Stripe.Checkout.SessionCreateParams = PRODUCTS[input.product].recurring
+  const params: Stripe.Checkout.SessionCreateParams =
+    input.product === 'pro_trial'
+      ? {
+          ...common,
+          mode: 'subscription',
+          // The monthly plan with a trial, plus the trial fee on its first
+          // invoice. The subscription is pro_monthly; `trial` marks how it
+          // started, so its first invoice is granted as the trial.
+          line_items: [
+            { price: await priceFor('pro_monthly'), quantity: 1 },
+            { price: await priceFor('pro_trial'), quantity: 1 },
+          ],
+          subscription_data: {
+            trial_period_days: env.PRO_TRIAL_DAYS,
+            metadata: { ...metadata, product: 'pro_monthly', trial: 'pro_trial' },
+          },
+        }
+      : PRODUCTS[input.product].recurring
     ? { ...common, mode: 'subscription', subscription_data: { metadata } }
     : {
         ...common,
@@ -407,6 +447,16 @@ async function subscriptionPeriodEnd(subscriptionId: string) {
   }
 }
 
+async function subscriptionTrialEnd(subscriptionId: string) {
+  try {
+    const subscription = await stripe().subscriptions.retrieve(subscriptionId)
+
+    return subscription.trial_end ? new Date(subscription.trial_end * 1000) : null
+  } catch {
+    return null
+  }
+}
+
 // Grants a paid Avarobe checkout session. For Pro it grants the first
 // payment through its invoice, the same key the invoice webhook uses.
 export async function grantSession(app: FastifyInstance, session: Stripe.Checkout.Session) {
@@ -419,6 +469,24 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
 
   if (session.mode === 'subscription') {
     const subscriptionId = readId(session.subscription)
+
+    if (subscriptionId && product === 'pro_trial') {
+      const applied = await grantProTrial(app, {
+        userId,
+        paymentKey: readId(session.invoice) ?? session.id,
+        subscriptionId,
+        customerId: readId(session.customer),
+        trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
+        amount: session.amount_total ?? 0,
+        currency: session.currency ?? 'usd',
+      })
+
+      if (applied) {
+        void reportSession(app, session, product)
+      }
+
+      return userId
+    }
 
     if (!subscriptionId || !isPro(product)) {
       return null
@@ -519,8 +587,57 @@ async function grantProPayment(
   return applied
 }
 
+// The trial's first invoice (the trial fee): the trial looks, and Pro in
+// 'trialing' until the first monthly charge. Its key is that invoice, like
+// every Pro payment, so the success page and the webhook grant it once.
+async function grantProTrial(
+  app: FastifyInstance,
+  input: {
+    userId: ObjectId
+    paymentKey: string
+    subscriptionId: string
+    customerId: string | null
+    trialEnd: Date
+    amount: number
+    currency: string
+  },
+) {
+  const now = new Date()
+  const applied = await applyGrant(app, {
+    userId: input.userId,
+    product: 'pro_trial',
+    paymentKey: input.paymentKey,
+    paymentIntentId: null,
+    amount: input.amount,
+    currency: input.currency,
+    set: (user) => ({
+      proTrialAt: user.proTrialAt ?? now,
+      pro: {
+        subscriptionId: input.subscriptionId,
+        customerId: input.customerId,
+        status: 'trialing',
+        interval: 'month',
+        periodEnd: input.trialEnd,
+        cancelAtPeriodEnd: false,
+        nextCreditsAt: null,
+        trialEnd: input.trialEnd,
+      },
+    }),
+  })
+
+  if (applied) {
+    void sendTrialStartedEmail(app, input.userId).catch((error: unknown) => {
+      app.log.error({ err: error, userId: input.userId.toString() }, 'Trial email failed')
+    })
+  }
+
+  return applied
+}
+
 // invoice.paid: the first payment (if the success page didn't get there
-// first), every renewal and the switch from monthly to annual.
+// first), every renewal and the switch from monthly to annual. A trial's
+// first invoice is the trial fee; the first monthly charge comes when the
+// trial ends, as a regular renewal.
 export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.Invoice) {
   const details = invoice.parent?.subscription_details
   const userId = avarobeUserId(details?.metadata)
@@ -528,6 +645,19 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
   const product = details?.metadata?.product ?? ''
 
   if (!userId || !subscriptionId || !invoice.id || !isPro(product)) {
+    return
+  }
+
+  if (details?.metadata?.trial === 'pro_trial' && invoice.billing_reason === 'subscription_create') {
+    await grantProTrial(app, {
+      userId,
+      paymentKey: invoice.id,
+      subscriptionId,
+      customerId: readId(invoice.customer),
+      trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
+      amount: invoice.amount_paid,
+      currency: invoice.currency,
+    })
     return
   }
 
@@ -579,6 +709,7 @@ export async function handleSubscriptionChange(app: FastifyInstance, subscriptio
         'pro.interval': interval,
         'pro.periodEnd': periodEnd,
         'pro.cancelAtPeriodEnd': subscription.cancel_at_period_end,
+        'pro.trialEnd': subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
         ...(interval === 'month' ? { 'pro.nextCreditsAt': null } : {}),
         updatedAt: new Date(),
       },

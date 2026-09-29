@@ -49,11 +49,12 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
 }
 
 export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean }) {
-  const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, versions] = await Promise.all([
+  const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
     signedUrlOrNull(avatar.selfieKey),
     signedUrlOrNull(avatar.bodyPhotoKey ?? null),
     signedUrlOrNull(avatar.job?.previewKey ?? null),
+    signedUrlOrNull(avatar.drapePreview?.status === 'ready' ? avatar.drapePreview.key : null),
     Promise.all(
       (avatar.versions ?? []).map(async (version) => ({
         id: version.id,
@@ -73,6 +74,15 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     error: avatar.error,
     body: avatar.body,
     colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette),
+    // Free for everyone: their best and worst color on their face.
+    drapePreview: avatar.drapePreview
+      ? {
+          status: avatar.drapePreview.status,
+          url: drapePreviewUrl,
+          best: avatar.drapePreview.best,
+          worst: avatar.drapePreview.worst,
+        }
+      : null,
     avatarUrl,
     selfieUrl,
     bodyPhotoUrl,

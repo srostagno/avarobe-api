@@ -81,8 +81,8 @@ const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   // The price list (US cents). The reports are one-time and yours to keep;
-  // the look pack never expires; Pro is a subscription, monthly or annual,
-  // and the annual plan includes both reports.
+  // the look pack never expires; Pro is a subscription, monthly or annual.
+  // Pro includes both reports while it lasts; the annual plan keeps them.
   PRICE_COLOR_REPORT_CENTS: z.coerce.number().int().min(100).default(1490),
   PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(990),
   PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
@@ -91,11 +91,19 @@ const envSchema = z.object({
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(1090),
   PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(5990),
   PRO_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(30),
+  // The first-time offer: Pro for a few days at a small price, then monthly.
+  // One trial per account, with fewer looks than a paid month.
+  PRICE_PRO_TRIAL_CENTS: z.coerce.number().int().min(50).default(100),
+  PRO_TRIAL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+  PRO_TRIAL_CREDITS: z.coerce.number().int().min(1).default(10),
   // For this many days after buying a report, it counts toward the other
   // report (the bundle price) and toward Pro annual.
   REPORT_CREDIT_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
-  // Free allowance: looks on sign-up (a full set of 3 for the first
-  // occasion), and avatar renders (create + one redo).
+  // Free allowance. New accounts get SIGNUP_CREDITS looks, stored on the
+  // account (one drawn look; the stylist designs two more, locked).
+  // FREE_CREDITS is what accounts from before that have without a stored
+  // number. Plus avatar renders (create + one redo).
+  SIGNUP_CREDITS: z.coerce.number().int().min(0).default(1),
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
   // Hairstyles rendered free: the ideal cut from the hair read. The rest of

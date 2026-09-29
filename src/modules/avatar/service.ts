@@ -20,6 +20,7 @@ import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { startDrapePreview } from '../report/service.js'
 import { buildApplyHairPrompt } from '../hair/prompts.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
 import { currentHair, orphanHairKeys } from './hair.js'
@@ -266,6 +267,14 @@ export async function runAvatarJob(
       name: failures.length > 0 ? 'avatar_failed' : 'avatar_ready',
       userId: avatar.userId,
     })
+
+    // Their best and worst color on their own face: the free part of the
+    // color report, ready by the time they look at their colors.
+    if (failures.length === 0) {
+      await startDrapePreview(app, avatarId).catch((error: unknown) => {
+        app.log.error({ err: error, avatarId: avatarId.toString() }, 'Drape preview did not start')
+      })
+    }
   }
 
   if (options.kind === 'hair') {

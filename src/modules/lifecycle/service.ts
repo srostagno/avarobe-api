@@ -10,6 +10,8 @@ import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from './sche
 import {
   avatarNudgeEmail,
   looksNudgeEmail,
+  trialEndingEmail,
+  trialStartedEmail,
   upgradeLastCallEmail,
   upgradeOfferEmail,
   upgradeReminderEmail,
@@ -21,6 +23,10 @@ import {
 const RUN_EVERY_MS = 10 * 60 * 1000
 const FIRST_RUN_AFTER_MS = 60 * 1000
 const BATCH = 500
+// The trial reminder goes out this long before the first monthly charge.
+const TRIAL_REMINDER_BEFORE_MS = 48 * 60 * 60 * 1000
+// Admins' simulated plans never reach Stripe, or their inbox.
+const SIMULATED_SUBSCRIPTION = 'sim_admin'
 
 // ---------------------------------------------------------------- unsubscribe
 
@@ -189,7 +195,112 @@ export function lifecycleContentFor(
       return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
     case 'upgrade_last_call':
       return upgradeLastCallEmail(recipient)
+    case 'trial_started':
+      return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user) })
+    case 'trial_ending':
+      return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
   }
+}
+
+function trialEndOf(user: UserDocument) {
+  return user.pro?.trialEnd ?? user.pro?.periodEnd ?? new Date(Date.now() + env.PRO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
+}
+
+// ---------------------------------------------------------------- trial notices
+
+type TrialNotice = 'trial_started' | 'trial_ending'
+
+// Billing notices: once each, whatever the tips preference, and apart from
+// the onboarding emails' spacing. A failed send is rolled back and retried.
+async function sendTrialNotice(app: FastifyInstance, user: UserDocument, kind: TrialNotice, now: Date) {
+  const field = `lifecycleEmails.${kind}`
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false } },
+    { $set: { [field]: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+  const content = lifecycleContentFor(kind, user, undefined, { count: 0, lastAt: null }, sendId)
+
+  try {
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind,
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), kind, delivered }, 'Trial notice')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString(), kind }, 'Trial notice failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne({ _id: user._id }, { $unset: { [field]: '' } }),
+    ])
+    return false
+  }
+}
+
+// Right after a trial starts: its terms (what was paid, when it renews and
+// how to cancel), as card networks ask for trials.
+export async function sendTrialStartedEmail(app: FastifyInstance, userId: ObjectId) {
+  const user = await app.collections.users.findOne({ _id: userId })
+
+  if (!user || user.pro?.status !== 'trialing' || user.pro.subscriptionId === SIMULATED_SUBSCRIPTION) {
+    return false
+  }
+
+  return sendTrialNotice(app, user, 'trial_started', new Date())
+}
+
+// Every run: the reminder before the first monthly charge (skipped once
+// they cancel), and the start notice if it didn't go out when they paid.
+export async function sendTrialNotices(app: FastifyInstance, now = new Date()) {
+  const trialing = await app.collections.users
+    .find({
+      'pro.status': 'trialing',
+      'pro.subscriptionId': { $ne: SIMULATED_SUBSCRIPTION },
+      'pro.trialEnd': { $gt: now },
+      $or: [
+        { 'lifecycleEmails.trial_started': { $exists: false } },
+        {
+          'lifecycleEmails.trial_ending': { $exists: false },
+          'pro.cancelAtPeriodEnd': false,
+          'pro.trialEnd': { $gt: now, $lte: new Date(now.getTime() + TRIAL_REMINDER_BEFORE_MS) },
+        },
+      ],
+    })
+    .limit(BATCH)
+    .toArray()
+  let sent = 0
+
+  for (const user of trialing) {
+    const trialEnd = user.pro?.trialEnd
+    const due: TrialNotice | null = !user.lifecycleEmails?.trial_started
+      ? 'trial_started'
+      : !user.pro?.cancelAtPeriodEnd && trialEnd && trialEnd.getTime() - now.getTime() <= TRIAL_REMINDER_BEFORE_MS
+        ? 'trial_ending'
+        : null
+
+    if (due && (await sendTrialNotice(app, user, due, now))) {
+      sent += 1
+    }
+  }
+
+  return sent
 }
 
 // Marks the email as sent before sending, so two API processes (or a slow
@@ -313,6 +424,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
   const run = () => {
     void sendDueLifecycleEmails(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Lifecycle email run crashed')
+    })
+    void sendTrialNotices(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Trial notices run crashed')
     })
   }
 
