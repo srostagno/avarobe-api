@@ -5,6 +5,7 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { clearAuthCookies } from '../../utils/auth-session.js'
 import { parseBody } from '../../utils/http.js'
 import { serializeUser } from '../../utils/serializers.js'
+import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { lookStorageKeys } from '../looks/service.js'
@@ -22,6 +23,30 @@ const emailPreferencesSchema = z.object({
 
 const meRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+
+  // One of their own generated images, for sharing. The page adds the
+  // avarobe.com band and hands it to the share sheet; it can't read S3
+  // images itself (no CORS there).
+  app.get(
+    '/image',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const key = shareableKey((request.query as { src?: string }).src ?? '', userId.toString())
+
+      if (!key) {
+        return reply.code(404).send({ message: 'That image can’t be shared.' })
+      }
+
+      try {
+        const file = await storage.read(key)
+
+        return reply.header('Content-Type', 'image/webp').header('Cache-Control', 'private, max-age=300').send(file)
+      } catch {
+        return reply.code(404).send({ message: 'That image can’t be shared.' })
+      }
+    },
+  )
 
   app.patch('/', async (request, reply) => {
     const parsed = parseBody(updateSchema, request.body)
