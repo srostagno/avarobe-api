@@ -526,14 +526,27 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
   return userId
 }
 
-// Once per purchase, whichever of the success page or the webhook grants it.
+// Once per purchase, whichever of the success page or the webhooks grants
+// it. Pro goes by its first invoice, the id the invoice webhook has too.
 function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, product: string) {
   return reportPurchase(app, {
     metadata: session.metadata,
-    transactionId: session.id,
+    transactionId: readId(session.invoice) ?? session.id,
     product,
     amount: session.amount_total ?? 0,
     currency: session.currency ?? 'usd',
+  }).catch(() => undefined)
+}
+
+// A subscription's first invoice, when invoice.paid grants it before the
+// checkout does. The subscription carries the checkout's browser ids.
+function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoiceId: string, product: string) {
+  return reportPurchase(app, {
+    metadata: invoice.parent?.subscription_details?.metadata,
+    transactionId: invoiceId,
+    product,
+    amount: invoice.amount_paid,
+    currency: invoice.currency,
   }).catch(() => undefined)
 }
 
@@ -648,8 +661,11 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     return
   }
 
-  if (details?.metadata?.trial === 'pro_trial' && invoice.billing_reason === 'subscription_create') {
-    await grantProTrial(app, {
+  // Renewals and the switch to annual aren't purchases from an ad.
+  const first = invoice.billing_reason === 'subscription_create'
+
+  if (details?.metadata?.trial === 'pro_trial' && first) {
+    const applied = await grantProTrial(app, {
       userId,
       paymentKey: invoice.id,
       subscriptionId,
@@ -658,6 +674,11 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
       amount: invoice.amount_paid,
       currency: invoice.currency,
     })
+
+    if (applied) {
+      void reportFirstInvoice(app, invoice, invoice.id, 'pro_trial')
+    }
+
     return
   }
 
@@ -665,7 +686,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
   // credit line for the unused time).
   const lineEnd = Math.max(0, ...invoice.lines.data.map((line) => line.period.end))
 
-  await grantProPayment(app, {
+  const applied = await grantProPayment(app, {
     userId,
     product,
     paymentKey: invoice.id,
@@ -675,6 +696,10 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     amount: invoice.amount_paid,
     currency: invoice.currency,
   })
+
+  if (applied && first) {
+    void reportFirstInvoice(app, invoice, invoice.id, product)
+  }
 }
 
 function intervalOf(subscription: Stripe.Subscription): ProSubscription['interval'] {

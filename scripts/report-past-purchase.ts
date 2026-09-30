@@ -1,8 +1,9 @@
 // Sends a purchase Meta never got to the Conversions API, with the time it
 // was bought (Meta takes events up to 7 days old). Only when the checkout
 // carried browser ids, which the web sends only if the buyer allowed
-// tracking (no opt-out, no GPC). The Stripe session id is the event id, so
-// Meta drops it if the purchase did arrive after all.
+// tracking (no opt-out, no GPC). The event id is the one the live report
+// uses (the checkout, or the first invoice for Pro), so Meta drops it if
+// the purchase did arrive after all.
 //
 //   corepack pnpm exec tsx scripts/report-past-purchase.ts [stripe session id]
 //
@@ -80,7 +81,7 @@ try {
 
   const sent = sendMetaPurchase({
     metadata,
-    transactionId: session.id,
+    transactionId: purchase.stripeSessionId,
     product: session.metadata?.product ?? purchase.product,
     amount: purchase.amountTotal,
     currency: purchase.currency,
