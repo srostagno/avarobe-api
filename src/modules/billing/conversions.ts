@@ -61,7 +61,7 @@ function metaUserData(metadata: Record<string, string>) {
   }
 }
 
-async function post(url: string, body: unknown) {
+async function post(url: string, body: unknown): Promise<unknown> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -72,17 +72,57 @@ async function post(url: string, body: unknown) {
   if (!response.ok) {
     throw new Error(`${response.status} ${(await response.text()).slice(0, 200)}`)
   }
+
+  return response.json().catch(() => null)
 }
 
-export async function reportPurchase(
-  app: FastifyInstance,
-  input: { metadata: Stripe.Metadata | null | undefined; transactionId: string; product: string; amount: number; currency: string },
-) {
+type PurchaseReport = {
+  metadata: Stripe.Metadata | null | undefined
+  transactionId: string
+  product: string
+  amount: number
+  currency: string
+  // When it was bought, if not now (a purchase reported late; Meta takes
+  // events up to 7 days old).
+  eventTime?: Date
+}
+
+// The purchase to Meta's Conversions API, or null when it can't go: no
+// token, or no browser ids to match it on.
+export function sendMetaPurchase(input: PurchaseReport) {
+  const userData = metaUserData(input.metadata ?? {})
+
+  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !userData) {
+    return null
+  }
+
+  return post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
+    data: [
+      {
+        event_name: 'Purchase',
+        event_time: Math.floor((input.eventTime?.getTime() ?? Date.now()) / 1000),
+        event_id: input.transactionId,
+        action_source: 'website',
+        event_source_url: `${env.APP_URL}/studio/billing/success`,
+        // No email or other identifiers: the privacy notice promises Meta
+        // never gets them. Browser ids, IP and user agent only.
+        user_data: userData,
+        custom_data: {
+          value: input.amount / 100,
+          currency: input.currency.toUpperCase(),
+          content_ids: [input.product],
+          content_type: 'product',
+        },
+      },
+    ],
+  })
+}
+
+export async function reportPurchase(app: FastifyInstance, input: PurchaseReport) {
   const metadata = input.metadata ?? {}
-  const userData = metaUserData(metadata)
   const value = input.amount / 100
   const currency = input.currency.toUpperCase()
-  const tasks: Promise<void>[] = []
+  const tasks: Promise<unknown>[] = []
 
   if (env.GA_API_SECRET && env.GA_MEASUREMENT_ID && metadata.ga_cid) {
     tasks.push(
@@ -101,24 +141,10 @@ export async function reportPurchase(
     )
   }
 
-  if (env.META_CAPI_TOKEN && env.META_PIXEL_ID && userData) {
-    tasks.push(
-      post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
-        data: [
-          {
-            event_name: 'Purchase',
-            event_time: Math.floor(Date.now() / 1000),
-            event_id: input.transactionId,
-            action_source: 'website',
-            event_source_url: `${env.APP_URL}/studio/billing/success`,
-            // No email or other identifiers: the privacy notice promises Meta
-            // never gets them. Browser ids, IP and user agent only.
-            user_data: userData,
-            custom_data: { value, currency, content_ids: [input.product], content_type: 'product' },
-          },
-        ],
-      }),
-    )
+  const meta = sendMetaPurchase(input)
+
+  if (meta) {
+    tasks.push(meta)
   }
 
   const results = await Promise.allSettled(tasks)
