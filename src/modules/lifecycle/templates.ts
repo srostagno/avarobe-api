@@ -291,7 +291,15 @@ ${input.blocks.map((block) => block.html).join('\n')}
 
 export type WelcomeStage = 'new' | 'avatar' | 'looks'
 
-export function welcomeEmail(input: Recipient & { stage: WelcomeStage; season: string | null }): EmailContent {
+// `focus: 'colors'`: they came for their colors (a color guide or a Colors
+// ad), so the welcome leads with the colors and the avatar comes after.
+export function welcomeEmail(
+  input: Recipient & { stage: WelcomeStage; season: string | null; focus?: 'colors' | null },
+): EmailContent {
+  if (input.focus === 'colors' && input.stage === 'new') {
+    return colorsWelcomeEmail({ ...input, season: input.season })
+  }
+
   const { stage, season } = input
   const name = input.firstName.trim()
   const cta =
@@ -351,7 +359,76 @@ export function welcomeEmail(input: Recipient & { stage: WelcomeStage; season: s
   })
 }
 
-export function avatarNudgeEmail(input: Recipient): EmailContent {
+function colorsWelcomeEmail(input: Recipient & { season: string | null }): EmailContent {
+  const { season } = input
+  const name = input.firstName.trim()
+
+  return layout({
+    subject: name ? `Welcome to Avarobe, ${name}` : 'Welcome to Avarobe',
+    preheader: 'Your colors from one selfie: your season, and your best and worst color on your own face.',
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+    recipient: input,
+    blocks: [
+      eyebrow('Welcome to Avarobe'),
+      heading('See your colors. On\u00a0you.'),
+      greeting(input.firstName),
+      paragraph(
+        'Thanks for joining. One selfie is all Avarobe needs to read your undertone, contrast and season, and to show your best and worst color on your own face. Then it styles outfits in your colors, on an avatar that looks like you.',
+      ),
+      steps([
+        {
+          title: 'Get your color season',
+          body: season ? `Done. You’re a ${season}.` : 'One selfie, about 15 seconds. Free.',
+          done: Boolean(season),
+        },
+        {
+          title: 'See your best and worst color on you',
+          body: season ? 'Done. It’s waiting in your studio.' : 'Your face in your best color next to your worst, from the same selfie.',
+          done: Boolean(season),
+        },
+        {
+          title: 'Create your avatar',
+          body: 'A few quick answers, and every outfit shows up on you.',
+          done: false,
+        },
+      ]),
+      season
+        ? button('See my colors', appLink('/studio', 'welcome'))
+        : button('Find my colors', appLink('/studio/avatar', 'welcome', { mode: 'colors' })),
+      ...(season
+        ? []
+        : [note('For the most accurate colors, take your selfie facing a window in daylight, with no filter and little makeup.')]),
+      signature(),
+    ],
+  })
+}
+
+// `focus: 'colors'`: no selfie yet from someone who came for their colors,
+// so it asks for the selfie their colors come from, not the measurements.
+export function avatarNudgeEmail(input: Recipient & { focus?: 'colors' | null }): EmailContent {
+  if (input.focus === 'colors') {
+    return layout({
+      subject: 'Your colors are one selfie away',
+      preheader: 'About 15 seconds: your season, and your best and worst color on your own face.',
+      hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+      recipient: input,
+      blocks: [
+        eyebrow('One step left'),
+        heading('One selfie, and you’ll see your colors.'),
+        greeting(input.firstName),
+        paragraph('Avarobe reads your undertone, contrast and season from your face, then shows your best and worst color on you. For the best result:'),
+        checklist([
+          'Face a window in daylight, with no filter.',
+          'Keep makeup light, so your natural coloring shows.',
+          'Head and shoulders in the frame, no sunglasses or hat.',
+        ]),
+        button('Find my colors', appLink('/studio/avatar', 'avatar_nudge', { mode: 'colors' })),
+        small('Your photo stays private. You can delete it, or your whole account, at any time from your account settings.'),
+        signature(),
+      ],
+    })
+  }
+
   return layout({
     subject: 'Your stylist is waiting for one selfie',
     preheader: 'It takes about a minute, and it’s what makes every look yours.',

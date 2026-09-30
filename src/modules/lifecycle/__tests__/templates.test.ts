@@ -6,6 +6,7 @@ import { ObjectId } from 'mongodb'
 import { unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
+  avatarNudgeEmail,
   looksNudgeEmail,
   trialEndingEmail,
   trialStartedEmail,
@@ -62,6 +63,25 @@ describe('lifecycle templates', () => {
       assert.ok(email.text.includes(recipient.unsubscribeUrl))
       assert.ok(email.text.length > 200)
     }
+  })
+})
+
+describe('colors first', () => {
+  it('welcomes people who came for their colors with their colors, not the measurements', () => {
+    const fresh = welcomeEmail({ ...recipient, stage: 'new', season: null, focus: 'colors' })
+    assert.ok(fresh.html.includes('mode=colors'))
+    assert.ok(!fresh.text.includes('height and build'))
+    const read = welcomeEmail({ ...recipient, stage: 'new', season: 'Light Spring', focus: 'colors' })
+    assert.ok(read.text.includes('You’re a Light Spring'))
+    // Once there's an avatar, the usual welcome.
+    assert.ok(welcomeEmail({ ...recipient, stage: 'avatar', season: 'Light Spring', focus: 'colors' }).text.includes('first occasion'))
+  })
+
+  it('asks them for the selfie their colors come from', () => {
+    const nudge = avatarNudgeEmail({ ...recipient, focus: 'colors' })
+    assert.ok(nudge.subject.includes('colors'))
+    assert.ok(nudge.html.includes('mode=colors'))
+    assert.ok(!nudge.text.includes('height and build'))
   })
 })
 

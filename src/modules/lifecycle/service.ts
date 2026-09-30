@@ -19,6 +19,7 @@ import {
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
+import { focusOf } from '../../utils/serializers.js'
 
 const RUN_EVERY_MS = 10 * 60 * 1000
 const FIRST_RUN_AFTER_MS = 60 * 1000
@@ -189,10 +190,10 @@ export function lifecycleContentFor(
   switch (kind) {
     case 'welcome': {
       const stage: WelcomeStage = avatar?.status !== 'ready' || !avatar.avatarKey ? 'new' : looks.count > 0 ? 'looks' : 'avatar'
-      return welcomeEmail({ ...recipient, stage, season: analysis?.season ?? null })
+      return welcomeEmail({ ...recipient, stage, season: analysis?.season ?? null, focus: focusOf(user) })
     }
     case 'avatar_nudge':
-      return avatarNudgeEmail(recipient)
+      return avatarNudgeEmail({ ...recipient, focus: focusOf(user) })
     case 'looks_nudge':
       return looksNudgeEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
     case 'upgrade_offer':
