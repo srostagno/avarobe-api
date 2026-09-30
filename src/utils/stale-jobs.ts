@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
+import { failureFor } from '../modules/avatar/service.js'
 import { refundCredits } from '../modules/billing/entitlements.js'
 import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
@@ -28,6 +29,11 @@ export async function failStaleJobs(app: FastifyInstance) {
       await refundCredits(app, look.userId, 1)
     }
   }
+  // An interrupted color read (colors first, before the avatar).
+  const colorReads = await app.collections.avatars.updateMany(
+    { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: cutoff } },
+    { $set: { ...failureFor('colors'), job: null, updatedAt: now } },
+  )
   const [refinements, avatars, looks, , pieces] = await Promise.all([
     // An interrupted refinement or haircut leaves the previous avatar usable.
     app.collections.avatars.updateMany(
@@ -42,7 +48,7 @@ export async function failStaleJobs(app: FastifyInstance) {
       },
     ),
     app.collections.avatars.updateMany(
-      { status: 'processing', 'job.kind': { $nin: ['refine', 'hair'] }, updatedAt: { $lt: cutoff } },
+      { status: 'processing', 'job.kind': { $nin: ['refine', 'hair', 'colors'] }, updatedAt: { $lt: cutoff } },
       {
         $set: {
           status: 'failed',
@@ -111,9 +117,10 @@ export async function failStaleJobs(app: FastifyInstance) {
     )
   }
 
-  if (refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount || pieces.modifiedCount) {
+  if (colorReads.modifiedCount || refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount || pieces.modifiedCount) {
     app.log.warn(
       {
+        colorReads: colorReads.modifiedCount,
         refinements: refinements.modifiedCount,
         avatars: avatars.modifiedCount,
         looks: looks.modifiedCount,

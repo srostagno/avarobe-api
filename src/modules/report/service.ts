@@ -23,6 +23,7 @@ import {
   STYLE_PROFILE_INSTRUCTIONS,
   buildColorReportRequest,
   buildDrapePreviewPrompt,
+  buildSelfieDrapePreviewPrompt,
   buildDrapePrompt,
   buildLookAnalysisRequest,
   buildStyleProfileRequest,
@@ -30,6 +31,7 @@ import {
   lookAnalysisSchema,
   styleProfileSchema,
 } from './prompts.js'
+import { bodyOf } from '../avatar/body.js'
 
 const HEX = /^#[0-9a-f]{6}$/i
 
@@ -66,7 +68,7 @@ export async function generateColorReport(avatar: AvatarDocument): Promise<Color
     timeoutMs: 120_000,
   })
 
-  return cleanColorReport(report, avatar.body.presentation)
+  return cleanColorReport(report, bodyOf(avatar).presentation)
 }
 
 // Keeps the model's report within what the page and the boards expect.
@@ -165,7 +167,8 @@ export async function startDrapePreview(app: FastifyInstance, avatarId: ObjectId
   const best = avatar?.colorAnalysis?.bestColors[0]
   const worst = avatar?.colorAnalysis?.avoidColors[0]
 
-  if (!avatar?.avatarKey || avatar.status !== 'ready' || !best || !worst) {
+  // Without an avatar yet (colors first) it's drawn from the selfie alone.
+  if (!avatar || avatar.status !== 'ready' || !best || !worst) {
     return false
   }
 
@@ -203,25 +206,28 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
       { $set: { ...set, 'drapePreview.updatedAt': new Date() } },
     )
 
-  if (!avatar?.avatarKey || !preview) {
+  if (!avatar || !preview) {
     return
   }
 
   try {
     const [avatarImage, selfie, hair] = await Promise.all([
-      storage.read(avatar.avatarKey),
+      avatar.avatarKey ? storage.read(avatar.avatarKey) : Promise.resolve(null),
       storage.read(avatar.selfieKey),
-      hairReference(avatar, 3),
+      avatar.avatarKey ? hairReference(avatar, 3) : Promise.resolve(null),
     ])
+    const base = avatarImage
+      ? buildDrapePreviewPrompt(preview.best, preview.worst)
+      : buildSelfieDrapePreviewPrompt(preview.best, preview.worst)
     const png = await generateImageFromReferences({
-      images: [
-        { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
-        { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
-        ...(hair ? [hair.image] : []),
-      ],
-      prompt: hair
-        ? `${buildDrapePreviewPrompt(preview.best, preview.worst)} ${hair.line}`
-        : buildDrapePreviewPrompt(preview.best, preview.worst),
+      images: avatarImage
+        ? [
+            { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
+            { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
+            ...(hair ? [hair.image] : []),
+          ]
+        : [{ data: selfie, filename: 'selfie.jpg', contentType: 'image/jpeg' }],
+      prompt: hair ? `${base} ${hair.line}` : base,
       size: '1536x1024',
     })
     const key = `users/${avatar.userId.toString()}/drape-preview-${Date.now()}.webp`
@@ -261,7 +267,7 @@ export async function generateStyleProfile(app: FastifyInstance, avatar: AvatarD
     timeoutMs: 120_000,
   })
 
-  return cleanStyleProfile(profile, avatar.body.presentation)
+  return cleanStyleProfile(profile, bodyOf(avatar).presentation)
 }
 
 export function cleanStyleProfile(profile: StyleProfile, presentation: Presentation): StyleProfile {

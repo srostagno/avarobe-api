@@ -8,11 +8,21 @@ import { currentHair } from '../modules/avatar/hair.js'
 import { serializeBilling } from '../modules/billing/entitlements.js'
 import { signedUrlOrNull } from './storage.js'
 
+// Came for their colors (a color guide, or a Colors ad): the studio starts
+// with a selfie and their colors, and the avatar comes after.
+export function focusOf(user: Pick<UserDocument, 'acquisition'>): 'colors' | null {
+  const landing = user.acquisition?.landing ?? ''
+  const content = user.acquisition?.content ?? ''
+
+  return landing.startsWith('/color-analysis') || content.startsWith('colors') ? 'colors' : null
+}
+
 export function serializeUser(user: UserDocument) {
   return {
     id: user._id.toString(),
     email: user.email,
     firstName: user.firstName,
+    focus: focusOf(user),
     hasPassword: Boolean(user.passwordHash),
     emailVerified: Boolean(user.emailVerifiedAt),
     emailTips: !user.emailTipsOptOutAt,

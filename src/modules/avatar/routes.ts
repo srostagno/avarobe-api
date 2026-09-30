@@ -17,7 +17,7 @@ import { deleteHairstyles } from '../hair/service.js'
 import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
-import { startAvatarJob } from './service.js'
+import { startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
@@ -56,6 +56,11 @@ function roundBody(body: AvatarBody): AvatarBody {
 
 function newJob(kind: AvatarJob['kind']): AvatarJob {
   return { kind, startedAt: new Date(), previewKey: null, previewCount: 0 }
+}
+
+// What a busy avatar is doing, for the 409 while it's at it.
+function busyMessage(job: AvatarJob | null | undefined) {
+  return job?.kind === 'colors' ? 'We are still reading your colors. One moment.' : 'Your avatar is still being created.'
 }
 
 function limitReached(reply: FastifyReply) {
@@ -109,7 +114,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const existing = await app.collections.avatars.findOne({ userId })
 
       if (existing?.status === 'processing') {
-        return reply.code(409).send({ message: 'Your avatar is still being created.' })
+        return reply.code(409).send({ message: busyMessage(existing.job) })
       }
 
       if (!uploads.selfie && !existing?.selfieKey) {
@@ -236,6 +241,133 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
+  // Colors first: a selfie (and consent) is enough to read their colors, in
+  // seconds and before any measurements. Only before the avatar exists;
+  // without a new selfie it reads the stored one again (the retry after a
+  // failure). Doesn't spend a free avatar render: the avatar comes later
+  // from the same selfie, through POST /.
+  app.post(
+    '/colors',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const fields: Record<string, string> = {}
+      let upload: Buffer | null = null
+
+      try {
+        for await (const part of request.parts({ limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 4 } })) {
+          if (part.type === 'file') {
+            const buffer = await part.toBuffer()
+
+            if (part.fieldname === 'selfie') {
+              upload = buffer
+            }
+          } else if (typeof part.value === 'string') {
+            fields[part.fieldname] = part.value
+          }
+        }
+      } catch (error) {
+        request.log.warn({ err: error }, 'Selfie upload rejected')
+        return reply.code(413).send({ message: 'The photo must be an image under 12 MB.' })
+      }
+
+      const existing = await app.collections.avatars.findOne({ userId })
+
+      if (existing?.status === 'processing') {
+        return reply.code(409).send({ message: busyMessage(existing.job) })
+      }
+
+      if (existing?.avatarKey) {
+        return reply.code(409).send({ message: 'You already have your avatar. Change your selfie from Photos & measurements.' })
+      }
+
+      if (!upload && !existing?.selfieKey) {
+        return reply.code(400).send({ message: 'Add a selfie to continue.' })
+      }
+
+      if (upload && fields.consent !== 'true') {
+        return reply.code(400).send({ message: 'Please agree to how we use your photo first.' })
+      }
+
+      let selfie: Buffer | null = null
+
+      try {
+        selfie = upload ? await normalizeSelfie(upload) : null
+      } catch (error) {
+        if (error instanceof InvalidImageError) {
+          return reply.code(400).send({ message: error.message })
+        }
+
+        throw error
+      }
+
+      if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
+        return limitReached(reply)
+      }
+
+      const now = new Date()
+      const selfieKey = selfie ? `users/${userId.toString()}/selfie-${Date.now()}.jpg` : null
+
+      if (selfie && selfieKey) {
+        await storage.put(selfieKey, selfie, 'image/jpeg')
+      }
+
+      const previous = await app.collections.avatars.findOneAndUpdate(
+        { userId },
+        {
+          $set: {
+            status: 'processing',
+            error: null,
+            job: newJob('colors'),
+            updatedAt: now,
+            colorAnalysis: null,
+            colorReport: null,
+            drape: null,
+            drapePreview: null,
+            reportBoards: null,
+            hairProfile: null,
+            ...(selfieKey ? { selfieKey, consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+          },
+          $setOnInsert: {
+            _id: new ObjectId(),
+            userId,
+            avatarKey: null,
+            body: null,
+            readyAt: null,
+            generations: 0,
+            createdAt: now,
+          },
+        },
+        { upsert: true, returnDocument: 'before' },
+      )
+
+      // Everything read from, or drawn with, the selfie it replaces.
+      const replaced = [
+        selfieKey ? previous?.selfieKey : null,
+        previous?.drape?.key,
+        previous?.drapePreview?.key,
+        ...boardKeys(previous?.reportBoards, BOARD_KINDS),
+      ].filter((key): key is string => Boolean(key))
+
+      await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
+
+      if (selfieKey && previous) {
+        await deleteHairstyles(app, userId)
+      }
+
+      const avatar = await app.collections.avatars.findOne({ userId })
+
+      if (!avatar) {
+        return reply.code(500).send({ message: 'Could not start. Please try again.' })
+      }
+
+      startColorsJob(app, avatar._id)
+      void trackServerEvent(app, { name: 'colors_started', userId, props: { retry: !selfieKey } })
+
+      return reply.code(202).send({ avatar: await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) })
+    },
+  )
+
   // Re-renders from the stored photos, optionally with new measurements.
   // Also the retry path after a failure.
   app.post(
@@ -256,7 +388,12 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (existing.status === 'processing') {
-        return reply.code(409).send({ message: 'Your avatar is still being created.' })
+        return reply.code(409).send({ message: busyMessage(existing.job) })
+      }
+
+      // Someone with only their colors has no measurements to render from.
+      if (!existing.body && !parsed.data.body) {
+        return reply.code(409).send({ message: 'Add your measurements to create your avatar.' })
       }
 
       if (!(await reserveGenerations(app, userId, 'avatar', 1))) {

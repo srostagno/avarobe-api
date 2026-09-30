@@ -69,7 +69,7 @@ export async function findPieceMatches(
           { _id: input.look.avatarId },
           { projection: { 'body.presentation': 1 } },
         )
-        presentation = avatar?.body.presentation ?? null
+        presentation = avatar?.body?.presentation ?? null
       }
 
       found = await searchPiece({

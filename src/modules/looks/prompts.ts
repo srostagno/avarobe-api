@@ -1,5 +1,6 @@
 import type { AvatarDocument, LookDocument, LookItem, LookPlan, RemixChange } from '../../types/mongo.js'
 import { describePalette } from '../avatar/prompts.js'
+import { bodyOf } from '../avatar/body.js'
 
 export const LOOK_SLOTS = [
   'top',
@@ -157,7 +158,7 @@ export function describeTaste(taste: StylistTaste | null | undefined) {
 }
 
 function describeClient(avatar: AvatarDocument, taste: StylistTaste | null | undefined) {
-  const { body } = avatar
+  const body = bodyOf(avatar)
 
   return [
     'Client profile:',
@@ -307,7 +308,7 @@ export const TRY_ON_INSTRUCTIONS = [
 ].join(' ')
 
 export function buildTryOnRequest(avatar: AvatarDocument, notes: string | null) {
-  const { body } = avatar
+  const body = bodyOf(avatar)
 
   return [
     notes ? `Where the client wants to wear it: ${notes}` : null,

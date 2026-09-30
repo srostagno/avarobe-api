@@ -288,7 +288,8 @@ export type AvatarHair = {
 // The generation in flight, so the app can show real progress: the palette
 // lands first, then previews of the render as the model refines it.
 export type AvatarJob = {
-  kind: 'create' | 'refine' | 'hair'
+  // 'colors': reading the selfie only, before there's an avatar.
+  kind: 'create' | 'refine' | 'hair' | 'colors'
   startedAt: Date
   previewKey: string | null
   previewCount: number
@@ -314,11 +315,14 @@ export type AvatarDocument = {
   selfieKey: string
   // Optional full-body photo; the strongest signal for real proportions.
   bodyPhotoKey?: string | null
+  // Null until the first render. Someone who came for their colors has a
+  // selfie, a color analysis and no body yet (null) until they make the
+  // avatar.
   avatarKey: string | null
   // Recent renders, newest first, so a refinement can be undone.
   versions?: AvatarVersion[]
   job?: AvatarJob | null
-  body: AvatarBody
+  body: AvatarBody | null
   colorAnalysis: ColorAnalysis | null
   // Style Kit reports. The color report and drape test follow the selfie
   // (cleared when it changes); the style profile follows the body.

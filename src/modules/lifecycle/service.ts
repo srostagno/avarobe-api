@@ -139,12 +139,14 @@ export async function recordUnsubscribe(app: FastifyInstance, sendId: string, us
 
 // ---------------------------------------------------------------- sending
 
-type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'>
+type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'> & { avatarKey?: string | null }
 type LookFacts = { count: number; lastAt: Date | null }
 
 function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, looks: LookFacts): LifecycleState {
   const billing = billingState(user)
-  const avatarReady = avatar?.status === 'ready'
+  // Colors first leaves a ready read with no avatar yet: they still get
+  // the nudge to make it.
+  const avatarReady = avatar?.status === 'ready' && Boolean(avatar.avatarKey)
   const sent = { ...(user.lifecycleEmails ?? {}) }
   // The first price list's offer counts as this one's.
   const legacyOffer = (user.lifecycleEmails as Record<string, Date> | undefined)?.kit_offer
@@ -182,7 +184,7 @@ export function lifecycleContentFor(
 
   switch (kind) {
     case 'welcome': {
-      const stage: WelcomeStage = avatar?.status !== 'ready' ? 'new' : looks.count > 0 ? 'looks' : 'avatar'
+      const stage: WelcomeStage = avatar?.status !== 'ready' || !avatar.avatarKey ? 'new' : looks.count > 0 ? 'looks' : 'avatar'
       return welcomeEmail({ ...recipient, stage, season: analysis?.season ?? null })
     }
     case 'avatar_nudge':
@@ -385,7 +387,7 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
     const ids = users.map((user) => user._id)
     const [avatars, lookStats] = await Promise.all([
       app.collections.avatars
-        .find({ userId: { $in: ids } }, { projection: { userId: 1, status: 1, readyAt: 1, colorAnalysis: 1 } })
+        .find({ userId: { $in: ids } }, { projection: { userId: 1, status: 1, readyAt: 1, colorAnalysis: 1, avatarKey: 1 } })
         .toArray(),
       app.collections.looks
         .aggregate<{ _id: ObjectId; count: number; lastAt: Date | null }>([

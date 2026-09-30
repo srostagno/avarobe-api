@@ -17,7 +17,9 @@ export const FUNNEL = [
   { id: 'visited', label: 'Visited', names: ['page_view'] },
   { id: 'signup_viewed', label: 'Opened sign-up', names: ['signup_viewed'] },
   { id: 'signed_up', label: 'Signed up', names: ['signup_completed'] },
-  { id: 'avatar_started', label: 'Started the avatar', names: ['avatar_started'] },
+  // Colors first sends the selfie before the avatar: either counts.
+  { id: 'avatar_started', label: 'Sent a selfie', names: ['avatar_started', 'colors_started'] },
+  { id: 'colors_ready', label: 'Saw their colors', names: ['colors_ready', 'avatar_ready'] },
   { id: 'avatar_ready', label: 'Avatar ready', names: ['avatar_ready'] },
   { id: 'look_requested', label: 'Asked for looks', names: ['look_requested'] },
   { id: 'looks_styled', label: 'Got looks', names: ['looks_styled'] },

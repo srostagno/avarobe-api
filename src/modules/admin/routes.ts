@@ -206,8 +206,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
           status: avatar.status,
           error: avatar.error,
           secondsToReady: avatar.readyAt ? Math.round((avatar.readyAt.getTime() - avatar.createdAt.getTime()) / 1000) : null,
-          presentation: avatar.body.presentation,
-          build: avatar.body.build,
+          presentation: avatar.body?.presentation ?? null,
+          build: avatar.body?.build ?? null,
           // Whether a full-body photo is on file; the photo itself never leaves.
           bodyPhoto: Boolean(avatar.bodyPhotoKey),
           renders: avatar.generations,

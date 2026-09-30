@@ -53,7 +53,7 @@ const iconLookRoutes: FastifyPluginAsync = async (app) => {
     const userId = requireUserId(request)
     const avatar = await app.collections.avatars.findOne({ userId }, { projection: { body: 1 } })
 
-    return { looks: iconLooksFor(avatar?.body.presentation ?? null).map(serializeIconLook) }
+    return { looks: iconLooksFor(avatar?.body?.presentation ?? null).map(serializeIconLook) }
   })
 
   // Try-on of an icon look: the upload flow, with the catalog image as the

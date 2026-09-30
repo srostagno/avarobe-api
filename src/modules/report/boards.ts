@@ -110,7 +110,7 @@ const colorBoards: Record<(typeof COLOR_BOARDS)[number], (report: ColorReport, s
           verdict: test.best === 'both' || test.best === metal ? 'wear' : 'avoid',
         }),
       ),
-      prompt: buildMetalsBoardPrompt(metals, body.presentation),
+      prompt: buildMetalsBoardPrompt(metals, body?.presentation ?? 'unisex'),
       refs: 'portrait',
       size: '1536x1024',
     }

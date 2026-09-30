@@ -1,5 +1,6 @@
 import type { AvatarDocument, ColorSwatch, LookDocument, Presentation, StyleProfile } from '../../types/mongo.js'
 import { describePalette } from '../avatar/prompts.js'
+import { bodyOf } from '../avatar/body.js'
 
 // Schemas follow structured-output rules: every property required and
 // additionalProperties false.
@@ -247,7 +248,7 @@ export const COLOR_REPORT_INSTRUCTIONS = [
 ].join(' ')
 
 export function buildColorReportRequest(avatar: AvatarDocument) {
-  const { body } = avatar
+  const body = bodyOf(avatar)
 
   return [
     `They dress in: ${body.presentation}. Height ${body.heightCm} cm, ${body.build} build.`,
@@ -271,6 +272,21 @@ export function buildDrapePreviewPrompt(best: ColorSwatch, worst: ColorSwatch) {
     'Image 1 is this person. Image 2 is a close-up of the same face.',
     'Create one landscape image divided into two side-by-side head-and-shoulders portraits of this SAME person, like a professional color analysis draping session.',
     'In both portraits they have the identical face, hair, skin tone and expression, facing the camera, with the same neutral light-grey background and the same soft daylight.',
+    'In each portrait a plain, matte, solid-colored fabric drape covers their shoulders and chest up to the neck, hiding their clothes.',
+    `Drape colors: left ${describeSwatch(best)}, right ${describeSwatch(worst)}.`,
+    'Render the true effect of each color on their complexion, the way it really looks in daylight; do not retouch the skin differently between portraits.',
+    'A thin white gutter between the two portraits. No text, no labels, no logos.',
+  ].join(' ')
+}
+
+// The same pair from the selfie alone, for someone who came for their colors
+// and has no avatar yet: their real face, which is what the colors are read
+// from anyway.
+export function buildSelfieDrapePreviewPrompt(best: ColorSwatch, worst: ColorSwatch) {
+  return [
+    'Image 1 is a selfie of this person.',
+    'Create one landscape image divided into two side-by-side head-and-shoulders portraits of this SAME person, like a professional color analysis draping session.',
+    'Keep them exactly recognizable: the same face, features, hair, skin tone and undertone as in the selfie. In both portraits they have the identical face and expression, facing the camera, with the same neutral light-grey background and the same soft daylight.',
     'In each portrait a plain, matte, solid-colored fabric drape covers their shoulders and chest up to the neck, hiding their clothes.',
     `Drape colors: left ${describeSwatch(best)}, right ${describeSwatch(worst)}.`,
     'Render the true effect of each color on their complexion, the way it really looks in daylight; do not retouch the skin differently between portraits.',
@@ -577,7 +593,7 @@ export const STYLE_PROFILE_INSTRUCTIONS = [
 ].join(' ')
 
 export function buildStyleProfileRequest(avatar: AvatarDocument, looks: LookDocument[]) {
-  const { body } = avatar
+  const body = bodyOf(avatar)
   const coloring = avatar.colorReport?.data.coloring
   const saved = looks.map(
     (look) =>
@@ -644,7 +660,7 @@ export function buildLookAnalysisRequest(avatar: AvatarDocument, look: LookDocum
     `Outfit "${look.plan.title}": ${look.plan.items
       .map((item) => `${item.color} ${item.material} ${item.name.toLowerCase()} (${item.fit})`)
       .join('; ')}.`,
-    `Client: dresses in ${avatar.body.presentation}, ${avatar.body.heightCm} cm, ${avatar.body.build} build.`,
+    `Client: dresses in ${bodyOf(avatar).presentation}, ${bodyOf(avatar).heightCm} cm, ${bodyOf(avatar).build} build.`,
     describePalette(avatar.colorAnalysis),
     '',
     'The attached image shows them wearing it.',

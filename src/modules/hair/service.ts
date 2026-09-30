@@ -27,6 +27,7 @@ import {
   hairProfileSchema,
   hairRequestSchema,
 } from './prompts.js'
+import { bodyOf } from '../avatar/body.js'
 
 const PROFILE_FAILED = 'We could not read your hair from this selfie. Try again, or use a selfie in daylight.'
 const NO_FACE = 'We couldn’t see your face and hair clearly in your selfie. A new selfie in daylight, hair visible, works best.'
@@ -62,7 +63,7 @@ async function readHair(app: FastifyInstance, avatar: AvatarDocument) {
   const result = await createStructuredResponse<ProfileResult>({
     instructions: HAIR_PROFILE_INSTRUCTIONS,
     content: [
-      { type: 'input_text', text: buildHairProfileRequest(avatar.body, taste) },
+      { type: 'input_text', text: buildHairProfileRequest(bodyOf(avatar), taste) },
       { type: 'input_image', image_url: toDataUrl(selfie, 'image/jpeg'), detail: 'high' },
     ],
     schemaName: 'hair_profile',
@@ -250,7 +251,7 @@ export async function planHairRequest(input: {
         type: 'input_text',
         text: buildHairRequest({
           profile: input.avatar.hairProfile?.data ?? null,
-          body: input.avatar.body,
+          body: bodyOf(input.avatar),
           description: input.description,
           hasPhoto: Boolean(input.photo),
         }),
@@ -456,7 +457,7 @@ export async function serializeHairStudio(app: FastifyInstance, avatar: AvatarDo
           jobHairstyleId: avatar.job?.hairstyleId ?? null,
           avatarUrl,
           previewUrl,
-          presentation: avatar.body.presentation,
+          presentation: avatar.body?.presentation ?? null,
           // A version with the selfie's own hair to go back to.
           canGoNatural: Boolean(hair && avatar.versions?.some((version) => !version.hair)),
         }

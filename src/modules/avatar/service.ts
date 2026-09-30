@@ -23,6 +23,7 @@ import { trackServerEvent } from '../analytics/service.js'
 import { startDrapePreview } from '../report/service.js'
 import { buildApplyHairPrompt } from '../hair/prompts.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
+import { bodyOf } from './body.js'
 import { currentHair, orphanHairKeys } from './hair.js'
 import {
   COHERENCE_RULES,
@@ -36,6 +37,7 @@ const MAX_VERSIONS = 6
 const CREATE_FAILED = 'We could not finish your avatar. Please try again.'
 const REFINE_FAILED = 'We could not apply those changes. Your avatar is unchanged; try again.'
 const HAIR_FAILED = 'We could not change your hair. Your avatar is unchanged; try again.'
+const COLORS_FAILED = 'We could not read your colors from that photo. Try again, or use a selfie taken facing a window in daylight.'
 
 // 'create' with keepHair re-renders from the photos but keeps a haircut
 // from the Hair studio (new measurements); a new selfie brings its own hair.
@@ -45,8 +47,12 @@ export type AvatarJobOptions =
   | { kind: 'hair'; hairstyleId: string }
 
 // Refinements and haircuts leave the avatar as it was when they fail;
-// only a failed creation leaves it failed.
-export function failureFor(kind: AvatarJobOptions['kind']) {
+// only a failed creation (or color read) leaves it failed.
+export function failureFor(kind: AvatarJobOptions['kind'] | 'colors') {
+  if (kind === 'colors') {
+    return { status: 'failed' as const, error: COLORS_FAILED }
+  }
+
   if (kind === 'hair') {
     return { status: 'ready' as const, error: HAIR_FAILED }
   }
@@ -174,7 +180,7 @@ export async function runAvatarJob(
             notes: options.notes,
             hasBodyPhoto: Boolean(bodyPhoto),
           })
-        : buildAvatarPrompt(avatar.body, Boolean(bodyPhoto))
+        : buildAvatarPrompt(bodyOf(avatar), Boolean(bodyPhoto))
 
     prompt = hair
       ? `${base} Image ${images.length} is a close-up of their current haircut (${hair.name}): the hair must be exactly this haircut, length, texture and color, not the hair in the selfie.`
@@ -283,6 +289,68 @@ export async function runAvatarJob(
       userId: avatar.userId,
     })
   }
+}
+
+// Colors first: reads the selfie on its own, before there's an avatar, so
+// someone who came for their colors sees them in seconds. The avatar comes
+// later from the same selfie, without reading it again. Starts the free
+// best-vs-worst preview (drawn from the selfie) once the colors are in.
+export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId) {
+  const avatar = await app.collections.avatars.findOne({ _id: avatarId })
+
+  if (!avatar) {
+    return
+  }
+
+  const selfieKey = avatar.selfieKey
+  let analysis: ColorAnalysis
+
+  try {
+    analysis = await analyzeColors(await storage.read(selfieKey))
+  } catch (error) {
+    app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Color read failed')
+    // Only if nothing replaced this job meanwhile (a new selfie, the avatar).
+    await app.collections.avatars.updateOne(
+      { _id: avatarId, selfieKey, 'job.kind': 'colors' },
+      { $set: { ...failureFor('colors'), job: null, updatedAt: new Date() } },
+    )
+    await releaseGenerations(app, avatar.userId, 'avatar', 1)
+    await trackServerEvent(app, { name: 'colors_failed', userId: avatar.userId })
+    return
+  }
+
+  const saved = await app.collections.avatars.updateOne(
+    { _id: avatarId, selfieKey, 'job.kind': 'colors' },
+    { $set: { status: 'ready', error: null, colorAnalysis: analysis, job: null, updatedAt: new Date() } },
+  )
+
+  if (saved.matchedCount === 0) {
+    return
+  }
+
+  await trackServerEvent(app, { name: 'colors_ready', userId: avatar.userId, props: { season: analysis.season } })
+  await startDrapePreview(app, avatarId).catch((error: unknown) => {
+    app.log.error({ err: error, avatarId: avatarId.toString() }, 'Drape preview did not start')
+  })
+}
+
+export function startColorsJob(app: FastifyInstance, avatarId: ObjectId) {
+  void runColorsJob(app, avatarId).catch(async (error: unknown) => {
+    app.log.error({ err: error, avatarId: avatarId.toString() }, 'Color read crashed')
+
+    try {
+      const avatar = await app.collections.avatars.findOneAndUpdate(
+        { _id: avatarId, status: 'processing', 'job.kind': 'colors' },
+        { $set: { ...failureFor('colors'), job: null, updatedAt: new Date() } },
+      )
+
+      if (avatar) {
+        await releaseGenerations(app, avatar.userId, 'avatar', 1)
+      }
+    } catch {
+      // Stale-job recovery on the next boot will catch it.
+    }
+  })
 }
 
 export function startAvatarJob(
