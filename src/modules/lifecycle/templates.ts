@@ -414,8 +414,10 @@ const perMonth = (yearCents: number) => money(Math.floor(yearCents / 12))
 
 // The first-time offer: Pro for a few days at a small price, then monthly.
 const trialPrice = () => money(env.PRICE_PRO_TRIAL_CENTS)
+const TRIAL_CANCEL = () =>
+  "Cancel anytime before your trial ends, in your account settings, and you won't be charged again."
 const TRIAL_NOTE = () =>
-  `${trialPrice()} today for ${env.PRO_TRIAL_DAYS} days, then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month until you cancel. Cancel anytime before your trial ends, in your account settings, and you won't be charged again.`
+  `${trialPrice()} today for ${env.PRO_TRIAL_DAYS} days, then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month until you cancel. ${TRIAL_CANCEL()}`
 const TRIAL_FEATURES = () => [
   'Your full color report: every color that lights you up, on your own face',
   'Your style report: the cuts, necklines and haircuts that flatter you',
@@ -429,7 +431,16 @@ const PLAN = {
   pack: () => ({ name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks. They never expire` }),
 }
 
-export function upgradeOfferEmail(input: Recipient): EmailContent {
+// Two offers. People who spent their free look get the looks one; people
+// who came for their colors, and have seen them but made no look, get one
+// that leads with their palette (`palette`).
+export function upgradeOfferEmail(
+  input: Recipient & { palette?: { season: string; colors: ColorSwatch[] } | null },
+): EmailContent {
+  if (input.palette) {
+    return paletteOfferEmail({ ...input, palette: input.palette })
+  }
+
   return layout({
     subject: `Try Avarobe Pro: ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`,
     preheader: `Your full color and style reports, looks for every occasion on you, try-ons and every haircut. ${trialPrice()} for ${env.PRO_TRIAL_DAYS} days.`,
@@ -445,10 +456,39 @@ export function upgradeOfferEmail(input: Recipient): EmailContent {
       greeting(input.firstName),
       paragraph(`Your stylist has more looks waiting for you. Try everything in Avarobe Pro for ${env.PRO_TRIAL_DAYS} days:`),
       checklist(TRIAL_FEATURES()),
-      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month. Cancel anytime.`, TRIAL_NOTE()),
+      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month.`, TRIAL_CANCEL()),
       button(`Start my ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`, appLink('/studio', 'upgrade_offer', { upgrade: 'plan' })),
       small('Or pay once, no subscription:'),
       plans([PLAN.colorReport(), PLAN.pack()]),
+      signature(),
+    ],
+  })
+}
+
+function paletteOfferEmail(input: Recipient & { palette: { season: string; colors: ColorSwatch[] } }): EmailContent {
+  const { season, colors } = input.palette
+
+  return layout({
+    subject: `Your full ${season} palette is waiting`,
+    preheader: `You’ve seen ${colors.length} of your colors. See all of them on your own face: ${env.PRO_TRIAL_DAYS} days of Pro for ${trialPrice()}.`,
+    hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow('Your colors'),
+      heading('There’s more to your palette.'),
+      greeting(input.firstName),
+      palette(
+        season,
+        colors,
+        `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
+      ),
+      paragraph(`See all of them on your own face, and try everything in Avarobe Pro for ${env.PRO_TRIAL_DAYS} days:`),
+      checklist(TRIAL_FEATURES()),
+      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month.`, TRIAL_CANCEL()),
+      button(`Start my ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`, appLink('/studio', 'upgrade_offer', { upgrade: 'palette' })),
+      small('Or pay once, no subscription:'),
+      plans([{ ...PLAN.colorReport(), detail: 'Your full palette and drape test, yours to keep' }]),
       signature(),
     ],
   })
@@ -511,7 +551,7 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
           reports +
           ' on their own), looks for every occasion on you, try-ons and every haircut.',
       ),
-      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month. Cancel anytime.`, TRIAL_NOTE()),
+      priceBox(`${trialPrice()} for ${env.PRO_TRIAL_DAYS} days`, `Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month.`, TRIAL_CANCEL()),
       button(`Start my ${env.PRO_TRIAL_DAYS} days for ${trialPrice()}`, appLink('/studio', 'upgrade_last_call', { upgrade: 'plan' })),
       small('Or pay once, no subscription:'),
       plans([PLAN.colorReport(), PLAN.pack()]),

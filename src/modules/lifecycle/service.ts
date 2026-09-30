@@ -139,10 +139,12 @@ export async function recordUnsubscribe(app: FastifyInstance, sendId: string, us
 
 // ---------------------------------------------------------------- sending
 
-type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'> & { avatarKey?: string | null }
+type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'> &
+  Partial<Pick<AvatarDocument, 'avatarKey' | 'colorsAt' | 'updatedAt'>>
 type LookFacts = { count: number; lastAt: Date | null }
 
-function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, looks: LookFacts): LifecycleState {
+// Exported for scripts/lifecycle-dry-run.ts.
+export function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, looks: LookFacts): LifecycleState {
   const billing = billingState(user)
   // Colors first leaves a ready read with no avatar yet: they still get
   // the nudge to make it.
@@ -160,6 +162,8 @@ function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, looks: Lo
     sent,
     lastSentAt: user.lifecycleEmailLastAt ?? null,
     avatarReadyAt: avatarReady ? (avatar.readyAt ?? user.createdAt) : null,
+    // Reads made before colorsAt existed go by the avatar's own times.
+    colorsAt: avatar?.colorAnalysis ? (avatar.colorsAt ?? avatar.readyAt ?? avatar.updatedAt ?? user.createdAt) : null,
     looks: looks.count,
     lastLookAt: looks.lastAt,
     outOfFreeLooks: billing.credits <= 0 && !billing.proActive,
@@ -192,7 +196,11 @@ export function lifecycleContentFor(
     case 'looks_nudge':
       return looksNudgeEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
     case 'upgrade_offer':
-      return upgradeOfferEmail(recipient)
+      // No look made: they came for their colors, so it leads with them.
+      return upgradeOfferEmail({
+        ...recipient,
+        palette: looks.count === 0 && analysis ? { season: analysis.season, colors: freeColors } : null,
+      })
     case 'upgrade_reminder':
       return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
     case 'upgrade_last_call':
@@ -387,7 +395,7 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
     const ids = users.map((user) => user._id)
     const [avatars, lookStats] = await Promise.all([
       app.collections.avatars
-        .find({ userId: { $in: ids } }, { projection: { userId: 1, status: 1, readyAt: 1, colorAnalysis: 1, avatarKey: 1 } })
+        .find({ userId: { $in: ids } }, { projection: { userId: 1, status: 1, readyAt: 1, colorAnalysis: 1, avatarKey: 1, colorsAt: 1, updatedAt: 1 } })
         .toArray(),
       app.collections.looks
         .aggregate<{ _id: ObjectId; count: number; lastAt: Date | null }>([

@@ -13,6 +13,7 @@ function state(overrides: Partial<LifecycleState> = {}): LifecycleState {
     sent: {},
     lastSentAt: null,
     avatarReadyAt: null,
+    colorsAt: null,
     looks: 0,
     lastLookAt: null,
     outOfFreeLooks: false,
@@ -98,6 +99,33 @@ describe('pickLifecycleEmail', () => {
     )
     // A reminder that would come weeks late is skipped.
     assert.equal(pickLifecycleEmail(offered(LIFECYCLE_RULES.reminderWindow / HOUR + 1), now), null)
+  })
+
+  it('offers their palette to people who came for their colors and have no avatar, instead of the avatar reminder', () => {
+    const base = state({ createdAt: ago(30 * HOUR), sent: { welcome: ago(29 * HOUR) }, lastSentAt: ago(29 * HOUR) })
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(10 * HOUR) }, now), null)
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(25 * HOUR) }, now), 'upgrade_offer')
+    // No colors read: the avatar reminder, as before.
+    assert.equal(pickLifecycleEmail(base, now), 'avatar_nudge')
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(25 * HOUR), paid: true }, now), null)
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(25 * HOUR), promotionsAllowed: false }, now), null)
+  })
+
+  it('offers their palette to people with an avatar and no look, after the looks nudge', () => {
+    const base = state({
+      createdAt: ago(3 * 24 * HOUR),
+      sent: { welcome: ago(70 * HOUR) },
+      avatarReadyAt: ago(22 * HOUR),
+      colorsAt: ago(26 * HOUR),
+    })
+    // The nudge first, even though the palette offer would be due.
+    assert.equal(pickLifecycleEmail(base, now), 'looks_nudge')
+    assert.equal(pickLifecycleEmail({ ...base, avatarReadyAt: ago(5 * HOUR) }, now), null)
+    const nudged = { ...base, sent: { ...base.sent, looks_nudge: ago(19 * HOUR) }, lastSentAt: ago(19 * HOUR) }
+    assert.equal(pickLifecycleEmail(nudged, now), 'upgrade_offer')
+    // Then the same two reminders, timed from the offer.
+    const offered = { ...nudged, sent: { ...nudged.sent, upgrade_offer: ago(50 * HOUR) }, lastSentAt: ago(50 * HOUR) }
+    assert.equal(pickLifecycleEmail(offered, now), 'upgrade_reminder')
   })
 
   it('sends the welcome first even when the person already did everything', () => {

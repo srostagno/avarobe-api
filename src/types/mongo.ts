@@ -324,6 +324,8 @@ export type AvatarDocument = {
   job?: AvatarJob | null
   body: AvatarBody | null
   colorAnalysis: ColorAnalysis | null
+  // When the colors were read (the palette offer email is timed from it).
+  colorsAt?: Date | null
   // Style Kit reports. The color report and drape test follow the selfie
   // (cleared when it changes); the style profile follows the body.
   colorReport?: { data: ColorReport; createdAt: Date } | null

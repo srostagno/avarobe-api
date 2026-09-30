@@ -40,6 +40,7 @@ const emails = {
   'avatar-nudge': avatarNudgeEmail(recipient),
   'looks-nudge': looksNudgeEmail({ ...recipient, season: 'Warm Autumn', colors }),
   'upgrade-offer': upgradeOfferEmail(recipient),
+  'upgrade-offer-colors': upgradeOfferEmail({ ...recipient, palette: { season: 'Warm Autumn', colors } }),
   'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
   'upgrade-last-call': upgradeLastCallEmail(recipient),
   'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),

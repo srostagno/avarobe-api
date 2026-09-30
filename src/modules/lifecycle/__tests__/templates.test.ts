@@ -81,6 +81,31 @@ describe('offer emails', () => {
     assert.ok(reminder.html.includes('$1.00'))
   })
 
+  it('say the trial price once, with how to cancel', () => {
+    const text = upgradeOfferEmail(recipient).text
+
+    assert.equal(text.split('$1.00 today').length - 1, 0)
+    assert.ok(text.includes("you won't be charged again"))
+  })
+
+  it('lead with their palette for people who came for their colors and made no look', () => {
+    const colors = [
+      { name: 'Peach', hex: '#F4B183' },
+      { name: 'Warm coral', hex: '#F08070' },
+      { name: 'Light aqua', hex: '#7FD1C7' },
+    ]
+    const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Light Spring', colors } })
+
+    assert.ok(offer.subject.includes('Light Spring'))
+    assert.ok(offer.html.includes('#F08070'))
+    assert.ok(offer.text.includes('Peach'))
+    assert.ok(!offer.text.includes('free look'))
+    assert.ok(offer.html.includes('upgrade=palette'))
+    for (const price of ['$1.00', '$10.90 a month', '$14.90']) {
+      assert.ok(offer.html.includes(price), price)
+    }
+  })
+
   it('carry the postal address only when it is set', () => {
     // No EMAIL_POSTAL_ADDRESS in tests: the footer has no address line.
     assert.ok(!upgradeOfferEmail(recipient).text.includes('undefined'))

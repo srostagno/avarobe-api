@@ -195,6 +195,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
               ? {
                   selfieKey,
                   colorAnalysis: null,
+                  colorsAt: null,
                   colorReport: null,
                   drape: null,
                   drapePreview: null,
@@ -321,6 +322,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             job: newJob('colors'),
             updatedAt: now,
             colorAnalysis: null,
+            colorsAt: null,
             colorReport: null,
             drape: null,
             drapePreview: null,

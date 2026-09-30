@@ -194,7 +194,7 @@ export async function runAvatarJob(
       ? analyzeColors(selfie).then(async (result) => {
           await app.collections.avatars.updateOne(
             { _id: avatarId },
-            { $set: { colorAnalysis: result, updatedAt: new Date() } },
+            { $set: { colorAnalysis: result, colorsAt: new Date(), updatedAt: new Date() } },
           )
           return result
         })
@@ -321,7 +321,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId) {
 
   const saved = await app.collections.avatars.updateOne(
     { _id: avatarId, selfieKey, 'job.kind': 'colors' },
-    { $set: { status: 'ready', error: null, colorAnalysis: analysis, job: null, updatedAt: new Date() } },
+    { $set: { status: 'ready', error: null, colorAnalysis: analysis, colorsAt: new Date(), job: null, updatedAt: new Date() } },
   )
 
   if (saved.matchedCount === 0) {
