@@ -210,6 +210,9 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
           build: avatar.body?.build ?? null,
           // Whether a full-body photo is on file; the photo itself never leaves.
           bodyPhoto: Boolean(avatar.bodyPhotoKey),
+          // The generated best-vs-worst image (like the renders, never the
+          // selfie itself): the only picture a colors-only account has.
+          drapePreviewUrl: avatar.drapePreview?.status === 'ready' ? await signedUrlOrNull(avatar.drapePreview.key) : null,
           renders: avatar.generations,
           versions: await Promise.all(
             versions.map(async (version) => ({
