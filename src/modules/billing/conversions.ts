@@ -17,22 +17,47 @@ export function serverConversionsEnabled() {
 // What the browser hands over at checkout, kept in the session metadata.
 export type Attribution = { gaClientId?: string; fbp?: string; fbc?: string }
 
+// Stripe caps each metadata value at 500 characters.
+const METADATA_MAX = 500
+
 export function attributionMetadata(
   attribution: Attribution | undefined,
   request: { ip: string; headers: Record<string, string | string[] | undefined> },
 ) {
-  if (!attribution || (!attribution.gaClientId && !attribution.fbp)) {
+  const fit = (value: string | undefined) => (value && value.length <= METADATA_MAX ? value : undefined)
+  const gaClientId = fit(attribution?.gaClientId)
+  const fbp = fit(attribution?.fbp)
+  const fbc = fit(attribution?.fbc)
+
+  if (!gaClientId && !fbp && !fbc) {
     return {}
   }
 
   const userAgent = request.headers['user-agent']
 
   return {
-    ...(attribution.gaClientId ? { ga_cid: attribution.gaClientId } : {}),
-    ...(attribution.fbp ? { fbp: attribution.fbp } : {}),
-    ...(attribution.fbc ? { fbc: attribution.fbc } : {}),
+    ...(gaClientId ? { ga_cid: gaClientId } : {}),
+    ...(fbp ? { fbp } : {}),
+    ...(fbc ? { fbc } : {}),
     ip: request.ip,
     ua: (typeof userAgent === 'string' ? userAgent : '').slice(0, 400),
+  }
+}
+
+// What Meta can match a server event on: the browser cookie, the ad click
+// id, and the IP and user agent (required for website events). The event
+// goes out when either id is there: a buyer without the _fbp cookie (it
+// happened with the first trial) is still worth reporting by click id.
+function metaUserData(metadata: Record<string, string>) {
+  if (!metadata.fbp && !metadata.fbc) {
+    return null
+  }
+
+  return {
+    ...(metadata.fbp ? { fbp: metadata.fbp } : {}),
+    ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
+    ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
+    ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
   }
 }
 
@@ -54,6 +79,7 @@ export async function reportPurchase(
   input: { metadata: Stripe.Metadata | null | undefined; transactionId: string; product: string; amount: number; currency: string },
 ) {
   const metadata = input.metadata ?? {}
+  const userData = metaUserData(metadata)
   const value = input.amount / 100
   const currency = input.currency.toUpperCase()
   const tasks: Promise<void>[] = []
@@ -75,7 +101,7 @@ export async function reportPurchase(
     )
   }
 
-  if (env.META_CAPI_TOKEN && env.META_PIXEL_ID && metadata.fbp) {
+  if (env.META_CAPI_TOKEN && env.META_PIXEL_ID && userData) {
     tasks.push(
       post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
         data: [
@@ -87,12 +113,7 @@ export async function reportPurchase(
             event_source_url: `${env.APP_URL}/studio/billing/success`,
             // No email or other identifiers: the privacy notice promises Meta
             // never gets them. Browser ids, IP and user agent only.
-            user_data: {
-              fbp: metadata.fbp,
-              ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
-              ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
-              ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
-            },
+            user_data: userData,
             custom_data: { value, currency, content_ids: [input.product], content_type: 'product' },
           },
         ],
@@ -118,7 +139,9 @@ export async function reportRegistration(
 ) {
   const metadata = input.metadata
 
-  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !metadata.fbp) {
+  const userData = metaUserData(metadata)
+
+  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !userData) {
     return
   }
 
@@ -131,12 +154,7 @@ export async function reportRegistration(
           event_id: input.eventId,
           action_source: 'website',
           event_source_url: `${env.APP_URL}/login`,
-          user_data: {
-            fbp: metadata.fbp,
-            ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
-            ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
-            ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
-          },
+          user_data: userData,
           custom_data: { status: input.method },
         },
       ],

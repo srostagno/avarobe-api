@@ -28,7 +28,11 @@ import {
   verifyWebhook,
 } from './stripe.js'
 
-const idPattern = /^[A-Za-z0-9._-]{1,200}$/
+// Meta's _fbc carries the whole ad click id, often well over 200 characters.
+// An id that doesn't fit is dropped, never a reason to refuse a checkout
+// (the same bug cost sign-ups in Sep 2026). attributionMetadata keeps what
+// fits in Stripe's metadata.
+const idField = z.string().regex(/^[A-Za-z0-9._-]{1,1024}$/).optional().catch(undefined)
 
 const checkoutSchema = z.object({
   product: z.enum([
@@ -45,12 +49,9 @@ const checkoutSchema = z.object({
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
   attribution: z
-    .object({
-      gaClientId: z.string().regex(idPattern).optional(),
-      fbp: z.string().regex(idPattern).optional(),
-      fbc: z.string().regex(idPattern).optional(),
-    })
-    .optional(),
+    .object({ gaClientId: idField, fbp: idField, fbc: idField })
+    .optional()
+    .catch(undefined),
   // Which offer led here (first-party analytics), e.g. new_look_results.
   placement: z.string().regex(/^[a-z0-9_]{1,40}$/).optional(),
   // Where to come back to if they cancel; only paths inside the studio.
