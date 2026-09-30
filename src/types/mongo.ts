@@ -654,6 +654,12 @@ export type LookDocument = {
   previewKey?: string | null
   // Whether rendering this look took a credit (refunded if it fails).
   creditSpent?: boolean
+  // Free fixes (looks/fixes.ts): when this look's free fix was taken, how
+  // many free fixes in a row led to it, and whether it is one (its retry
+  // is free too).
+  freeFixAt?: Date | null
+  freeFixes?: number
+  freeFix?: boolean
   analysis?: { data: LookAnalysis; createdAt: Date } | null
   pieces?: LookPiece[]
   collectionIds: ObjectId[]

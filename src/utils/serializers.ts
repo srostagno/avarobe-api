@@ -6,6 +6,7 @@ import type {
 } from '../types/mongo.js'
 import { currentHair } from '../modules/avatar/hair.js'
 import { serializeBilling } from '../modules/billing/entitlements.js'
+import { fixIsFree } from '../modules/looks/fixes.js'
 import { signedUrlOrNull } from './storage.js'
 
 // Came for their colors (a color guide, or a Colors ad): the studio starts
@@ -155,6 +156,8 @@ export async function serializeLook(look: LookDocument) {
       : null,
     remixOf: look.remixOf?.toString() ?? null,
     remix: look.remix ?? null,
+    // Its fix costs no look (looks/fixes.ts).
+    fixFree: fixIsFree(look),
     createdAt: look.createdAt.toISOString(),
     renderStartedAt: (look.renderStartedAt ?? look.createdAt).toISOString(),
     readyAt: look.readyAt?.toISOString() ?? null,

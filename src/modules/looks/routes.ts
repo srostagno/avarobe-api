@@ -32,6 +32,7 @@ import { ShopSearchError, shopSearchConfigured } from '../shop/serpapi.js'
 import { ShopQuotaError, findPieceMatches } from '../shop/service.js'
 import { FEEDBACK_ASPECTS, describeFeedback } from '../taste/prompts.js'
 import { readTaste, scheduleTasteLearning, toStylistTaste } from '../taste/service.js'
+import { fixIsFree } from './fixes.js'
 import { reserveLookQuota } from './quota.js'
 import {
   lookStorageKeys,
@@ -552,7 +553,8 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       let creditSpent: boolean
 
       try {
-        creditSpent = await spendCredits(app, userId, 1)
+        // A free fix stays free when it has to be drawn again.
+        creditSpent = look.freeFix ? false : await spendCredits(app, userId, 1)
       } catch (error) {
         await releaseGenerations(app, userId, 'look', 1)
 
@@ -788,10 +790,18 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(quota.status).send(quota.body)
       }
 
+      // A fix of a look that missed is on us (fixes.ts): claimed on that
+      // look, so two taps can't take it twice.
+      const freeFix =
+        change === 'fix' &&
+        fixIsFree(base) &&
+        (await app.collections.looks.updateOne({ _id: base._id, freeFixAt: null }, { $set: { freeFixAt: new Date() } }))
+          .modifiedCount === 1
+
       let creditSpent: boolean
 
       try {
-        creditSpent = await spendCredits(app, userId, 1)
+        creditSpent = freeFix ? false : await spendCredits(app, userId, 1)
       } catch (error) {
         await releaseGenerations(app, userId, 'look', 1)
 
@@ -810,6 +820,11 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         request.log.error({ err: errorMessage(error) }, 'Look remix failed')
         await releaseGenerations(app, userId, 'look', 1)
         await refundCredits(app, userId, creditSpent ? 1 : 0)
+
+        if (freeFix) {
+          await app.collections.looks.updateOne({ _id: base._id }, { $set: { freeFixAt: null } })
+        }
+
         return reply.code(502).send({ message: 'Our stylist could not restyle this one. Please try again.' })
       }
 
@@ -840,6 +855,8 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         error: null,
         imageKey: null,
         creditSpent,
+        freeFix,
+        freeFixes: (base.freeFixes ?? 0) + (freeFix ? 1 : 0),
         collectionIds: [],
         favorite: false,
         createdAt: now,
