@@ -40,7 +40,27 @@ try {
     throw new Error(`Bought ${Math.round(age / 86_400_000)} days ago; Meta only takes 7.`)
   }
 
-  const session = await new Stripe(env.STRIPE_SECRET_KEY).checkout.sessions.retrieve(purchase.stripeSessionId)
+  // Pro purchases are kept under their invoice; the checkout that started
+  // the subscription has the browser ids and the id the live report uses.
+  const stripe = new Stripe(env.STRIPE_SECRET_KEY)
+  let session: Stripe.Checkout.Session | undefined
+
+  if (purchase.stripeSessionId.startsWith('in_')) {
+    const invoice = await stripe.invoices.retrieve(purchase.stripeSessionId)
+    const subscription = invoice.parent?.subscription_details?.subscription
+    const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id
+
+    if (subscriptionId) {
+      session = (await stripe.checkout.sessions.list({ subscription: subscriptionId, limit: 1 })).data[0]
+    }
+  } else {
+    session = await stripe.checkout.sessions.retrieve(purchase.stripeSessionId)
+  }
+
+  if (!session) {
+    throw new Error(`No checkout found for ${purchase.stripeSessionId}.`)
+  }
+
   const metadata = { ...session.metadata }
 
   if (!metadata.ga_cid && !metadata.fbp && !metadata.fbc) {
@@ -60,8 +80,8 @@ try {
 
   const sent = sendMetaPurchase({
     metadata,
-    transactionId: purchase.stripeSessionId,
-    product: purchase.product,
+    transactionId: session.id,
+    product: session.metadata?.product ?? purchase.product,
     amount: purchase.amountTotal,
     currency: purchase.currency,
     eventTime: purchase.createdAt,
