@@ -23,6 +23,7 @@ import {
   retrieveSession,
   sessionSettled,
   setProCancellation,
+  startProNow,
   stripeConfigured,
   switchToAnnual,
   verifyWebhook,
@@ -568,6 +569,56 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         }
 
         request.log.error({ err: errorMessage(error) }, 'Switch to annual failed')
+        return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
+      }
+
+      const updated = await app.collections.users.findOne({ _id: userId })
+      return { user: updated ? serializeUser(updated) : null }
+    },
+  )
+
+  // A trial that starts Pro early (when its looks run out): the first
+  // monthly charge now, and the month's looks right away.
+  app.post(
+    '/pro/start',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const user = await loadBillingUser(app, userId)
+      const state = user ? billingState(user) : null
+      const subscriptionId = user?.pro?.subscriptionId
+
+      if (!user || !state?.proLive || !subscriptionId) {
+        return reply.code(404).send({ message: 'There is no active Pro subscription.' })
+      }
+
+      if (!state.trialing) {
+        return reply.code(409).send({ message: 'Your Pro plan has already started.' })
+      }
+
+      try {
+        if (isSimulated(subscriptionId)) {
+          await app.collections.users.updateOne(
+            { _id: userId },
+            {
+              $set: {
+                'pro.status': 'active',
+                'pro.periodEnd': addMonths(new Date(), 1),
+                'pro.cancelAtPeriodEnd': false,
+                'pro.trialEnd': null,
+              },
+              $inc: { credits: env.PRO_MONTHLY_CREDITS },
+            },
+          )
+        } else {
+          await startProNow(app, subscriptionId)
+        }
+      } catch (error) {
+        if (error instanceof SwitchDeclinedError) {
+          return reply.code(402).send({ message: `Your card was declined: ${error.message}` })
+        }
+
+        request.log.error({ err: errorMessage(error) }, 'Starting Pro early failed')
         return reply.code(502).send({ message: 'Billing is not responding. Try again in a moment.' })
       }
 

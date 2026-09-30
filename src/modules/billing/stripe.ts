@@ -682,6 +682,12 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     return
   }
 
+  // A plan change inside a trial bills $0 and the trial goes on: nothing
+  // was paid, so nothing is granted.
+  if (invoice.billing_reason === 'subscription_update' && invoice.total <= 0) {
+    return
+  }
+
   // The line for the new period (a plan switch also carries a proration
   // credit line for the unused time).
   const lineEnd = Math.max(0, ...invoice.lines.data.map((line) => line.period.end))
@@ -754,26 +760,20 @@ export async function setProCancellation(app: FastifyInstance, subscriptionId: s
 
 export class SwitchDeclinedError extends Error {}
 
-// Moves a monthly plan to annual right away. Stripe charges the annual
-// price minus the unused part of the month, and the year starts today.
+// A plan change Stripe charges right away, and what that payment grants.
 // The payment has to go through or nothing changes.
-export async function switchToAnnual(app: FastifyInstance, subscriptionId: string) {
-  const current = await stripe().subscriptions.retrieve(subscriptionId)
-  const item = current.items.data[0]
-
-  if (!item) {
-    throw new Error(`Subscription ${subscriptionId} has no items.`)
-  }
-
+async function chargeSubscriptionChange(
+  app: FastifyInstance,
+  subscriptionId: string,
+  params: Stripe.SubscriptionUpdateParams,
+) {
   let updated: Stripe.Subscription
 
   try {
     updated = await stripe().subscriptions.update(subscriptionId, {
-      items: [{ id: item.id, price: await priceFor('pro_annual') }],
-      proration_behavior: 'always_invoice',
+      ...params,
       payment_behavior: 'error_if_incomplete',
       cancel_at_period_end: false,
-      metadata: { ...current.metadata, product: 'pro_annual' },
       expand: ['latest_invoice'],
     })
   } catch (error) {
@@ -793,6 +793,32 @@ export async function switchToAnnual(app: FastifyInstance, subscriptionId: strin
   }
 
   return updated
+}
+
+// Moves a monthly plan to annual right away. Stripe charges the annual
+// price minus the unused part of the month, and the year starts today.
+export async function switchToAnnual(app: FastifyInstance, subscriptionId: string) {
+  const current = await stripe().subscriptions.retrieve(subscriptionId)
+  const item = current.items.data[0]
+
+  if (!item) {
+    throw new Error(`Subscription ${subscriptionId} has no items.`)
+  }
+
+  return chargeSubscriptionChange(app, subscriptionId, {
+    items: [{ id: item.id, price: await priceFor('pro_annual') }],
+    proration_behavior: 'always_invoice',
+    // The trial ends with it. Otherwise Stripe keeps the trial going and
+    // charges nothing today.
+    ...(current.status === 'trialing' ? { trial_end: 'now' as const } : {}),
+    metadata: { ...current.metadata, product: 'pro_annual' },
+  })
+}
+
+// Ends a trial early: the first monthly charge today, and the month (with
+// its looks) starts now.
+export async function startProNow(app: FastifyInstance, subscriptionId: string) {
+  return chargeSubscriptionChange(app, subscriptionId, { trial_end: 'now' })
 }
 
 // The monthly looks of annual plans, a month apart until the paid year ends

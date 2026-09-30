@@ -246,18 +246,20 @@ export async function spendCredits(app: FastifyInstance, userId: ObjectId, amoun
   )
 
   if (result.modifiedCount === 0) {
-    const { proActive, paid, credits } = await loadState(app, userId)
+    const { proActive, trialing, paid, credits } = await loadState(app, userId)
     const left = `${credits} look${credits === 1 ? '' : 's'} left`
 
     throw new PaywallError(
       'no_credits',
       credits > 0
         ? `You have ${left}. Ask for fewer, or add more looks.`
-        : proActive
-          ? 'You’ve used this month’s looks. Add a look pack to keep styling.'
-          : paid
-            ? 'You’re out of looks. Go Pro or add a look pack to keep styling.'
-            : 'You’ve used your free looks. Go Pro or add a look pack to keep styling.',
+        : trialing
+          ? 'You’ve used your trial looks. Start Pro now or add a look pack to keep styling.'
+          : proActive
+            ? 'You’ve used this month’s looks. Add a look pack to keep styling.'
+            : paid
+              ? 'You’re out of looks. Go Pro or add a look pack to keep styling.'
+              : 'You’ve used your free looks. Go Pro or add a look pack to keep styling.',
     )
   }
 
