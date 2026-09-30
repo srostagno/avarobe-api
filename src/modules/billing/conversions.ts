@@ -23,7 +23,7 @@ const METADATA_MAX = 500
 export function attributionMetadata(
   attribution: Attribution | undefined,
   request: { ip: string; headers: Record<string, string | string[] | undefined> },
-) {
+): Record<string, string> {
   const fit = (value: string | undefined) => (value && value.length <= METADATA_MAX ? value : undefined)
   const gaClientId = fit(attribution?.gaClientId)
   const fbp = fit(attribution?.fbp)

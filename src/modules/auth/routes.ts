@@ -104,7 +104,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     method: 'password' | 'passkey',
     userId: ObjectId,
   ) {
-    const metadata = attributionMetadata(data.attribution, request) as Record<string, string>
+    const metadata = attributionMetadata(data.attribution, request)
 
     void trackServerEvent(app, { name: 'signup_completed', userId, props: { method } })
 
