@@ -154,6 +154,11 @@ export async function serializeLook(look: LookDocument) {
     error: look.error,
     imageUrl: await signedUrlOrNull(look.imageKey),
     previewUrl: look.status === 'processing' ? await signedUrlOrNull(look.previewKey ?? null) : null,
+    // A locked look already drawn: only its blurred copy, never the picture.
+    lockedImageUrl:
+      look.status === 'locked' && look.teaser?.status === 'ready' ? await signedUrlOrNull(look.teaser.lockedKey) : null,
+    // Still drawing it: pages check back until the blurred copy is there.
+    teaserPending: look.status === 'locked' && look.teaser?.status === 'processing',
     collectionIds: look.collectionIds.map((id) => id.toString()),
     favorite: look.favorite,
     feedback: look.feedback

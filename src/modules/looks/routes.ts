@@ -39,9 +39,13 @@ import {
   planLooks,
   planRemix,
   startLookRender,
+  startLookTeaser,
   startPieceRenders,
 } from './service.js'
 import { startTryOn } from './try-on.js'
+
+// How far back an older locked look still gets drawn when it's seen.
+const TEASER_BACKFILL_DAYS = 14
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
@@ -129,6 +133,17 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       .sort({ createdAt: -1 })
       .limit(parsed.data.limit)
       .toArray()
+
+    // Locked looks from before they were drawn ahead of time get drawn the
+    // first time they're seen again, if recent; the page checks back.
+    const backfillSince = Date.now() - TEASER_BACKFILL_DAYS * 24 * 60 * 60 * 1000
+
+    for (const look of looks) {
+      if (look.status === 'locked' && !look.teaser && look.createdAt.getTime() > backfillSince) {
+        startLookTeaser(app, look._id)
+        look.teaser = { status: 'processing', key: null, lockedKey: null }
+      }
+    }
 
     return {
       looks: await Promise.all(looks.map(serializeLook)),
@@ -262,6 +277,9 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       for (const look of looks) {
         if (look.status === 'processing') {
           startLookRender(app, look._id)
+        } else {
+          // Drawn now and shown blurred: the look they'd unlock is already there.
+          startLookTeaser(app, look._id)
         }
       }
 
@@ -621,10 +639,18 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
+      // Drawn ahead of time: it shows right away instead of rendering now.
+      const teaser = look.teaser?.status === 'ready' && look.teaser.key ? look.teaser : null
+      const now = new Date()
+
       // Claimed atomically, so a double tap draws (and charges) it once.
       const claimed = await app.collections.looks.updateOne(
         { _id: look._id, status: 'locked' },
-        { $set: { status: 'processing', error: null, creditSpent, renderStartedAt: new Date(), updatedAt: new Date() } },
+        {
+          $set: teaser
+            ? { status: 'ready', error: null, imageKey: teaser.key, teaser: null, creditSpent, readyAt: now, updatedAt: now }
+            : { status: 'processing', error: null, creditSpent, renderStartedAt: now, updatedAt: now },
+        },
       )
 
       if (claimed.modifiedCount === 0) {
@@ -633,8 +659,17 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'This look is already styled.' })
       }
 
-      startLookRender(app, look._id)
-      void trackServerEvent(app, { name: 'look_unlocked', userId, props: { dress_code: look.occasion.dressCode } })
+      if (teaser) {
+        await (teaser.lockedKey ? storage.remove(teaser.lockedKey).catch(() => undefined) : undefined)
+      } else {
+        startLookRender(app, look._id)
+      }
+
+      void trackServerEvent(app, {
+        name: 'look_unlocked',
+        userId,
+        props: { dress_code: look.occasion.dressCode, instant: Boolean(teaser) },
+      })
 
       const updated = await app.collections.looks.findOne({ _id: look._id })
 

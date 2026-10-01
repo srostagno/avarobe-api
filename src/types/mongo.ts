@@ -655,6 +655,10 @@ export type LookDocument = {
   error: string | null
   imageKey: string | null
   previewKey?: string | null
+  // A locked look drawn ahead of time: the picture waits in `key` (never
+  // sent) and only a blurred copy (`lockedKey`) shows, so the look is ready
+  // the moment they unlock it.
+  teaser?: { status: GenerationStatus; key: string | null; lockedKey: string | null } | null
   // Whether rendering this look took a credit (refunded if it fails).
   creditSpent?: boolean
   // Free fixes (looks/fixes.ts): when this look's free fix was taken, how

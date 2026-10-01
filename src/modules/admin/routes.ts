@@ -91,6 +91,10 @@ async function reviewLook(look: LookDocument) {
     error: look.error,
     secondsToReady: look.readyAt ? Math.round((look.readyAt.getTime() - look.createdAt.getTime()) / 1000) : null,
     imageUrl: await signedUrlOrNull(look.imageKey),
+    // A locked look drawn ahead of time: what the customer sees (blurred)
+    // and, for QA, the picture they'd unlock.
+    lockedImageUrl: look.teaser?.status === 'ready' ? await signedUrlOrNull(look.teaser.lockedKey) : null,
+    teaserUrl: look.teaser?.status === 'ready' ? await signedUrlOrNull(look.teaser.key) : null,
     source: look.source ?? 'stylist',
     icon: look.iconId ? { id: look.iconId, name: ICON_NAMES.get(look.iconId) ?? look.iconId } : null,
     remix: look.remixOf ? (look.remix ?? { change: 'custom' as const, detail: null }) : null,

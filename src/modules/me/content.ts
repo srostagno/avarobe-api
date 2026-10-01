@@ -14,7 +14,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
   const [avatar, looks] = await Promise.all([
     app.collections.avatars.findOne({ userId }),
     app.collections.looks
-      .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1 } })
+      .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1, teaser: 1 } })
       .toArray(),
   ])
   const keys = [

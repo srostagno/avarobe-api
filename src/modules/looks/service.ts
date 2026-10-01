@@ -4,7 +4,7 @@ import type { ObjectId } from 'mongodb'
 import { env } from '../../config/env.js'
 import type { AvatarDocument, LookDocument, LookItem, LookPiece, LookPlan, RemixChange } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
-import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
+import { blurTeaser, toPreviewWebp, toStoredWebp } from '../../utils/images.js'
 import {
   type ImageInput,
   createStructuredResponse,
@@ -185,20 +185,9 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
   }
 }
 
-export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
-  const look = await app.collections.looks.findOne({ _id: lookId })
-
-  if (!look) {
-    return
-  }
-
-  const avatar = await app.collections.avatars.findOne({ _id: look.avatarId })
-
-  if (!avatar?.avatarKey) {
-    await markLookFailed(app, lookId)
-    return
-  }
-
+// What drawing a look on their avatar takes: the avatar, their face, the
+// outfit photo for try-ons, the haircut they picked, and the prompt.
+async function lookImageRequest(look: LookDocument, avatar: AvatarDocument & { avatarKey: string }) {
   const [avatarImage, selfie, reference] = await Promise.all([
     storage.read(avatar.avatarKey),
     storage.read(avatar.selfieKey),
@@ -220,13 +209,30 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     images.push(hair.image)
   }
 
-  const previewKey = `users/${look.userId.toString()}/look-${look._id.toString()}-preview.webp`
   const basePrompt = reference ? buildTryOnRenderPrompt(look.plan) : buildLookRenderPrompt(look.plan, look.occasion.text)
+
+  return { images, prompt: hair ? `${basePrompt} ${hair.line}` : basePrompt }
+}
+
+export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
+  const look = await app.collections.looks.findOne({ _id: lookId })
+
+  if (!look) {
+    return
+  }
+
+  const avatar = await app.collections.avatars.findOne({ _id: look.avatarId })
+
+  if (!avatar?.avatarKey) {
+    await markLookFailed(app, lookId)
+    return
+  }
+
+  const previewKey = `users/${look.userId.toString()}/look-${look._id.toString()}-preview.webp`
 
   try {
     const png = await generateImageFromReferences({
-      images,
-      prompt: hair ? `${basePrompt} ${hair.line}` : basePrompt,
+      ...(await lookImageRequest(look, { ...avatar, avatarKey: avatar.avatarKey })),
       // Previews let the card show the look forming instead of a shimmer.
       onPartial: async (partial) => {
         await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')
@@ -267,6 +273,59 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
   }
 }
 
+// A locked look drawn ahead of time (LookDocument.teaser): its card shows
+// it blurred, and unlocking it shows it right away. If they unlock it while
+// it's drawing, the regular render takes over and this one is dropped.
+async function runLookTeaser(app: FastifyInstance, lookId: ObjectId) {
+  const look = await app.collections.looks.findOneAndUpdate(
+    { _id: lookId, status: 'locked', teaser: null },
+    { $set: { teaser: { status: 'processing', key: null, lockedKey: null } } },
+    { returnDocument: 'after' },
+  )
+
+  if (!look) {
+    return
+  }
+
+  const failed = () =>
+    app.collections.looks.updateOne({ _id: lookId, 'teaser.status': 'processing' }, { $set: { 'teaser.status': 'failed' } })
+  const avatar = await app.collections.avatars.findOne({ _id: look.avatarId })
+
+  if (!avatar?.avatarKey) {
+    await failed()
+    return
+  }
+
+  try {
+    const png = await generateImageFromReferences(await lookImageRequest(look, { ...avatar, avatarKey: avatar.avatarKey }))
+    const stamp = Date.now()
+    const key = `users/${look.userId.toString()}/look-${look._id.toString()}-${stamp}.webp`
+    const lockedKey = `users/${look.userId.toString()}/look-${look._id.toString()}-${stamp}-locked.webp`
+    const webp = await toStoredWebp(png)
+
+    await Promise.all([storage.put(key, webp, 'image/webp'), storage.put(lockedKey, await blurTeaser(webp), 'image/webp')])
+
+    const saved = await app.collections.looks.updateOne(
+      { _id: lookId, status: 'locked', 'teaser.status': 'processing' },
+      { $set: { teaser: { status: 'ready', key, lockedKey }, updatedAt: new Date() } },
+    )
+
+    // Unlocked (or deleted) while it drew.
+    if (saved.matchedCount === 0) {
+      await Promise.all([key, lockedKey].map((stale) => storage.remove(stale).catch(() => undefined)))
+    }
+  } catch (error) {
+    app.log.error({ lookId: lookId.toString(), err: errorMessage(error) }, 'Locked look teaser failed')
+    await failed()
+  }
+}
+
+export function startLookTeaser(app: FastifyInstance, lookId: ObjectId) {
+  void runLookTeaser(app, lookId).catch((error: unknown) => {
+    app.log.error({ err: error, lookId: lookId.toString() }, 'Locked look teaser crashed')
+  })
+}
+
 export function startLookRender(app: FastifyInstance, lookId: ObjectId) {
   void runLookRender(app, lookId).catch(async (error: unknown) => {
     app.log.error({ err: error, lookId: lookId.toString() }, 'Look render crashed')
@@ -276,12 +335,14 @@ export function startLookRender(app: FastifyInstance, lookId: ObjectId) {
 
 // Every file a look owns in storage.
 export function lookStorageKeys(
-  look: Pick<LookDocument, 'imageKey' | 'previewKey' | 'referenceKey' | 'pieces'>,
+  look: Pick<LookDocument, 'imageKey' | 'previewKey' | 'referenceKey' | 'pieces' | 'teaser'>,
 ) {
   return [
     look.imageKey,
     look.previewKey,
     look.referenceKey,
+    look.teaser?.key,
+    look.teaser?.lockedKey,
     ...(look.pieces ?? []).map((piece) => piece.imageKey),
   ].filter((key): key is string => Boolean(key))
 }

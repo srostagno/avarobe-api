@@ -115,6 +115,12 @@ export async function lockBestSide(image: Buffer) {
   return sharp(image).composite([{ input: blurred, left: 0, top: 0 }]).webp({ quality: 86 }).toBuffer()
 }
 
+// A locked look's teaser: small and blurred enough to see the outfit's
+// shape and colors on them, not the details.
+export async function blurTeaser(image: Buffer) {
+  return sharp(image).resize({ width: 480 }).blur(14).webp({ quality: 78 }).toBuffer()
+}
+
 export async function toModelPng(image: Buffer) {
   return sharp(image).png().toBuffer()
 }
