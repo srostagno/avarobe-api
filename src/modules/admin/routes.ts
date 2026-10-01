@@ -10,6 +10,7 @@ import { signedUrlOrNull } from '../../utils/storage.js'
 import { CHANNELS } from '../analytics/service.js'
 import { analyticsReport } from '../analytics/report.js'
 import { adminUserIds, isAdmin } from '../billing/entitlements.js'
+import { whyReport } from '../survey/report.js'
 import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
 import { hairReport } from './hair-report.js'
@@ -25,6 +26,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 const emailsSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
 const hairSchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
+const whySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 
 const EMAIL_ORDER: LifecycleEmailKind[] = [
   'welcome',
@@ -352,6 +354,22 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return analyticsReport(app, parsed.data)
+  })
+
+  // Why people come, what holds them back from an offer, what convinced
+  // the ones who paid (modules/survey).
+  app.get('/why', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(whySchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return whyReport(app, parsed.data.days)
   })
 
   // The Hair studio: its funnel and the accounts using it (hair-report.ts).

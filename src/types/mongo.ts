@@ -733,3 +733,20 @@ export type ShopSearchDocument = {
   updatedAt: Date
   expiresAt: Date
 }
+
+// One answer to a studio question (modules/survey): why they came, what held
+// them back from an offer, what convinced them to pay. Deleted with the
+// account.
+export type SurveyAnswerDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  question: string
+  answer: string
+  // Only for "other": what they typed, short.
+  note: string | null
+  // Where it was asked: the offer's kind and placement, the flow, the product.
+  context: Record<string, string>
+  // Their first touch at the time, to read answers by campaign.
+  content: string | null
+  createdAt: Date
+}

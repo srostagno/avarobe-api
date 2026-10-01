@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify'
+import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
@@ -8,6 +9,7 @@ import { serializeUser } from '../../utils/serializers.js'
 import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
 import { cancelProNow } from '../billing/stripe.js'
+import { ONCE_PER_PERSON, REPEAT_AFTER_MS, SURVEY_QUESTIONS, type SurveyQuestion } from '../survey/questions.js'
 
 import { deleteUserContent } from './content.js'
 
@@ -21,8 +23,68 @@ const emailPreferencesSchema = z.object({
   tips: z.boolean(),
 })
 
+const code = z.string().regex(/^[a-z][a-z0-9_]{0,40}$/)
+
+const surveySchema = z
+  .object({
+    question: z.enum(Object.keys(SURVEY_QUESTIONS) as [SurveyQuestion, ...SurveyQuestion[]]),
+    answer: code,
+    note: z.string().trim().max(280).optional(),
+    context: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,30}$/), code).optional(),
+  })
+  .refine((body) => (SURVEY_QUESTIONS[body.question] as readonly string[]).includes(body.answer), {
+    message: 'Unknown answer.',
+  })
+
 const meRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+
+  // One answer to a studio question (modules/survey). Once-per-person
+  // questions keep the latest answer; the others are kept at most once per
+  // window, so a closed offer twice in a row counts once.
+  app.post(
+    '/survey',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const parsed = parseBody(surveySchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      const { question, answer, note, context } = parsed.data
+      const user = await app.collections.users.findOne({ _id: userId }, { projection: { acquisition: 1 } })
+      const fields = {
+        answer,
+        note: answer === 'other' && note ? note : null,
+        context: Object.fromEntries(Object.entries(context ?? {}).slice(0, 6)),
+        content: user?.acquisition?.content ?? user?.acquisition?.source ?? null,
+        createdAt: new Date(),
+      }
+
+      if (ONCE_PER_PERSON.includes(question)) {
+        await app.collections.surveyAnswers.updateOne(
+          { userId, question },
+          { $set: fields, $setOnInsert: { _id: new ObjectId(), userId, question } },
+          { upsert: true },
+        )
+        return reply.code(204).send()
+      }
+
+      const recent = await app.collections.surveyAnswers.findOne({
+        userId,
+        question,
+        createdAt: { $gte: new Date(Date.now() - REPEAT_AFTER_MS) },
+      })
+
+      if (!recent) {
+        await app.collections.surveyAnswers.insertOne({ _id: new ObjectId(), userId, question, ...fields })
+      }
+
+      return reply.code(204).send()
+    },
+  )
 
   // One of their own generated images, for sharing. The page adds the
   // avarobe.com band and hands it to the share sheet; it can't read S3

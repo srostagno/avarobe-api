@@ -16,6 +16,7 @@ import type {
   PurchaseDocument,
   RefreshTokenDocument,
   ShopSearchDocument,
+  SurveyAnswerDocument,
   TasteDocument,
   UsageCounterDocument,
   UserDocument,
@@ -28,6 +29,7 @@ export type MongoCollections = {
   looks: Collection<LookDocument>
   hairstyles: Collection<HairstyleDocument>
   collections: Collection<CollectionDocument>
+  surveyAnswers: Collection<SurveyAnswerDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
@@ -51,6 +53,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     looks: mongoDb.collection<LookDocument>('looks'),
     hairstyles: mongoDb.collection<HairstyleDocument>('hairstyles'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
+    surveyAnswers: mongoDb.collection<SurveyAnswerDocument>('survey_answers'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
@@ -91,6 +94,8 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.hairstyles.createIndex({ status: 1, updatedAt: 1 }),
     collections.tastes.createIndex({ userId: 1 }, { unique: true }),
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
+    collections.surveyAnswers.createIndex({ userId: 1, question: 1, createdAt: -1 }),
+    collections.surveyAnswers.createIndex({ createdAt: -1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
       { expireAfterSeconds: 0 },
