@@ -9,6 +9,7 @@ import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import {
@@ -80,6 +81,15 @@ const SIMULATED_STAGES = [
 ] as const
 
 const simulateSchema = z.object({ stage: z.enum(SIMULATED_STAGES) })
+
+// Where an admin starting over as a new user "arrived" from: a Colors ad
+// (colors first: selfie, then colors) or the home page (avatar first).
+const startOverSchema = z.object({ arrival: z.enum(['colors_ad', 'home']) })
+
+const ARRIVALS = {
+  colors_ad: { channel: 'meta', source: 'meta', medium: 'paid_social', campaign: 'launch_us', content: 'colors_black_a', landing: '/color-analysis' },
+  home: { channel: 'direct', source: null, medium: null, campaign: null, content: null, landing: '/' },
+} as const
 
 // Simulated Plus subscriptions never reach Stripe.
 const SIMULATED_SUBSCRIPTION = 'sim_admin'
@@ -489,6 +499,40 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       return { user: updated ? serializeUser(updated) : null }
     })
   }
+
+  // Admins only: start over as a brand-new user, to walk the whole flow
+  // again (selfie, colors, avatar, looks, offers). Wipes what they made, as
+  // deleting the account would, keeps the account and its purchases, and
+  // sets the plan back to a new account's in test mode.
+  app.post('/admin/start-over', { preHandler: authenticate }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const user = await loadBillingUser(app, userId)
+    const parsed = parseBody(startOverSchema, request.body)
+
+    if (!user || !isAdmin(user)) {
+      return reply.code(403).send({ message: 'Only admins can do this.' })
+    }
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    if (billingState(user).proLive && !user.pro?.cancelAtPeriodEnd && !isSimulated(user.pro?.subscriptionId)) {
+      return reply.code(409).send({ message: 'Cancel your real Pro subscription first.' })
+    }
+
+    await deleteUserContent(app, userId)
+    await app.collections.users.updateOne(
+      { _id: userId },
+      {
+        $set: { acquisition: { visitorId: null, term: null, ...ARRIVALS[parsed.data.arrival] }, updatedAt: new Date() },
+        $unset: { lifecycleEmails: '', lifecycleEmailLastAt: '' },
+      },
+    )
+    const updated = await simulate(userId, 'free')
+
+    return { user: updated ? serializeUser(updated) : null }
+  })
 
   // Pro: cancel at the end of the paid period, or keep it after all.
   for (const [path, cancel] of [

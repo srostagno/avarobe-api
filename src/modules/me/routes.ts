@@ -7,10 +7,9 @@ import { parseBody } from '../../utils/http.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
-import { deleteHairstyles } from '../hair/service.js'
-import { lookStorageKeys } from '../looks/service.js'
 import { cancelProNow } from '../billing/stripe.js'
-import { boardKeys } from '../report/boards.js'
+
+import { deleteUserContent } from './content.js'
 
 const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
@@ -107,45 +106,16 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const [avatar, looks] = await Promise.all([
-      app.collections.avatars.findOne({ userId }),
-      app.collections.looks
-        .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1 } })
-        .toArray(),
-    ])
-    const keys = [
-      ...new Set(
-        [
-          avatar?.selfieKey,
-          avatar?.bodyPhotoKey,
-          avatar?.avatarKey,
-          avatar?.job?.previewKey,
-          avatar?.drape?.key,
-          avatar?.drapePreview?.key,
-          ...boardKeys(avatar?.reportBoards),
-          ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
-          ...looks.flatMap(lookStorageKeys),
-        ].filter((key): key is string => Boolean(key)),
-      ),
-    ]
-
-    await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
-    await deleteHairstyles(app, userId)
+    const { files } = await deleteUserContent(app, userId)
     await Promise.all([
-      app.collections.looks.deleteMany({ userId }),
-      app.collections.tastes.deleteMany({ userId }),
-      app.collections.collections.deleteMany({ userId }),
-      app.collections.avatars.deleteMany({ userId }),
       app.collections.refreshTokens.deleteMany({ userId }),
-      app.collections.usageCounters.deleteMany({ userId }),
       app.collections.passkeys.deleteMany({ userId }),
       app.collections.authChallenges.deleteMany({ userId }),
-      app.collections.shopSearches.deleteMany({ userId }),
       app.collections.purchases.deleteMany({ userId }),
     ])
     await app.collections.users.deleteOne({ _id: userId })
 
-    request.log.info({ userId: userId.toString(), files: keys.length }, 'Account deleted')
+    request.log.info({ userId: userId.toString(), files }, 'Account deleted')
     clearAuthCookies(reply)
 
     return { ok: true }
