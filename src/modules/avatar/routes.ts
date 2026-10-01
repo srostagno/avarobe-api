@@ -15,6 +15,7 @@ import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, hasColorReport, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
+import { ensureLockedPreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { startAvatarJob, startColorsJob } from './service.js'
@@ -74,10 +75,13 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/', async (request) => {
     const userId = requireUserId(request)
-    const avatar = await app.collections.avatars.findOne({ userId })
+    const found = await app.collections.avatars.findOne({ userId })
+    const fullPalette = await hasColorReport(app, userId)
+    // A preview from before the lock gets its locked copy here, once.
+    const avatar = found && !fullPalette ? await ensureLockedPreview(app, found) : found
 
     return {
-      avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null,
+      avatar: avatar ? await serializeAvatar(avatar, { fullPalette }) : null,
       remaining: await remainingGenerations(app, userId, 'avatar'),
     }
   })
@@ -218,6 +222,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         selfieKey ? previous?.selfieKey : null,
         selfieKey ? previous?.drape?.key : null,
         selfieKey ? previous?.drapePreview?.key : null,
+        selfieKey ? previous?.drapePreview?.lockedKey : null,
         bodyPhotoKey ? previous?.bodyPhotoKey : null,
         ...boardKeys(previous?.reportBoards, selfieKey ? BOARD_KINDS : STYLE_BOARDS),
       ].filter((key): key is string => Boolean(key))
@@ -348,6 +353,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         selfieKey ? previous?.selfieKey : null,
         previous?.drape?.key,
         previous?.drapePreview?.key,
+        previous?.drapePreview?.lockedKey,
         ...boardKeys(previous?.reportBoards, BOARD_KINDS),
       ].filter((key): key is string => Boolean(key))
 
@@ -587,6 +593,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.job?.previewKey,
           existing.drape?.key,
           existing.drapePreview?.key,
+          existing.drapePreview?.lockedKey,
           ...boardKeys(existing.reportBoards),
           ...(existing.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ].filter((key): key is string => Boolean(key)),

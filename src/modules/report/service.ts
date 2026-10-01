@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
+import { env } from '../../config/env.js'
 import type {
   AvatarDocument,
   ColorReport,
@@ -13,7 +14,7 @@ import type {
   Verdict,
 } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
-import { toStoredWebp } from '../../utils/images.js'
+import { lockBestSide, toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { hairReference } from '../avatar/hair.js'
@@ -230,17 +231,63 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
       prompt: hair ? `${base} ${hair.line}` : base,
       size: '1536x1024',
     })
-    const key = `users/${avatar.userId.toString()}/drape-preview-${Date.now()}.webp`
+    const stamp = Date.now()
+    const key = `users/${avatar.userId.toString()}/drape-preview-${stamp}.webp`
+    const webp = await toStoredWebp(png)
 
-    await storage.put(key, await toStoredWebp(png), 'image/webp')
+    await storage.put(key, webp, 'image/webp')
+    const lockedKey = await storeLockedPreview(app, avatar.userId, webp, stamp)
 
     // A new selfie while it rendered: the preview is of the old face.
-    if ((await mark({ 'drapePreview.status': 'ready', 'drapePreview.key': key })).matchedCount === 0) {
-      await storage.remove(key).catch(() => undefined)
+    if ((await mark({ 'drapePreview.status': 'ready', 'drapePreview.key': key, 'drapePreview.lockedKey': lockedKey })).matchedCount === 0) {
+      await Promise.all([key, lockedKey].map((stale) => (stale ? storage.remove(stale).catch(() => undefined) : undefined)))
     }
   } catch (error) {
     app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Drape preview failed')
     await mark({ 'drapePreview.status': 'failed' })
+  }
+}
+
+// The locked copy of the preview (best side blurred). Null if it couldn't be
+// made: it's made again the next time it's needed.
+async function storeLockedPreview(app: FastifyInstance, userId: ObjectId, webp: Buffer, stamp: number) {
+  try {
+    const key = `users/${userId.toString()}/drape-preview-${stamp}-locked.webp`
+
+    await storage.put(key, await lockBestSide(webp), 'image/webp')
+    return key
+  } catch (error) {
+    app.log.error({ err: errorMessage(error), userId: userId.toString() }, 'Locked drape preview failed')
+    return null
+  }
+}
+
+// Previews made before the lock existed get their locked copy the first
+// time someone who hasn't unlocked it opens the studio.
+export async function ensureLockedPreview(app: FastifyInstance, avatar: AvatarDocument): Promise<AvatarDocument> {
+  const preview = avatar.drapePreview
+
+  if (!env.LOCK_BEST_COLOR || preview?.status !== 'ready' || !preview.key || preview.lockedKey) {
+    return avatar
+  }
+
+  try {
+    const lockedKey = await storeLockedPreview(app, avatar.userId, await storage.read(preview.key), Date.now())
+
+    if (!lockedKey) {
+      return avatar
+    }
+
+    const updated = await app.collections.avatars.findOneAndUpdate(
+      { _id: avatar._id, 'drapePreview.key': preview.key },
+      { $set: { 'drapePreview.lockedKey': lockedKey } },
+      { returnDocument: 'after' },
+    )
+
+    return updated ?? avatar
+  } catch (error) {
+    app.log.error({ err: errorMessage(error), avatarId: avatar._id.toString() }, 'Could not lock an existing drape preview')
+    return avatar
   }
 }
 

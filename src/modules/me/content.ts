@@ -26,6 +26,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
         avatar?.job?.previewKey,
         avatar?.drape?.key,
         avatar?.drapePreview?.key,
+        avatar?.drapePreview?.lockedKey,
         ...boardKeys(avatar?.reportBoards),
         ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ...looks.flatMap(lookStorageKeys),

@@ -4,6 +4,7 @@ import type {
   LookDocument,
   UserDocument,
 } from '../types/mongo.js'
+import { env } from '../config/env.js'
 import { currentHair } from '../modules/avatar/hair.js'
 import { serializeBilling } from '../modules/billing/entitlements.js'
 import { fixIsFree } from '../modules/looks/fixes.js'
@@ -34,17 +35,21 @@ export function serializeUser(user: UserDocument) {
 
 // Without the Color Report the palette shows the season and a first taste of
 // colors; the rest stays on the server, with counts so the page can hint at it.
-function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean) {
+function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean, hideTop: boolean) {
   if (!analysis || full) {
     return analysis ? { ...analysis, locked: false } : null
   }
+
+  // With the best color locked on the photo, the free swatches skip it too:
+  // their #1 stays a surprise until they unlock it.
+  const freeBest = hideTop ? analysis.bestColors.slice(1, 4) : analysis.bestColors.slice(0, 3)
 
   return {
     season: analysis.season,
     undertone: analysis.undertone,
     contrast: analysis.contrast,
     summary: analysis.summary,
-    bestColors: analysis.bestColors.slice(0, 3),
+    bestColors: freeBest,
     neutrals: [],
     avoidColors: [],
     metals: analysis.metals,
@@ -52,7 +57,7 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
     photoNote: analysis.photoNote,
     locked: true,
     lockedCounts: {
-      bestColors: Math.max(0, analysis.bestColors.length - 3),
+      bestColors: Math.max(0, analysis.bestColors.length - freeBest.length),
       neutrals: analysis.neutrals.length,
       avoidColors: analysis.avoidColors.length,
     },
@@ -60,12 +65,16 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
 }
 
 export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean }) {
+  // Before they unlock their colors, the photo shows only their worst color
+  // (the locked copy, until it exists: nothing).
+  const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette
+  const drapeKey = bestLocked ? (avatar.drapePreview?.lockedKey ?? null) : (avatar.drapePreview?.key ?? null)
   const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
     signedUrlOrNull(avatar.selfieKey),
     signedUrlOrNull(avatar.bodyPhotoKey ?? null),
     signedUrlOrNull(avatar.job?.previewKey ?? null),
-    signedUrlOrNull(avatar.drapePreview?.status === 'ready' ? avatar.drapePreview.key : null),
+    signedUrlOrNull(avatar.drapePreview?.status === 'ready' ? drapeKey : null),
     Promise.all(
       (avatar.versions ?? []).map(async (version) => ({
         id: version.id,
@@ -84,14 +93,16 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     status: avatar.status,
     error: avatar.error,
     body: avatar.body,
-    colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette),
-    // Free for everyone: their best and worst color on their face.
+    colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, bestLocked),
+    // Free: their worst color on their face; their best one too, unless
+    // LOCK_BEST_COLOR keeps it (and its name) for those who unlock it.
     drapePreview: avatar.drapePreview
       ? {
           status: avatar.drapePreview.status,
           url: drapePreviewUrl,
-          best: avatar.drapePreview.best,
+          best: bestLocked ? null : avatar.drapePreview.best,
           worst: avatar.drapePreview.worst,
+          bestLocked,
         }
       : null,
     avatarUrl,

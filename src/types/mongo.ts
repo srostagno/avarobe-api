@@ -478,6 +478,9 @@ export type ReportBoard = {
 export type DrapePreview = {
   status: GenerationStatus
   key: string | null
+  // The same photo with the best-color side blurred, for those who haven't
+  // unlocked it (LOCK_BEST_COLOR). Made with the photo, or on first view.
+  lockedKey?: string | null
   best: ColorSwatch
   worst: ColorSwatch
   updatedAt: Date

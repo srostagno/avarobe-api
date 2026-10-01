@@ -100,6 +100,21 @@ export async function toStoredWebp(png: Buffer) {
   return sharp(png).webp({ quality: 90 }).toBuffer()
 }
 
+// The free best-vs-worst photo before it's unlocked: the left half (their
+// best color) blurred and nearly grey, so neither the face in it nor the
+// color can be made out; the right half (their worst) untouched.
+export async function lockBestSide(image: Buffer) {
+  const { width = 0, height = 0 } = await sharp(image).metadata()
+  const half = Math.floor(width / 2)
+  const blurred = await sharp(image)
+    .extract({ left: 0, top: 0, width: half, height })
+    .blur(48)
+    .modulate({ saturation: 0.08, brightness: 1.04 })
+    .toBuffer()
+
+  return sharp(image).composite([{ input: blurred, left: 0, top: 0 }]).webp({ quality: 86 }).toBuffer()
+}
+
 export async function toModelPng(image: Buffer) {
   return sharp(image).png().toBuffer()
 }

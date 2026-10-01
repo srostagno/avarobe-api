@@ -57,6 +57,9 @@ const envSchema = z.object({
   // Onboarding emails (welcome and reminders). On by default in production,
   // off elsewhere unless set to 'on'.
   LIFECYCLE_EMAILS: z.enum(['on', 'off']).optional(),
+  // Before they pay, their best color on their face stays locked (blurred);
+  // only the worst one shows. 'off' gives both away free again.
+  LOCK_BEST_COLOR: z.enum(['on', 'off']).optional(),
   // Postal address for the footer of promotional emails (CAN-SPAM). The
   // upgrade offer and its reminders only go out once it is set.
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
@@ -160,6 +163,7 @@ export const env = {
   MAILERSEND_API_KEY: optionalTrimmed(raw.MAILERSEND_API_KEY),
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
   LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
+  LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
     .map((email) => email.trim().toLowerCase())
