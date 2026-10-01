@@ -65,6 +65,10 @@ const envSchema = z.object({
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
   VERIFY_EMAIL_TTL: z.string().default('24h'),
   PASSWORD_RESET_TTL: z.string().default('1h'),
+  // Sign-in links: from an in-app browser (Instagram, Facebook) to the phone's
+  // own browser, and in the email that brings back an unfinished checkout.
+  HANDOFF_LINK_TTL: z.string().default('15m'),
+  SIGN_IN_LINK_TTL: z.string().default('3d'),
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
   // Looks a day, for everyone. Credits are the real limit (and running out of
@@ -99,6 +103,10 @@ const envSchema = z.object({
   PRICE_PRO_TRIAL_CENTS: z.coerce.number().int().min(50).default(100),
   PRO_TRIAL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
   PRO_TRIAL_CREDITS: z.coerce.number().int().min(1).default(10),
+  // Whether new accounts are offered the trial. Off since 1-Oct-2026: the
+  // Color Report leads, with Pro monthly after it ('on' brings the trial back;
+  // trials already running are unaffected either way).
+  PRO_TRIAL: z.enum(['on', 'off']).optional(),
   // For this many days after buying a report, it counts toward the other
   // report (the bundle price) and toward Pro annual.
   REPORT_CREDIT_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
@@ -164,6 +172,7 @@ export const env = {
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
   LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
+  PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
     .map((email) => email.trim().toLowerCase())

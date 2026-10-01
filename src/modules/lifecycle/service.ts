@@ -9,6 +9,7 @@ import { billingState, isAdmin } from '../billing/entitlements.js'
 import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from './schedule.js'
 import {
   avatarNudgeEmail,
+  checkoutRescueEmail,
   looksNudgeEmail,
   trialEndingEmail,
   trialStartedEmail,
@@ -19,6 +20,7 @@ import {
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
+import { createLink } from '../../utils/auth-links.js'
 import { focusOf } from '../../utils/serializers.js'
 
 const RUN_EVERY_MS = 10 * 60 * 1000
@@ -28,6 +30,9 @@ const BATCH = 500
 const TRIAL_REMINDER_BEFORE_MS = 48 * 60 * 60 * 1000
 // Admins' simulated plans never reach Stripe, or their inbox.
 const SIMULATED_SUBSCRIPTION = 'sim_admin'
+// An unpaid checkout gets its rescue email after this long, within two days.
+const RESCUE_AFTER_MS = 60 * 60 * 1000
+const RESCUE_WITHIN_MS = 48 * 60 * 60 * 1000
 
 // ---------------------------------------------------------------- unsubscribe
 
@@ -180,6 +185,8 @@ export function lifecycleContentFor(
   avatar: AvatarFacts | undefined,
   looks: LookFacts,
   sendId?: ObjectId,
+  // The rescue email's checkout and its sign-in link.
+  rescue?: { product: string; url: string },
 ): EmailContent {
   const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
@@ -210,6 +217,8 @@ export function lifecycleContentFor(
       return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user) })
     case 'trial_ending':
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
+    case 'checkout_rescue':
+      return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? `${env.APP_URL}/studio` })
   }
 }
 
@@ -370,6 +379,113 @@ async function sendOne(
   }
 }
 
+// ---------------------------------------------------------------- checkout rescue
+
+// Where a rescue link lands: the offer they were paying for.
+function rescueNext(product: string) {
+  if (/^color_|reports_bundle/.test(product)) {
+    return '/studio?upgrade=palette'
+  }
+
+  if (/^style_/.test(product)) {
+    return '/studio?upgrade=style'
+  }
+
+  return product === 'look_pack' ? '/studio?upgrade=look' : '/studio?upgrade=plan'
+}
+
+// Every run: people who opened a checkout an hour to two days ago and paid
+// nothing since get one email with a sign-in link to finish it in their own
+// browser. Once per account; promotional, so never to anyone who opted out
+// or before the postal address is set.
+export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()) {
+  if (!env.EMAIL_POSTAL_ADDRESS) {
+    return 0
+  }
+
+  const checkouts = await app.collections.analyticsEvents
+    .aggregate<{ _id: ObjectId; product: string; at: Date }>([
+      {
+        $match: {
+          name: 'checkout_created',
+          userId: { $ne: null },
+          at: { $gte: new Date(now.getTime() - RESCUE_WITHIN_MS), $lte: new Date(now.getTime() - RESCUE_AFTER_MS) },
+        },
+      },
+      { $sort: { at: -1 } },
+      { $group: { _id: '$userId', product: { $first: '$props.product' }, at: { $first: '$at' } } },
+    ])
+    .toArray()
+  let sent = 0
+
+  for (const checkout of checkouts) {
+    const user = await app.collections.users.findOne({
+      _id: checkout._id,
+      'lifecycleEmails.checkout_rescue': { $exists: false },
+      emailTipsOptOutAt: null,
+    })
+
+    if (!user || isAdmin(user) || billingState(user).proLive) {
+      continue
+    }
+
+    // Paid since (this checkout or anything else): nothing to rescue.
+    if (await app.collections.purchases.findOne({ userId: user._id, createdAt: { $gte: checkout.at } })) {
+      continue
+    }
+
+    if (await sendCheckoutRescue(app, user, String(checkout.product ?? 'color_report'), now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, product: string, now: Date) {
+  const field = 'lifecycleEmails.checkout_rescue'
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
+    { $set: { [field]: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const url = await createLink(app, user, 'sign_in', undefined, { next: rescueNext(product) })
+    const content = lifecycleContentFor('checkout_rescue', user, undefined, { count: 0, lastAt: null }, sendId, { product, url })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'checkout_rescue',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), product, delivered }, 'Checkout rescue email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Checkout rescue email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne({ _id: user._id }, { $unset: { [field]: '' } }),
+    ])
+    return false
+  }
+}
+
 let running = false
 
 // One pass: everyone who signed up recently and still wants tips gets the
@@ -438,6 +554,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendTrialNotices(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Trial notices run crashed')
+    })
+    void sendCheckoutRescues(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Checkout rescue run crashed')
     })
   }
 

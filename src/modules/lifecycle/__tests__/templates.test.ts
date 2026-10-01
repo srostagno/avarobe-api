@@ -3,10 +3,12 @@ import { describe, it } from 'node:test'
 
 import { ObjectId } from 'mongodb'
 
+import { env } from '../../../config/env.js'
 import { unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
   avatarNudgeEmail,
+  checkoutRescueEmail,
   looksNudgeEmail,
   trialEndingEmail,
   trialStartedEmail,
@@ -85,8 +87,80 @@ describe('colors first', () => {
   })
 })
 
-describe('offer emails', () => {
-  it('lead with the trial, say how it renews, and keep the one-time options', () => {
+// Runs a test with the trial on or off (PRO_TRIAL), whatever the default.
+function withTrial(on: boolean, run: () => void) {
+  return () => {
+    const before = env.PRO_TRIAL
+    env.PRO_TRIAL = on
+
+    try {
+      run()
+    } finally {
+      env.PRO_TRIAL = before
+    }
+  }
+}
+
+const COLORS = [
+  { name: 'Peach', hex: '#F4B183' },
+  { name: 'Warm coral', hex: '#F08070' },
+  { name: 'Light aqua', hex: '#7FD1C7' },
+]
+
+describe('offer emails, trial off: the Color Report leads', () => {
+  it(
+    'lead the palette offer with the report, once, and Pro monthly after it, with no trial',
+    withTrial(false, () => {
+      const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Light Spring', colors: COLORS } })
+      assert.ok(offer.subject.includes('Light Spring'))
+      assert.ok(offer.html.includes('upgrade=palette'))
+      assert.ok(offer.text.includes('$14.90, once'))
+      assert.ok(offer.html.indexOf('$14.90') < offer.html.indexOf('$10.90/mo'))
+      assert.ok(!offer.text.includes('$1.00'))
+      assert.ok(!/trial/i.test(offer.text))
+      assert.ok(offer.text.includes('Pro renews monthly until you cancel'))
+    }),
+  )
+
+  it(
+    'keep Pro first for people who came for looks, with the report as the one-time option',
+    withTrial(false, () => {
+      const offer = upgradeOfferEmail(recipient)
+      assert.ok(offer.text.includes('$10.90 a month'))
+      assert.ok(offer.text.includes('$14.90'))
+      assert.ok(!/trial|\$1\.00/i.test(offer.text))
+    }),
+  )
+
+  it(
+    'put the report first in the reminder and the last call',
+    withTrial(false, () => {
+      const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
+      assert.ok(reminder.text.indexOf('Color Report') < reminder.text.indexOf('Avarobe Pro'))
+      assert.ok(!/trial|\$1\.00/i.test(reminder.text))
+      const last = upgradeLastCallEmail(recipient)
+      assert.ok(last.html.includes('upgrade=palette'))
+      assert.ok(last.text.includes('$14.90, once'))
+      assert.ok(!/trial|\$1\.00/i.test(last.text))
+    }),
+  )
+})
+
+describe('checkout rescue email', () => {
+  it('names what they were buying and links to finish in their own browser', () => {
+    const url = 'https://www.avarobe.com/continue?token=abc'
+    const report = checkoutRescueEmail({ ...recipient, product: 'color_report', url })
+    assert.equal(report.subject, 'Your Color Report is one step away')
+    assert.ok(report.html.includes(url))
+    assert.ok(report.text.includes('Apple Pay'))
+    assert.ok(report.text.includes('expires in 3 days'))
+    assert.equal(checkoutRescueEmail({ ...recipient, product: 'look_pack', url }).subject, 'Your looks are one step away')
+    assert.equal(checkoutRescueEmail({ ...recipient, product: 'pro_monthly', url }).subject, 'Your Avarobe Pro is one step away')
+  })
+})
+
+describe('offer emails, trial on', () => {
+  it('lead with the trial, say how it renews, and keep the one-time options', withTrial(true, () => {
     const offer = upgradeOfferEmail(recipient)
     assert.ok(offer.subject.includes('7 days for $1.00'))
     // The trial first, then what to pay once.
@@ -99,21 +173,17 @@ describe('offer emails', () => {
     assert.ok(reminder.subject.includes('Soft Summer'))
     assert.ok(reminder.html.includes('$14.90'))
     assert.ok(reminder.html.includes('$1.00'))
-  })
+  }))
 
-  it('say the trial price once, with how to cancel', () => {
+  it('say the trial price once, with how to cancel', withTrial(true, () => {
     const text = upgradeOfferEmail(recipient).text
 
     assert.equal(text.split('$1.00 today').length - 1, 0)
     assert.ok(text.includes("you won't be charged again"))
-  })
+  }))
 
-  it('lead with their palette for people who came for their colors and made no look', () => {
-    const colors = [
-      { name: 'Peach', hex: '#F4B183' },
-      { name: 'Warm coral', hex: '#F08070' },
-      { name: 'Light aqua', hex: '#7FD1C7' },
-    ]
+  it('lead with their palette for people who came for their colors and made no look', withTrial(true, () => {
+    const colors = COLORS
     const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Light Spring', colors } })
 
     assert.ok(offer.subject.includes('Light Spring'))
@@ -124,7 +194,7 @@ describe('offer emails', () => {
     for (const price of ['$1.00', '$10.90 a month', '$14.90']) {
       assert.ok(offer.html.includes(price), price)
     }
-  })
+  }))
 
   it('carry the postal address only when it is set', () => {
     // No EMAIL_POSTAL_ADDRESS in tests: the footer has no address line.

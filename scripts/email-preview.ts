@@ -13,6 +13,7 @@ import {
   avatarNudgeEmail,
   looksNudgeEmail,
   trialEndingEmail,
+  checkoutRescueEmail,
   trialStartedEmail,
   upgradeLastCallEmail,
   upgradeOfferEmail,
@@ -48,6 +49,7 @@ const emails = {
   'upgrade-last-call': upgradeLastCallEmail(recipient),
   'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
   'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
+  'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: 'https://www.avarobe.com/continue?token=preview' }),
 }
 
 const log = {

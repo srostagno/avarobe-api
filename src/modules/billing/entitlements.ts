@@ -116,8 +116,9 @@ export function billingState(user: BillingFields, now = Date.now()) {
     proActive,
     proInterval: proLive && pro ? pro.interval : null,
     trialing: proLive && pro?.status === 'trialing',
-    // The first-time offer: never had a subscription, not even a trial.
-    trialEligible: !comp && !pro && !user.proTrialAt,
+    // The first-time offer, while PRO_TRIAL is on: never had a subscription,
+    // not even a trial.
+    trialEligible: env.PRO_TRIAL && !comp && !pro && !user.proTrialAt,
     colorReport,
     styleReport,
     // Completing the pair at the bundle price, soon after buying one report.

@@ -506,7 +506,29 @@ const TRIAL_FEATURES = () => [
 const PLAN = {
   colorReport: () => ({ name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'Your full palette and drape test, yours to keep' }),
   pack: () => ({ name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks. They never expire` }),
+  proMonthly: () => ({
+    name: 'Avarobe Pro',
+    price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`,
+    detail: `${env.PRO_MONTHLY_CREDITS} looks a month on you, try-ons and every haircut, with your reports while you're on it. Cancel anytime`,
+  }),
 }
+
+// With the trial off (PRO_TRIAL): the Color Report leads, once and yours to
+// keep, and Pro monthly follows.
+const REPORT_FEATURES = [
+  'Your full palette: 30+ colors in basics, accents and statements',
+  'A drape test: your face next to your best and worst colors',
+  'Neutrals, whites and metals, tested on you',
+  'Guides for prints, denim, makeup and eyewear',
+]
+const PRO_FEATURES = () => [
+  `${env.PRO_MONTHLY_CREDITS} looks every month, planned for the dress code and shown on you`,
+  'Try on any outfit from a photo, and every haircut picked for you',
+  'Every piece of a look, found in stores',
+  'Your color and style reports while you’re on Pro',
+]
+const RENEWAL_NOTE = 'Pro renews monthly until you cancel. Cancel anytime in your account settings.'
+const reportOnce = () => `${money(env.PRICE_COLOR_REPORT_CENTS)}, once`
 
 // Two offers. People who spent their free look get the looks one; people
 // who came for their colors, and have seen them but made no look, get one
@@ -516,6 +538,31 @@ export function upgradeOfferEmail(
 ): EmailContent {
   if (input.palette) {
     return paletteOfferEmail({ ...input, palette: input.palette })
+  }
+
+  if (!env.PRO_TRIAL) {
+    return layout({
+      subject: 'Style every occasion on your calendar',
+      preheader: `Avarobe Pro: ${env.PRO_MONTHLY_CREDITS} looks a month on you, try-ons and every haircut. ${money(env.PRICE_PRO_MONTHLY_CENTS)} a month, cancel anytime.`,
+      hero: {
+        src: `${ASSETS}/occasions.jpg`,
+        alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
+      },
+      recipient: input,
+      promotional: true,
+      blocks: [
+        eyebrow('Your free look is done'),
+        heading('Style every occasion on your calendar.'),
+        greeting(input.firstName),
+        paragraph('Your stylist has more looks waiting for you. With Avarobe Pro:'),
+        checklist(PRO_FEATURES()),
+        priceBox(`${money(env.PRICE_PRO_MONTHLY_CENTS)} a month`, `${env.PRO_MONTHLY_CREDITS} looks every month.`, 'Cancel anytime in your account settings.'),
+        button('Get Avarobe Pro', appLink('/studio', 'upgrade_offer', { upgrade: 'plan' })),
+        small('Or pay once, no subscription:'),
+        plans([PLAN.colorReport(), PLAN.pack()]),
+        signature(),
+      ],
+    })
   }
 
   return layout({
@@ -544,6 +591,34 @@ export function upgradeOfferEmail(
 
 function paletteOfferEmail(input: Recipient & { palette: { season: string; colors: ColorSwatch[] } }): EmailContent {
   const { season, colors } = input.palette
+
+  if (!env.PRO_TRIAL) {
+    return layout({
+      subject: `Your full ${season} palette is waiting`,
+      preheader: `You’ve seen ${colors.length} of your colors. See all of them on your own face: ${reportOnce()}, yours to keep.`,
+      hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+      recipient: input,
+      promotional: true,
+      blocks: [
+        eyebrow('Your colors'),
+        heading('There’s more to your palette.'),
+        greeting(input.firstName),
+        palette(
+          season,
+          colors,
+          `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
+        ),
+        paragraph('Your Color Report is made from your own photo, and it’s yours to keep:'),
+        checklist(REPORT_FEATURES),
+        priceBox(reportOnce(), 'No subscription.', 'Yours to keep.'),
+        button('See my full palette', appLink('/studio', 'upgrade_offer', { upgrade: 'palette' })),
+        small('Want looks for every occasion too?'),
+        plans([PLAN.proMonthly()]),
+        small(RENEWAL_NOTE),
+        signature(),
+      ],
+    })
+  }
 
   return layout({
     subject: `Your full ${season} palette is waiting`,
@@ -594,16 +669,20 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
         'The colors to keep away from your face, and your best metals',
         'Guides for prints, denim, makeup and eyewear',
       ]),
-      plans([
-        {
-          name: `Pro, ${env.PRO_TRIAL_DAYS} days`,
-          price: trialPrice(),
-          detail: `Your full color report, your style report and looks on you. Then ${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo, cancel anytime`,
-          badge: 'Try it',
-        },
-        { ...PLAN.colorReport(), detail: 'One time, yours to keep' },
-      ]),
-      small(TRIAL_NOTE()),
+      ...(env.PRO_TRIAL
+        ? [
+            plans([
+              {
+                name: `Pro, ${env.PRO_TRIAL_DAYS} days`,
+                price: trialPrice(),
+                detail: `Your full color report, your style report and looks on you. Then ${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo, cancel anytime`,
+                badge: 'Try it',
+              },
+              { ...PLAN.colorReport(), detail: 'One time, yours to keep' },
+            ]),
+            small(TRIAL_NOTE()),
+          ]
+        : [plans([{ ...PLAN.colorReport(), detail: 'One time, yours to keep', badge: 'Start here' }, PLAN.proMonthly()]), small(RENEWAL_NOTE)]),
       button('See my full palette', appLink('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
       signature(),
     ],
@@ -612,6 +691,31 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
 
 export function upgradeLastCallEmail(input: Recipient): EmailContent {
   const reports = money(env.PRICE_REPORTS_BUNDLE_CENTS)
+
+  if (!env.PRO_TRIAL) {
+    return layout({
+      subject: 'One last note about your colors',
+      preheader: `Your full palette on your own face, ${reportOnce()}. This is our last reminder.`,
+      hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+      recipient: input,
+      promotional: true,
+      blocks: [
+        eyebrow('Our last reminder'),
+        heading('Your full palette, on your own face.'),
+        greeting(input.firstName),
+        paragraph(
+          'This is our last note about plans. Your Color Report shows every color that lights you up and the ones to keep away from your face, made from your own photo and yours to keep.',
+        ),
+        priceBox(reportOnce(), 'No subscription.', 'Yours to keep.'),
+        button('See my full palette', appLink('/studio', 'upgrade_last_call', { upgrade: 'palette' })),
+        small('Or style every occasion with Pro:'),
+        plans([PLAN.proMonthly(), PLAN.pack()]),
+        small(RENEWAL_NOTE),
+        small('Not ready? Your avatar, your season and your looks stay in your account, and you can pick up anytime.'),
+        signature(),
+      ],
+    })
+  }
 
   return layout({
     subject: 'One last note about your stylist',
@@ -633,6 +737,53 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
       small('Or pay once, no subscription:'),
       plans([PLAN.colorReport(), PLAN.pack()]),
       small('Not ready? Your avatar, your season and your looks stay in your account, and you can pick up anytime.'),
+      signature(),
+    ],
+  })
+}
+
+// ---------------------------------------------------------------- rescue
+// A checkout left unpaid (most often inside Instagram's or Facebook's own
+// browser, where nobody has finished one): a sign-in link that opens their
+// own browser where they left off. Promotional, so it carries the address.
+
+const PRODUCT_NAMES: Record<string, string> = {
+  color_report: 'Color Report',
+  color_addon: 'Color Report',
+  style_report: 'Style Report',
+  style_addon: 'Style Report',
+  reports_bundle: 'Color and Style Reports',
+  look_pack: 'looks',
+  pro_monthly: 'Avarobe Pro',
+  pro_annual: 'Avarobe Pro',
+  pro_trial: 'Avarobe Pro',
+}
+
+export function checkoutRescueEmail(input: Recipient & { product: string; url: string }): EmailContent {
+  const name = PRODUCT_NAMES[input.product] ?? 'purchase'
+  const what = name === 'looks' ? 'Your looks are' : `Your ${name} is`
+  const report = /report|addon|bundle/.test(input.product)
+
+  return layout({
+    subject: `${what} one step away`,
+    preheader: 'Finish in your own browser, where Apple Pay and saved cards work.',
+    hero: report
+      ? { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' }
+      : {
+          src: `${ASSETS}/occasions.jpg`,
+          alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
+        },
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow('Almost there'),
+      heading(`${what} one step away.`),
+      greeting(input.firstName),
+      paragraph(
+        'You started checking out but didn’t finish. If you were paying inside Instagram or Facebook, their browser often can’t use Apple Pay or a saved card. This link opens Avarobe in your own browser, already signed in, right where you left off.',
+      ),
+      button('Finish in my browser', input.url),
+      small('The link works once and expires in 3 days.'),
       signature(),
     ],
   })

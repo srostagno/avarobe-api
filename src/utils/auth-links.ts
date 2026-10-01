@@ -7,8 +7,11 @@ import { generateSecureToken, hashToken } from './tokens.js'
 
 // One-time links sent by email. The JWT carries a nonce whose hash is stored
 // on the user; using the link clears it, so each link works once and sending
-// a new one voids the previous.
-export type LinkPurpose = 'verify_email' | 'reset_password'
+// a new one voids the previous. 'handoff' and 'sign_in' sign the person in
+// on another browser: from Instagram's or Facebook's in-app browser to the
+// phone's own (where Apple Pay and saved cards work), and from the email
+// that brings back an unfinished checkout.
+export type LinkPurpose = 'verify_email' | 'reset_password' | 'handoff' | 'sign_in'
 
 const LINKS = {
   verify_email: {
@@ -23,7 +26,23 @@ const LINKS = {
     ttl: () => env.PASSWORD_RESET_TTL,
     path: '/reset-password',
   },
+  handoff: {
+    nonceField: 'handoffNonceHash',
+    sentAtField: 'handoffSentAt',
+    ttl: () => env.HANDOFF_LINK_TTL,
+    path: '/continue',
+  },
+  sign_in: {
+    nonceField: 'signInNonceHash',
+    sentAtField: 'signInSentAt',
+    ttl: () => env.SIGN_IN_LINK_TTL,
+    path: '/continue',
+  },
 } as const
+
+// The ad ids of the browser the link came from, so a purchase made on the
+// other one still reaches Meta and GA with them.
+export type LinkAdIds = { fbp?: string; fbc?: string; gaClientId?: string }
 
 const RESEND_COOLDOWN_MS = 60 * 1000
 
@@ -33,6 +52,14 @@ export type LinkPayload = {
   em?: string
   nn?: string
   it?: string
+  // Sign-in links: where to land (a studio path), and the ad ids.
+  nx?: string
+  ad?: LinkAdIds
+}
+
+// Only paths inside the studio, so a link can't send anyone elsewhere.
+export function safeNextPath(next: string | null | undefined) {
+  return next && /^\/studio(?:[/?#]|$)/.test(next) && !next.includes('//') ? next.slice(0, 300) : '/studio'
 }
 
 export function linkSentRecently(user: UserDocument, purpose: LinkPurpose) {
@@ -46,6 +73,7 @@ export async function createLink(
   user: UserDocument,
   purpose: LinkPurpose,
   intent?: 'passkey',
+  landing?: { next?: string; ads?: LinkAdIds },
 ) {
   const config = LINKS[purpose]
   const nonce = generateSecureToken(24)
@@ -62,6 +90,8 @@ export async function createLink(
       em: user.email,
       nn: nonce,
       ...(intent ? { it: intent } : {}),
+      ...(landing?.next ? { nx: safeNextPath(landing.next) } : {}),
+      ...(landing?.ads && Object.keys(landing.ads).length > 0 ? { ad: landing.ads } : {}),
     },
     { expiresIn: config.ttl() },
   )

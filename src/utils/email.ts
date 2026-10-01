@@ -161,6 +161,21 @@ export function verificationEmail(input: { firstName: string; url: string; forPa
   })
 }
 
+// Asked for from Instagram's or Facebook's in-app browser: the mail app opens
+// the link in the phone's own browser, signed in.
+export function continueInBrowserEmail(input: { firstName: string; url: string }) {
+  return layout({
+    subject: 'Your link to open Avarobe in your browser',
+    firstName: input.firstName,
+    paragraphs: [
+      'Here is your link to open Avarobe in your phone’s own browser, already signed in. There you can pay with Apple Pay or a saved card.',
+      'The link works once and expires in 3 days.',
+    ],
+    cta: { label: 'Open Avarobe', url: input.url },
+    footer: "Didn't ask for this? You can ignore this email.",
+  })
+}
+
 export function passwordResetEmail(input: { firstName: string; url: string }) {
   return layout({
     subject: 'Reset your Avarobe password',

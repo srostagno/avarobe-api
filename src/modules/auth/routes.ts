@@ -6,13 +6,14 @@ import { env } from '../../config/env.js'
 import { REFRESH_TOKEN_COOKIE } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { UserDocument } from '../../types/mongo.js'
-import { consumeLink, createLink, linkSentRecently, readLink } from '../../utils/auth-links.js'
+import { consumeLink, createLink, linkSentRecently, readLink, safeNextPath, type LinkPayload } from '../../utils/auth-links.js'
 import {
   clearAuthCookies,
   issueAuthSession,
   rotateAuthSession,
 } from '../../utils/auth-session.js'
 import {
+  continueInBrowserEmail,
   deliverLinkEmail,
   passwordChangedEmail,
   passwordResetEmail,
@@ -84,6 +85,11 @@ const changePasswordSchema = z.object({
 const forgotSchema = z.object({ email: emailField })
 const tokenSchema = z.object({ token: tokenField })
 const resetSchema = z.object({ token: tokenField, newPassword: passwordField })
+// Another browser, signed in: where to land, and this browser's ad ids.
+const handoffSchema = z.object({
+  next: z.string().max(300).optional(),
+  attribution: signupTracking.attribution,
+})
 
 const MAX_FAILED_LOGINS = 10
 const LOCKOUT_MS = 15 * 60 * 1000
@@ -428,6 +434,124 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         user: serializeUser(user),
         intent: payload.it === 'passkey' ? 'passkey' : null,
       })
+    },
+  )
+
+  // From Instagram's or Facebook's in-app browser to the phone's own one,
+  // where Apple Pay and saved cards work (nobody has finished a checkout
+  // inside those browsers): a one-time link that opens there signed in, on
+  // the same page, with this browser's ad ids so the purchase still reaches
+  // Meta. It expires in minutes (HANDOFF_LINK_TTL).
+  app.post(
+    '/handoff',
+    { preHandler: authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const user = await app.collections.users.findOne({ _id: requireUserId(request) })
+      const parsed = parseBody(handoffSchema, request.body ?? {})
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Unauthorized' })
+      }
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      const url = await createLink(app, user, 'handoff', undefined, {
+        next: parsed.data.next,
+        ads: parsed.data.attribution,
+      })
+      void trackServerEvent(app, { name: 'handoff_link_created', userId: user._id, props: { next: safeNextPath(parsed.data.next) } })
+
+      return { url }
+    },
+  )
+
+  // The same link by email, for when the in-app browser won't let go: it
+  // opens from the mail app in the phone's own browser.
+  app.post(
+    '/handoff/email',
+    { preHandler: authenticate, config: { rateLimit: { max: 3, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const user = await app.collections.users.findOne({ _id: requireUserId(request) })
+      const parsed = parseBody(handoffSchema, request.body ?? {})
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Unauthorized' })
+      }
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      if (linkSentRecently(user, 'sign_in')) {
+        return reply.code(429).send(WAIT_FOR_EMAIL)
+      }
+
+      try {
+        const url = await createLink(app, user, 'sign_in', undefined, {
+          next: parsed.data.next,
+          ads: parsed.data.attribution,
+        })
+        const result = await deliverLinkEmail({
+          log: request.log,
+          to: recipient(user),
+          link: url,
+          content: continueInBrowserEmail({ firstName: user.firstName, url }),
+        })
+        void trackServerEvent(app, { name: 'handoff_email_sent', userId: user._id, props: { next: safeNextPath(parsed.data.next) } })
+
+        return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }
+      } catch (error) {
+        request.log.error({ err: error, email: user.email }, 'Failed to send the continue link')
+        return reply.code(503).send(EMAIL_FAILED)
+      }
+    },
+  )
+
+  // Uses a handoff or sign-in link: signs the person in on this browser and
+  // says where to go, with the ad ids the link carried. An emailed link also
+  // confirms the email (it proves they own it); a handoff link doesn't.
+  app.post(
+    '/link',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(tokenSchema, request.body)
+      const invalid = { message: 'This link is invalid, expired or already used.' }
+      let payload: LinkPayload | null = null
+
+      if (parsed.ok) {
+        payload = (await readLink(app, parsed.data.token, 'handoff')) ?? (await readLink(app, parsed.data.token, 'sign_in'))
+      }
+
+      const purpose = payload?.typ === 'sign_in' ? 'sign_in' : 'handoff'
+      const consumed = payload ? await consumeLink(app, payload, purpose) : null
+
+      if (!payload || !consumed) {
+        return reply.code(400).send(invalid)
+      }
+
+      const now = new Date()
+      const user = await app.collections.users.findOneAndUpdate(
+        { _id: consumed._id },
+        {
+          $set: {
+            ...(purpose === 'sign_in' ? { emailVerifiedAt: consumed.emailVerifiedAt ?? now } : {}),
+            lastLoginAt: now,
+            updatedAt: now,
+          },
+        },
+        { returnDocument: 'after' },
+      )
+
+      if (!user) {
+        return reply.code(400).send(invalid)
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+      void trackServerEvent(app, { name: 'handoff_link_used', userId: user._id, props: { purpose } })
+
+      return reply.send({ user: serializeUser(user), next: safeNextPath(payload.nx), attribution: payload.ad ?? null })
     },
   )
 

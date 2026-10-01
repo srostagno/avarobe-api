@@ -202,7 +202,9 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
         ? 'You already have Avarobe Pro.'
         : state.trialEligible
           ? null
-          : 'Your trial has been used. Pro monthly is still available.'
+          : !env.PRO_TRIAL
+            ? 'The trial isn’t offered right now. Pro monthly is available.'
+            : 'Your trial has been used. Pro monthly is still available.'
     case 'pro_annual':
       if (state.comp) {
         return 'You already have Avarobe Pro.'
@@ -221,7 +223,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     available: stripeConfigured(),
     products: offer(),
     free: { credits: env.SIGNUP_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
-    trial: { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS },
+    // null while the trial is off: the web leads with the Color Report then.
+    trial: env.PRO_TRIAL ? { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS } : null,
     reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
   }))
 

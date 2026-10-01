@@ -14,6 +14,11 @@ export type UserDocument = {
   emailVerificationSentAt?: Date | null
   passwordResetNonceHash?: string | null
   passwordResetSentAt?: Date | null
+  // Sign-in links to another browser (utils/auth-links.ts).
+  handoffNonceHash?: string | null
+  handoffSentAt?: Date | null
+  signInNonceHash?: string | null
+  signInSentAt?: Date | null
   passwordHash?: string | null
   passwordUpdatedAt?: Date | null
   // Throttles password guessing per account on top of the per-IP rate limit.
@@ -111,6 +116,8 @@ export type LifecycleEmailKind =
   // reminder before the first monthly charge.
   | 'trial_started'
   | 'trial_ending'
+  // A checkout left unpaid: a link to finish it in their own browser.
+  | 'checkout_rescue'
 
 export type ProSubscription = {
   subscriptionId: string

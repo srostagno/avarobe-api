@@ -78,11 +78,29 @@ describe('billingState', () => {
     assert.equal(billingState(user({ credits: env.SIGNUP_CREDITS }), now).credits, env.SIGNUP_CREDITS)
   })
 
-  it('offers the trial once: never to someone who had Pro or a trial', () => {
-    assert.equal(billingState(user(), now).trialEligible, true)
-    assert.equal(billingState(user({ colorReportAt: daysAgo(2) }), now).trialEligible, true)
-    assert.equal(billingState(user({ proTrialAt: daysAgo(40) }), now).trialEligible, false)
-    assert.equal(billingState(user({ pro: pro('month', { status: 'canceled', periodEnd: daysAgo(30) }) }), now).trialEligible, false)
+  it('offers the trial once while it is on: never to someone who had Pro or a trial', () => {
+    const before = env.PRO_TRIAL
+    env.PRO_TRIAL = true
+
+    try {
+      assert.equal(billingState(user(), now).trialEligible, true)
+      assert.equal(billingState(user({ colorReportAt: daysAgo(2) }), now).trialEligible, true)
+      assert.equal(billingState(user({ proTrialAt: daysAgo(40) }), now).trialEligible, false)
+      assert.equal(billingState(user({ pro: pro('month', { status: 'canceled', periodEnd: daysAgo(30) }) }), now).trialEligible, false)
+    } finally {
+      env.PRO_TRIAL = before
+    }
+  })
+
+  it('offers no trial while it is off', () => {
+    const before = env.PRO_TRIAL
+    env.PRO_TRIAL = false
+
+    try {
+      assert.equal(billingState(user(), now).trialEligible, false)
+    } finally {
+      env.PRO_TRIAL = before
+    }
   })
 
   it('gives everything in Pro during the trial, reports included, and takes the reports back if it ends', () => {
