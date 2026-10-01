@@ -53,8 +53,8 @@ type ReportAccess = { color: boolean; style: boolean }
 
 // Each half goes out only with its report: the Color Report (the color
 // report, drape test and color boards) and the Style Report (the style
-// profile and its boards).
-async function serializeReport(avatar: AvatarDocument | null, access: ReportAccess) {
+// profile and its boards). The admin review shows it the same way.
+export async function serializeReport(avatar: AvatarDocument | null, access: ReportAccess) {
   const kinds = BOARD_KINDS.filter((kind) => (isColorBoard(kind) ? access.color : access.style))
 
   return {

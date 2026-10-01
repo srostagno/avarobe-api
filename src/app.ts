@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit'
 import Fastify from 'fastify'
 
 import { env } from './config/env.js'
+import adminReportRoutes from './modules/admin/reports.js'
 import adminRoutes from './modules/admin/routes.js'
 import analyticsRoutes from './modules/analytics/routes.js'
 import passkeyRoutes from './modules/auth/passkeys.js'
@@ -99,6 +100,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(hairRoutes, { prefix: '/hair' })
     await v1.register(lifecycleRoutes, { prefix: '/email' })
     await v1.register(adminRoutes, { prefix: '/admin' })
+    await v1.register(adminReportRoutes, { prefix: '/admin/reports' })
     await v1.register(eventRoutes, { prefix: '/events' })
     await v1.register(analyticsRoutes, { prefix: '/analytics' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
