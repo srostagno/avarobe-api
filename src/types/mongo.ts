@@ -750,3 +750,25 @@ export type SurveyAnswerDocument = {
   content: string | null
   createdAt: Date
 }
+
+// "Does this color suit me?" (modules/check): a garment photo they uploaded,
+// read against their colors, and that color drawn next to their face.
+export type ColorCheckDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  status: GenerationStatus
+  error: string | null
+  // What they uploaded: never shown to anyone else or shared.
+  garmentKey: string
+  // Their face with the garment's color: shareable.
+  imageKey: string | null
+  reading: {
+    garment: string
+    color: { name: string; hex: string }
+    verdict: 'wear' | 'away' | 'avoid' | 'unclear'
+    reason: string
+    alternatives: { name: string; hex: string }[]
+  } | null
+  createdAt: Date
+  updatedAt: Date
+}

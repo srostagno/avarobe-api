@@ -5,7 +5,7 @@ import { env } from '../config/env.js'
 // what they uploaded (selfies, body photos, try-on references) and never an
 // unfinished preview.
 const SHAREABLE =
-  /^users\/([a-f0-9]{24})\/(?:avatar-\d+|avatar-hair-\d+|board-[a-z0-9_-]+-\d+|drape-\d+|drape-preview-\d+|hairstyle-[a-f0-9]{24}-\d+|look-[a-f0-9]{24}-\d+|look-[a-f0-9]{24}-piece-[A-Za-z0-9_-]+)\.webp$/
+  /^users\/([a-f0-9]{24})\/(?:avatar-\d+|avatar-hair-\d+|board-[a-z0-9_-]+-\d+|check-[a-f0-9]{24}-\d+|drape-\d+|drape-preview-\d+|hairstyle-[a-f0-9]{24}-\d+|look-[a-f0-9]{24}-\d+|look-[a-f0-9]{24}-piece-[A-Za-z0-9_-]+)\.webp$/
 
 // The storage key behind one of our signed image URLs (local media route or
 // S3, virtual-hosted or path-style), if it's one of this person's shareable

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import { storage } from '../../utils/storage.js'
+import { checkStorageKeys } from '../check/service.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
@@ -11,11 +12,12 @@ import { boardKeys } from '../report/boards.js'
 // Their account, sign-in and purchases stay. Used when they delete the
 // account, and when an admin starts over as a brand-new user.
 export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) {
-  const [avatar, looks] = await Promise.all([
+  const [avatar, looks, checks] = await Promise.all([
     app.collections.avatars.findOne({ userId }),
     app.collections.looks
       .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1, teaser: 1 } })
       .toArray(),
+    app.collections.colorChecks.find({ userId }, { projection: { garmentKey: 1, imageKey: 1 } }).toArray(),
   ])
   const keys = [
     ...new Set(
@@ -30,6 +32,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
         ...boardKeys(avatar?.reportBoards),
         ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ...looks.flatMap(lookStorageKeys),
+        ...checks.flatMap(checkStorageKeys),
       ].filter((key): key is string => Boolean(key)),
     ),
   ]
@@ -44,6 +47,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.usageCounters.deleteMany({ userId }),
     app.collections.shopSearches.deleteMany({ userId }),
     app.collections.surveyAnswers.deleteMany({ userId }),
+    app.collections.colorChecks.deleteMany({ userId }),
   ])
 
   return { files: keys.length }

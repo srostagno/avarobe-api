@@ -9,6 +9,7 @@ import type {
   AuthChallengeDocument,
   AvatarDocument,
   CollectionDocument,
+  ColorCheckDocument,
   EmailSendDocument,
   HairstyleDocument,
   LookDocument,
@@ -30,6 +31,7 @@ export type MongoCollections = {
   hairstyles: Collection<HairstyleDocument>
   collections: Collection<CollectionDocument>
   surveyAnswers: Collection<SurveyAnswerDocument>
+  colorChecks: Collection<ColorCheckDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
@@ -54,6 +56,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     hairstyles: mongoDb.collection<HairstyleDocument>('hairstyles'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
     surveyAnswers: mongoDb.collection<SurveyAnswerDocument>('survey_answers'),
+    colorChecks: mongoDb.collection<ColorCheckDocument>('color_checks'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
@@ -96,6 +99,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ userId: 1, question: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ createdAt: -1 }),
+    collections.colorChecks.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
       { expireAfterSeconds: 0 },

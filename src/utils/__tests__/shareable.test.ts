@@ -28,6 +28,11 @@ describe('shareableKey', () => {
     }
   })
 
+  it('shares their face in a color they checked', () => {
+    const key = `users/${me}/check-${look}-1790000000000.webp`
+    assert.equal(shareableKey(local(key), me), key)
+  })
+
   it('never shares what they uploaded, an unfinished preview, or someone else’s image', () => {
     for (const name of [
       'selfie-1790000000000.jpg',
@@ -35,6 +40,7 @@ describe('shareableKey', () => {
       `look-${look}-reference.jpg`,
       `look-${look}-preview.webp`,
       `avatar-preview-${look}.webp`,
+      `check-${look}-garment.jpg`,
     ]) {
       assert.equal(shareableKey(local(`users/${me}/${name}`), me), null, name)
     }
