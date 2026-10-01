@@ -9,6 +9,7 @@ import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { lookStorageKeys } from '../looks/service.js'
+import { cancelProNow } from '../billing/stripe.js'
 import { boardKeys } from '../report/boards.js'
 
 const updateSchema = z.object({
@@ -93,6 +94,19 @@ const meRoutes: FastifyPluginAsync = async (app) => {
   // the privacy notice, so it hard-deletes rather than soft-deleting.
   app.delete('/', async (request, reply) => {
     const userId = requireUserId(request)
+    const user = await app.collections.users.findOne({ _id: userId }, { projection: { pro: 1 } })
+
+    // Pro ends with the account: without this, a trial still turned into a
+    // charge a week later for someone whose account was gone.
+    if (user?.pro?.subscriptionId && !['canceled', 'incomplete_expired'].includes(user.pro.status)) {
+      try {
+        await cancelProNow(user.pro.subscriptionId)
+      } catch (error) {
+        request.log.error({ err: error, userId: userId.toString() }, 'Could not cancel Pro before deleting the account')
+        return reply.code(502).send({ message: 'We couldn’t cancel your Pro subscription, so your account wasn’t deleted. Please try again in a minute.' })
+      }
+    }
+
     const [avatar, looks] = await Promise.all([
       app.collections.avatars.findOne({ userId }),
       app.collections.looks

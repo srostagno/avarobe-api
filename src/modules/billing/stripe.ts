@@ -758,6 +758,21 @@ export async function setProCancellation(app: FastifyInstance, subscriptionId: s
   return subscription
 }
 
+// Ends Pro right away when they delete their account, so a trial doesn't
+// turn into a charge (or a renewal go through) for an account that no
+// longer exists. One Stripe already removed is fine.
+export async function cancelProNow(subscriptionId: string) {
+  try {
+    await stripe().subscriptions.cancel(subscriptionId)
+  } catch (error) {
+    if (error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'resource_missing') {
+      return
+    }
+
+    throw error
+  }
+}
+
 export class SwitchDeclinedError extends Error {}
 
 // A plan change Stripe charges right away, and what that payment grants.
