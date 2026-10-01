@@ -256,7 +256,9 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
           discountCents,
-          attribution: attributionMetadata(parsed.data.attribution, request),
+          // An admin's own test purchase never reaches Meta or Google as a
+          // conversion: without the browser ids there's nothing to report.
+          attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
         })
         void trackServerEvent(app, {
           name: 'checkout_created',
