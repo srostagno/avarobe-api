@@ -197,7 +197,7 @@ describe('checkout rescue email', () => {
     assert.ok(report.text.includes('expires in 3 days'))
     assert.equal(checkoutRescueEmail({ ...recipient, product: 'look_pack', url }).subject, 'Your looks are one step away')
     assert.equal(checkoutRescueEmail({ ...recipient, product: 'pro_monthly', url }).subject, 'Your Avarobe Pro is one step away')
-    assert.equal(checkoutRescueEmail({ ...recipient, product: 'color_mirror', url }).subject, 'Your color mirror is one step away')
+    assert.equal(checkoutRescueEmail({ ...recipient, product: 'color_mirror', url }).subject, 'Your Color Advisor is one step away')
   })
 })
 

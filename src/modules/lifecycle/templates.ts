@@ -804,7 +804,8 @@ const PRODUCT_NAMES: Record<string, string> = {
   pro_monthly: 'Avarobe Pro',
   pro_annual: 'Avarobe Pro',
   pro_trial: 'Avarobe Pro',
-  color_mirror: 'color mirror',
+  // Since 2-Oct the mirror comes with the Color Advisor.
+  color_mirror: 'Color Advisor',
 }
 
 export function checkoutRescueEmail(input: Recipient & { product: string; url: string }): EmailContent {
