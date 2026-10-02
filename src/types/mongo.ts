@@ -29,6 +29,8 @@ export type UserDocument = {
   // The reports, bought on their own or with Pro annual: yours to keep.
   colorReportAt?: Date | null
   styleReportAt?: Date | null
+  // The color mirror (live draping), bought on its own; Pro includes it.
+  colorMirrorAt?: Date | null
   // Avarobe Pro (monthly or annual subscription).
   pro?: ProSubscription | null
   // Legacy: the Style Kit of the first price list (everything until then).
@@ -147,6 +149,8 @@ export type PurchaseProduct =
   | 'pro_annual'
   // The trial fee: a few days of Pro that then renew as pro_monthly.
   | 'pro_trial'
+  // The color mirror: every fabric draped on them live, and their #1 color.
+  | 'color_mirror'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'

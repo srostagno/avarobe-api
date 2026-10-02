@@ -64,10 +64,11 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
   }
 }
 
-export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean }) {
-  // Before they unlock their colors, the photo shows only their worst color
-  // (the locked copy, until it exists: nothing).
-  const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette
+export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean; mirror?: boolean }) {
+  // Before they unlock their colors (the Color Report, or the color mirror,
+  // which shows their #1 live), the photo shows only their worst color (the
+  // locked copy, until it exists: nothing).
+  const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette && !options.mirror
   const drapeKey = bestLocked ? (avatar.drapePreview?.lockedKey ?? null) : (avatar.drapePreview?.key ?? null)
   const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
@@ -94,6 +95,16 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     error: avatar.error,
     body: avatar.body,
     colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, bestLocked),
+    // The color mirror drapes all their colors, so its owners get them for
+    // the mirror even without the Color Report (whose palette stays locked).
+    mirrorColors:
+      options.mirror && !options.fullPalette && avatar.colorAnalysis
+        ? {
+            bestColors: avatar.colorAnalysis.bestColors,
+            neutrals: avatar.colorAnalysis.neutrals,
+            avoidColors: avatar.colorAnalysis.avoidColors,
+          }
+        : null,
     // Free: their worst color on their face; their best one too, unless
     // LOCK_BEST_COLOR keeps it (and its name) for those who unlock it.
     drapePreview: avatar.drapePreview

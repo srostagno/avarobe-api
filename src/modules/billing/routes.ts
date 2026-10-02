@@ -47,6 +47,7 @@ const checkoutSchema = z.object({
     'pro_monthly',
     'pro_annual',
     'pro_trial',
+    'color_mirror',
   ]),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
@@ -73,6 +74,7 @@ const SIMULATED_STAGES = [
   'color_report',
   'style_report',
   'reports',
+  'mirror',
   'pack',
   'pro_monthly',
   'pro_low',
@@ -141,6 +143,8 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
       return { credits: 0, styleReportAt: now, paidAt: now }
     case 'reports':
       return { credits: 0, colorReportAt: now, styleReportAt: now, paidAt: now }
+    case 'mirror':
+      return { credits: 0, colorMirrorAt: now, paidAt: now }
     case 'pack':
       return { credits: 10, paidAt: now }
     case 'pro_monthly':
@@ -193,6 +197,8 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
       return state.colorAddonUntil ? null : 'This price has ended. The Color Report is still available.'
     case 'style_addon':
       return state.styleAddonUntil ? null : 'This price has ended. The Style Report is still available.'
+    case 'color_mirror':
+      return state.colorMirror ? 'You already have the color mirror.' : null
     case 'look_pack':
       return state.comp ? 'Your account already has unlimited looks.' : null
     case 'pro_monthly':
@@ -457,6 +463,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
             styleKitUntil: '',
             colorReportAt: '',
             styleReportAt: '',
+            colorMirrorAt: '',
             pro: '',
             paidAt: '',
             freeAvatarRuns: '',

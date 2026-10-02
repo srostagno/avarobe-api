@@ -12,7 +12,7 @@ import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
-import { PaywallError, hasColorReport, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
+import { PaywallError, paletteAccess, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { ensureLockedPreview } from '../report/service.js'
@@ -76,12 +76,12 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (request) => {
     const userId = requireUserId(request)
     const found = await app.collections.avatars.findOne({ userId })
-    const fullPalette = await hasColorReport(app, userId)
+    const access = await paletteAccess(app, userId)
     // A preview from before the lock gets its locked copy here, once.
-    const avatar = found && !fullPalette ? await ensureLockedPreview(app, found) : found
+    const avatar = found && !access.fullPalette && !access.mirror ? await ensureLockedPreview(app, found) : found
 
     return {
-      avatar: avatar ? await serializeAvatar(avatar, { fullPalette }) : null,
+      avatar: avatar ? await serializeAvatar(avatar, access) : null,
       remaining: await remainingGenerations(app, userId, 'avatar'),
     }
   })
@@ -243,7 +243,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: avatarId })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null })
     },
   )
 
@@ -372,7 +372,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       startColorsJob(app, avatar._id)
       void trackServerEvent(app, { name: 'colors_started', userId, props: { retry: !selfieKey } })
 
-      return reply.code(202).send({ avatar: await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) })
+      return reply.code(202).send({ avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) })
     },
   )
 
@@ -445,7 +445,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null })
     },
   )
 
@@ -504,7 +504,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
-      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null })
+      return reply.code(202).send({ avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null })
     },
   )
 
@@ -528,7 +528,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
   })
 
   // Deletes one version. Deleting the one in use switches to the newest
@@ -567,7 +567,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       [version.key, ...orphanHairKeys([version], remaining)].map((key) => storage.remove(key).catch(() => undefined)),
     )
 
-    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
   })
 
   // Deletes the avatar, every version and the photos behind it. Looks keep
@@ -624,7 +624,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    return { avatar: avatar ? await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) : null }
+    return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
   })
 }
 

@@ -97,6 +97,8 @@ const envSchema = z.object({
   PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(399),
   PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(699),
   PRICE_LOOK_PACK_CENTS: z.coerce.number().int().min(100).default(499),
+  // The color mirror, on its own (2-Oct-2026).
+  PRICE_COLOR_MIRROR_CENTS: z.coerce.number().int().min(100).default(990),
   LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),
   PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(2999),

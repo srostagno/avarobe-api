@@ -45,6 +45,7 @@ type BillingFields = Pick<
   | 'credits'
   | 'colorReportAt'
   | 'styleReportAt'
+  | 'colorMirrorAt'
   | 'pro'
   | 'styleKitUntil'
   | 'paidAt'
@@ -93,6 +94,8 @@ export function billingState(user: BillingFields, now = Date.now()) {
   // Pro includes both reports while it lasts; bought ones are for good.
   const colorReport = proActive || Boolean(colorReportAt)
   const styleReport = proActive || Boolean(styleReportAt)
+  // The color mirror is its own purchase (Pro includes it).
+  const colorMirror = proActive || Boolean(user.colorMirrorAt)
   const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS
   const within = (at: Date | null) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
   const colorRecent = within(colorReportAt)
@@ -121,13 +124,14 @@ export function billingState(user: BillingFields, now = Date.now()) {
     trialEligible: env.PRO_TRIAL && !comp && !pro && !user.proTrialAt,
     colorReport,
     styleReport,
+    colorMirror,
     // Completing the pair at the bundle price, soon after buying one report.
     colorAddonUntil: !colorReport && styleRecent ? styleRecent : null,
     styleAddonUntil: !styleReport && colorRecent ? colorRecent : null,
     reportCreditCents,
     reportCreditUntil: reportCreditCents > 0 ? reportCreditUntil : null,
     // Bought anything, ever (reports, a look pack or Pro).
-    paid: Boolean(user.paidAt || colorReportAt || styleReportAt || pro || user.styleKitUntil),
+    paid: Boolean(user.paidAt || colorReportAt || styleReportAt || user.colorMirrorAt || pro || user.styleKitUntil),
     credits: user.credits ?? env.FREE_CREDITS,
     freeAvatarRunsLeft: proActive ? null : Math.max(0, env.FREE_AVATAR_RUNS - (user.freeAvatarRuns ?? 0)),
     // Every recommended haircut on them; otherwise the free one(s).
@@ -154,6 +158,7 @@ export function serializeBilling(user: BillingFields) {
       : null,
     colorReport: state.colorReport,
     styleReport: state.styleReport,
+    colorMirror: state.colorMirror,
     colorAddonUntil: iso(state.colorAddonUntil),
     styleAddonUntil: iso(state.styleAddonUntil),
     reportCredit: state.reportCreditCents > 0 ? { amount: state.reportCreditCents, until: iso(state.reportCreditUntil) } : null,
@@ -174,6 +179,7 @@ const BILLING_PROJECTION = {
   credits: 1,
   colorReportAt: 1,
   styleReportAt: 1,
+  colorMirrorAt: 1,
   pro: 1,
   styleKitUntil: 1,
   paidAt: 1,
@@ -210,6 +216,13 @@ export async function requirePro(app: FastifyInstance, userId: ObjectId, feature
 // The full palette and the visual color report.
 export async function hasColorReport(app: FastifyInstance, userId: ObjectId) {
   return (await loadState(app, userId)).colorReport
+}
+
+// What of their colors the avatar can show: the full palette (Color Report)
+// and the color mirror's colors (Color Mirror).
+export async function paletteAccess(app: FastifyInstance, userId: ObjectId) {
+  const state = await loadState(app, userId)
+  return { fullPalette: state.colorReport, mirror: state.colorMirror }
 }
 
 export async function requireColorReport(app: FastifyInstance, userId: ObjectId, feature: string) {

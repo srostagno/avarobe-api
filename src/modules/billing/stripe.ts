@@ -24,8 +24,8 @@ type ProductConfig = {
   // Credits per payment (per month for Pro).
   credits: () => number
   recurring?: 'month' | 'year'
-  // Reports the payment unlocks, for good.
-  unlocks?: { color?: boolean; style?: boolean }
+  // What the payment unlocks, for good: the reports, the color mirror.
+  unlocks?: { color?: boolean; style?: boolean; mirror?: boolean }
 }
 
 export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
@@ -68,6 +68,14 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     amount: styleAddonCents,
     credits: () => 0,
     unlocks: { style: true },
+  },
+  color_mirror: {
+    lookupKey: 'avarobe_color_mirror_v1',
+    name: 'Avarobe Color Mirror',
+    description: 'Every fabric draped under your face, live on your camera, with your #1 color and what each color does to you.',
+    amount: () => env.PRICE_COLOR_MIRROR_CENTS,
+    credits: () => 0,
+    unlocks: { mirror: true },
   },
   look_pack: {
     lookupKey: 'avarobe_look_pack_v1',
@@ -410,6 +418,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
             paidAt: user.paidAt ?? now,
             ...(config.unlocks?.color ? { colorReportAt: user.colorReportAt ?? now } : {}),
             ...(config.unlocks?.style ? { styleReportAt: user.styleReportAt ?? now } : {}),
+            ...(config.unlocks?.mirror ? { colorMirrorAt: user.colorMirrorAt ?? now } : {}),
             ...(grant.set?.(user) ?? {}),
             updatedAt: now,
           },

@@ -15,7 +15,7 @@ import { currentHair } from '../avatar/hair.js'
 import { startAvatarJob } from '../avatar/service.js'
 import {
   PaywallError,
-  hasColorReport,
+  paletteAccess,
   refundCredits,
   requirePro,
   sendPaywall,
@@ -289,7 +289,7 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (currentHair(avatar)?.hairstyleId === hairstyle._id.toString()) {
-      return { avatar: await serializeAvatar(avatar, { fullPalette: await hasColorReport(app, userId) }) }
+      return { avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) }
     }
 
     if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
@@ -330,7 +330,7 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
     const updated = await app.collections.avatars.findOne({ _id: avatar._id })
 
     return reply.code(202).send({
-      avatar: updated ? await serializeAvatar(updated, { fullPalette: await hasColorReport(app, userId) }) : null,
+      avatar: updated ? await serializeAvatar(updated, await paletteAccess(app, userId)) : null,
     })
   })
 
@@ -361,7 +361,7 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
       { returnDocument: 'after' },
     )
 
-    return { avatar: updated ? await serializeAvatar(updated, { fullPalette: await hasColorReport(app, userId) }) : null }
+    return { avatar: updated ? await serializeAvatar(updated, await paletteAccess(app, userId)) : null }
   })
 
   app.delete('/styles/:id', async (request, reply) => {

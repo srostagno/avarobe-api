@@ -25,6 +25,16 @@ const pro = (interval: 'month' | 'year', overrides: Partial<NonNullable<UserDocu
 })
 
 describe('billingState', () => {
+  it('unlocks the color mirror on its own, without the Color Report, and with Pro', () => {
+    const mirror = billingState(user({ colorMirrorAt: daysAgo(1) }), now)
+    assert.equal(mirror.colorMirror, true)
+    assert.equal(mirror.colorReport, false)
+    assert.equal(mirror.paid, true)
+    assert.equal(billingState(user({ colorReportAt: daysAgo(1) }), now).colorMirror, false)
+    assert.equal(billingState(user({ pro: pro('month') }), now).colorMirror, true)
+    assert.equal(billingState(user(), now).colorMirror, false)
+  })
+
   it('starts free with the sign-up looks and nothing unlocked', () => {
     const state = billingState(user(), now)
     assert.equal(state.credits, env.FREE_CREDITS)
