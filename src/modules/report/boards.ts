@@ -27,6 +27,7 @@ import {
   buildPaletteBoardPrompt,
   buildShirtsBoardPrompt,
   buildSilhouettesBoardPrompt,
+  selfieOnly,
 } from './prompts.js'
 
 // The visual boards of the reports: one image each, comparing options on the
@@ -37,12 +38,18 @@ export const COLOR_BOARDS = ['neutrals', 'whites', 'metals', 'face', 'hair', 'pa
 export const STYLE_BOARDS = ['silhouettes', 'necklines', 'capsule'] as const satisfies readonly BoardKind[]
 export const BOARD_KINDS: readonly BoardKind[] = [...COLOR_BOARDS, ...STYLE_BOARDS]
 
+// The color boards someone can have now: before the avatar, the ones drawn
+// on their face (the outfits board needs their body).
+export function colorBoardsFor(avatar: Pick<AvatarDocument, 'avatarKey'>): readonly BoardKind[] {
+  return avatar.avatarKey ? COLOR_BOARDS : COLOR_BOARDS.filter((kind) => kind !== 'palette')
+}
+
 const BOARD_CONCURRENCY = 3
 const HEX = /^#[0-9a-f]{6}$/i
 
 export type BoardSpec = Pick<ReportBoard, 'layout' | 'panels' | 'prompt' | 'refs' | 'size'>
 
-type BoardSource = Pick<AvatarDocument, 'body' | 'colorAnalysis'>
+type BoardSource = Pick<AvatarDocument, 'body' | 'colorAnalysis'> & Partial<Pick<AvatarDocument, 'presentation'>>
 
 const swatchPanels = (swatches: TestSwatch[]): BoardPanel[] =>
   swatches.map((swatch) => ({ label: swatch.name, verdict: swatch.verdict, hex: swatch.hex }))
@@ -93,7 +100,7 @@ const colorBoards: Record<(typeof COLOR_BOARDS)[number], (report: ColorReport, s
     test?.panels.length === 4 ? faceGrid(swatchPanels(test.panels), buildDrapeBoardPrompt(test.panels)) : null,
   whites: ({ whitesTest: test }) =>
     test?.panels.length === 4 ? faceGrid(swatchPanels(test.panels), buildDrapeBoardPrompt(test.panels)) : null,
-  metals: ({ metalsTest: test }, { body }) => {
+  metals: ({ metalsTest: test }, { body, presentation }) => {
     if (!test) {
       return null
     }
@@ -110,7 +117,7 @@ const colorBoards: Record<(typeof COLOR_BOARDS)[number], (report: ColorReport, s
           verdict: test.best === 'both' || test.best === metal ? 'wear' : 'avoid',
         }),
       ),
-      prompt: buildMetalsBoardPrompt(metals, body?.presentation ?? 'unisex'),
+      prompt: buildMetalsBoardPrompt(metals, body?.presentation ?? presentation ?? 'unisex'),
       refs: 'portrait',
       size: '1536x1024',
     }
@@ -249,12 +256,20 @@ export async function writeBoards(
 type References = Record<'portrait' | 'body', ImageInput[]> & { hairLine?: string }
 
 // The avatar for every board but the capsule, plus the selfie as a close-up
-// of the face for the portraits. Without an avatar image only the capsule
-// can render.
+// of the face for the portraits. Before the avatar (colors first) the
+// portraits come from the selfie alone and full-body boards can't render.
 async function readReferences(avatar: AvatarDocument, boards: ReportBoard[]): Promise<References> {
   const references: References = { portrait: [], body: [] }
 
-  if (!avatar.avatarKey || boards.every((board) => board.refs === 'none')) {
+  if (boards.every((board) => board.refs === 'none')) {
+    return references
+  }
+
+  if (!avatar.avatarKey) {
+    if (boards.some((board) => board.refs === 'portrait')) {
+      references.portrait = [{ data: await storage.read(avatar.selfieKey), filename: 'selfie.jpg', contentType: 'image/jpeg' }]
+    }
+
     return references
   }
 
@@ -311,7 +326,12 @@ async function renderBoard(
         ? await generateImage({ prompt: board.prompt, size: board.size })
         : await generateImageFromReferences({
             images: references[board.refs],
-            prompt: board.refs === 'portrait' && references.hairLine ? `${board.prompt} ${references.hairLine}` : board.prompt,
+            prompt:
+              board.refs === 'portrait' && !avatar.avatarKey
+                ? selfieOnly(board.prompt)
+                : board.refs === 'portrait' && references.hairLine
+                  ? `${board.prompt} ${references.hairLine}`
+                  : board.prompt,
             size: board.size,
           })
     const key = `users/${avatar.userId.toString()}/board-${kind}-${Date.now()}.webp`

@@ -26,13 +26,14 @@ import {
   buildDrapePreviewPrompt,
   buildSelfieDrapePreviewPrompt,
   buildDrapePrompt,
+  selfieOnly,
   buildLookAnalysisRequest,
   buildStyleProfileRequest,
   colorReportSchema,
   lookAnalysisSchema,
   styleProfileSchema,
 } from './prompts.js'
-import { bodyOf } from '../avatar/body.js'
+import { bodyOf, presentationOf } from '../avatar/body.js'
 
 const HEX = /^#[0-9a-f]{6}$/i
 
@@ -56,12 +57,14 @@ const cleanTestSwatches = (list: TestSwatch[], max: number) =>
     .slice(0, max)
     .map((swatch) => ({ name: swatch.name.trim(), hex: swatch.hex.toUpperCase(), verdict: swatch.verdict }))
 
-export async function generateColorReport(avatar: AvatarDocument): Promise<ColorReport> {
+// Written from the selfie; it needs how they shop (the body's, or asked on
+// its own before the avatar) but not the avatar itself.
+export async function generateColorReport(avatar: AvatarDocument, presentation = presentationOf(avatar) ?? 'unisex'): Promise<ColorReport> {
   const selfie = await storage.read(avatar.selfieKey)
   const report = await createStructuredResponse<ColorReport>({
     instructions: COLOR_REPORT_INSTRUCTIONS,
     content: [
-      { type: 'input_text', text: buildColorReportRequest(avatar) },
+      { type: 'input_text', text: buildColorReportRequest(avatar, presentation) },
       { type: 'input_image', image_url: toDataUrl(selfie, 'image/jpeg'), detail: 'high' },
     ],
     schemaName: 'color_report',
@@ -69,7 +72,7 @@ export async function generateColorReport(avatar: AvatarDocument): Promise<Color
     timeoutMs: 120_000,
   })
 
-  return cleanColorReport(report, bodyOf(avatar).presentation)
+  return cleanColorReport(report, presentation)
 }
 
 // Keeps the model's report within what the page and the boards expect.
@@ -118,31 +121,35 @@ async function markDrape(app: FastifyInstance, avatarId: ObjectId, set: Record<s
   return app.collections.avatars.updateOne({ _id: avatarId, drape: { $ne: null } }, { $set: set })
 }
 
-// Renders the drape test in the background (one image, ~30 s).
+// Renders the drape test in the background (one image, ~30 s): from the
+// avatar and the selfie, or from the selfie alone before the avatar.
 export async function runDrapeTest(app: FastifyInstance, avatarId: ObjectId) {
   const avatar = await app.collections.avatars.findOne({ _id: avatarId })
   const drape = avatar?.drape
 
-  if (!avatar?.avatarKey || !drape || drape.wear.length < 2 || drape.avoid.length < 2) {
+  if (!avatar || !drape || drape.wear.length < 2 || drape.avoid.length < 2) {
     await markDrape(app, avatarId, { 'drape.status': 'failed', 'drape.updatedAt': new Date() })
     return
   }
 
   try {
-    const [avatarImage, selfie, hair] = await Promise.all([
-      storage.read(avatar.avatarKey),
-      storage.read(avatar.selfieKey),
-      hairReference(avatar, 3),
-    ])
-    const png = await generateImageFromReferences({
-      images: [
-        { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
-        { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
-        ...(hair ? [hair.image] : []),
-      ],
-      prompt: hair ? `${buildDrapePrompt(drape)} ${hair.line}` : buildDrapePrompt(drape),
-      size: '1024x1024',
-    })
+    const selfie = await storage.read(avatar.selfieKey)
+    const face = { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' }
+    const png = avatar.avatarKey
+      ? await (async () => {
+          const [avatarImage, hair] = await Promise.all([storage.read(avatar.avatarKey!), hairReference(avatar, 3)])
+
+          return generateImageFromReferences({
+            images: [{ data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' }, face, ...(hair ? [hair.image] : [])],
+            prompt: hair ? `${buildDrapePrompt(drape)} ${hair.line}` : buildDrapePrompt(drape),
+            size: '1024x1024',
+          })
+        })()
+      : await generateImageFromReferences({
+          images: [{ ...face, filename: 'selfie.jpg' }],
+          prompt: selfieOnly(buildDrapePrompt(drape)),
+          size: '1024x1024',
+        })
     const key = `users/${avatar.userId.toString()}/drape-${Date.now()}.webp`
 
     await storage.put(key, await toStoredWebp(png), 'image/webp')

@@ -1,4 +1,4 @@
-import type { AvatarBody, AvatarDocument } from '../../types/mongo.js'
+import type { AvatarBody, AvatarDocument, Presentation } from '../../types/mongo.js'
 
 // Anything drawn on, or written for, the avatar needs the body. Someone who
 // came for their colors has none until they make the avatar; the routes
@@ -9,4 +9,10 @@ export function bodyOf(avatar: Pick<AvatarDocument, 'body'>): AvatarBody {
   }
 
   return avatar.body
+}
+
+// How they shop: from the body, or asked on its own before it (the color
+// report for someone who came for their colors). Null when nobody asked.
+export function presentationOf(avatar: Pick<AvatarDocument, 'body' | 'presentation'>): Presentation | null {
+  return avatar.body?.presentation ?? avatar.presentation ?? null
 }

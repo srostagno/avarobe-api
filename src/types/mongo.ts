@@ -351,6 +351,9 @@ export type AvatarDocument = {
   versions?: AvatarVersion[]
   job?: AvatarJob | null
   body: AvatarBody | null
+  // How they shop, asked before the color report when the body isn't in yet
+  // (colors first); the body's own presentation wins once it's there.
+  presentation?: Presentation | null
   colorAnalysis: ColorAnalysis | null
   // When the colors were read (the palette offer email is timed from it).
   colorsAt?: Date | null

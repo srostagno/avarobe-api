@@ -247,13 +247,15 @@ export const COLOR_REPORT_INSTRUCTIONS = [
   'Write in warm, concise American English, second person.',
 ].join(' ')
 
-export function buildColorReportRequest(avatar: AvatarDocument) {
-  const body = bodyOf(avatar)
+// Someone who came for their colors may have no body yet: how they shop is
+// asked on its own then.
+export function buildColorReportRequest(avatar: AvatarDocument, presentation: Presentation) {
+  const body = avatar.body
 
   return [
-    `They dress in: ${body.presentation}. Height ${body.heightCm} cm, ${body.build} build.`,
-    `Face test: ${body.presentation === 'menswear' ? 'shirt colors' : 'lipstick shades'}.`,
-    `Hair test: ${body.presentation === 'menswear' ? 'facial hair styles' : 'hair colors'}.`,
+    `They dress in: ${presentation}.${body ? ` Height ${body.heightCm} cm, ${body.build} build.` : ''}`,
+    `Face test: ${presentation === 'menswear' ? 'shirt colors' : 'lipstick shades'}.`,
+    `Hair test: ${presentation === 'menswear' ? 'facial hair styles' : 'hair colors'}.`,
     'Earlier analysis:',
     describePalette(avatar.colorAnalysis),
     '',
@@ -314,6 +316,13 @@ export function buildDrapePrompt(drape: { wear: ColorSwatch[]; avoid: ColorSwatc
 // the app. Panels are listed in reading order (a grid is top-left,
 // top-right, bottom-left, bottom-right).
 const PORTRAIT_REFS = 'Image 1 is this person. Image 2 is a close-up of the same face.'
+// Before the avatar (colors first) the portraits come from the selfie alone.
+const SELFIE_REFS =
+  'Image 1 is a selfie of this person. Keep them exactly recognizable: the same face, features, hair, skin tone and undertone as in the selfie.'
+
+export function selfieOnly(prompt: string) {
+  return prompt.replace(PORTRAIT_REFS, SELFIE_REFS)
+}
 const BODY_REFS = 'Image 1 is this person in full body.'
 const GRID = 'Create one square image divided into a 2 by 2 grid of four'
 const GRID_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right']

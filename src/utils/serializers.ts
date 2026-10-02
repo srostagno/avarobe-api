@@ -94,6 +94,8 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     status: avatar.status,
     error: avatar.error,
     body: avatar.body,
+    // How they shop: the body's, or asked before it (colors first).
+    presentation: avatar.body?.presentation ?? avatar.presentation ?? null,
     colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, bestLocked),
     // The color mirror drapes all their colors, so its owners get them for
     // the mirror even without the Color Advisor (whose palette stays locked).

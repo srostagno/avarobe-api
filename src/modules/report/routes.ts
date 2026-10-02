@@ -15,10 +15,23 @@ import {
   requireStyleReport,
   sendPaywall,
 } from '../billing/entitlements.js'
-import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, buildColorBoards, buildStyleBoards, startBoards, writeBoards } from './boards.js'
+import { presentationOf } from '../avatar/body.js'
+import {
+  BOARD_KINDS,
+  COLOR_BOARDS,
+  STYLE_BOARDS,
+  buildColorBoards,
+  buildStyleBoards,
+  colorBoardsFor,
+  startBoards,
+  writeBoards,
+} from './boards.js'
 import { generateColorReport, generateStyleProfile, startDrapePreview, startDrapeTest } from './service.js'
 
 const refreshSchema = z.object({ refresh: z.boolean().default(false) })
+
+// Before the avatar, how they shop comes with the first request (asked once).
+const colorSchema = refreshSchema.extend({ presentation: z.enum(['menswear', 'womenswear', 'unisex']).optional() })
 
 const REPORT_LIMIT_MESSAGE = 'You’ve updated your report a few times today. Come back tomorrow for another take.'
 
@@ -135,7 +148,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const userId = requireUserId(request)
-      const parsed = parseBody(refreshSchema, request.body ?? {})
+      const parsed = parseBody(colorSchema, request.body ?? {})
 
       if (!parsed.ok) {
         return reply.code(400).send({ message: parsed.message })
@@ -151,18 +164,31 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      const avatar = await app.collections.avatars.findOne({ userId })
+      const found = await app.collections.avatars.findOne({ userId })
 
-      if (!avatar?.colorAnalysis || !avatar.avatarKey) {
-        return reply.code(409).send({ message: 'Your avatar and colors need to be ready first.' })
+      // The report is written from the selfie: the avatar can come later.
+      if (!found?.colorAnalysis) {
+        return reply.code(409).send({ message: 'Your colors need to be ready first.' })
       }
 
+      const presentation = presentationOf(found) ?? parsed.data.presentation ?? null
+
+      if (!presentation) {
+        return reply.code(409).send({ message: 'How do you usually shop? Your report shows lipsticks or shirts to match.', code: 'needs_presentation' })
+      }
+
+      if (!presentationOf(found)) {
+        await app.collections.avatars.updateOne({ _id: found._id }, { $set: { presentation, updatedAt: new Date() } })
+      }
+
+      const avatar = { ...found, presentation: found.presentation ?? presentation }
+      const kinds = colorBoardsFor(avatar)
       const access = await reportAccess(app, userId)
 
-      // Written before for the hair board alone (Hair & Grooming): the rest
-      // of the color boards and the drape test start now.
+      // Written before without some boards (the hair board alone for Hair &
+      // Grooming, or before the avatar): the rest and the drape test start now.
       if (avatar.colorReport && !parsed.data.refresh) {
-        const missing = COLOR_BOARDS.filter((kind) => !avatar.reportBoards?.[kind])
+        const missing = kinds.filter((kind) => !avatar.reportBoards?.[kind])
         const data = avatar.colorReport.data
 
         if (missing.length === 0 && avatar.drape) {
@@ -190,14 +216,14 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       let data: Awaited<ReturnType<typeof generateColorReport>>
 
       try {
-        data = await generateColorReport(avatar)
+        data = await generateColorReport(avatar, presentation)
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Color report failed')
         await releaseGenerations(app, userId, 'report', 1)
         return reply.code(502).send({ message: 'We could not write your color report. Try again.' })
       }
 
-      const updated = await writeBoards(app, avatar._id, COLOR_BOARDS, buildColorBoards(data, avatar), {
+      const updated = await writeBoards(app, avatar._id, kinds, buildColorBoards(data, avatar), {
         colorReport: { data, createdAt: new Date() },
         drape: {
           status: 'processing',
@@ -209,7 +235,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       })
 
       startDrapeTest(app, avatar._id)
-      startBoards(app, avatar._id, COLOR_BOARDS)
+      startBoards(app, avatar._id, kinds)
 
       return serializeReport(updated, access)
     },
@@ -236,8 +262,8 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
       const avatar = await app.collections.avatars.findOne({ userId })
 
-      if (!avatar?.colorAnalysis || !avatar.avatarKey) {
-        return reply.code(409).send({ message: 'Your avatar and colors need to be ready first.' })
+      if (!avatar?.colorAnalysis) {
+        return reply.code(409).send({ message: 'Your colors need to be ready first.' })
       }
 
       const access = await reportAccess(app, userId)
