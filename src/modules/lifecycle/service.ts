@@ -412,6 +412,18 @@ function rescueNext(product: string) {
     return '/studio?upgrade=mirror'
   }
 
+  if (product === 'hair_advisor') {
+    return '/studio?upgrade=hair'
+  }
+
+  if (product === 'advisors_bundle') {
+    return '/studio/advisors'
+  }
+
+  if (product === 'event_pass') {
+    return '/studio/events/new'
+  }
+
   if (/^color_|reports_bundle/.test(product)) {
     return '/studio?upgrade=palette'
   }

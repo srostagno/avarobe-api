@@ -94,11 +94,16 @@ const envSchema = z.object({
   // no purchases in the report-first offer's first 48 sign-ups, and "too
   // expensive" was 65% of the reasons given. Review on 7-Oct.
   PRICE_COLOR_REPORT_CENTS: z.coerce.number().int().min(100).default(499),
-  PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(399),
-  PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(699),
+  PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(790),
+  PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1190),
   PRICE_LOOK_PACK_CENTS: z.coerce.number().int().min(100).default(499),
   // The color mirror, on its own (2-Oct-2026).
   PRICE_COLOR_MIRROR_CENTS: z.coerce.number().int().min(100).default(990),
+  // The advisors split (Oct 2026): Hair & Grooming on its own, the three
+  // advisors together, and one event with the Event Stylist.
+  PRICE_HAIR_ADVISOR_CENTS: z.coerce.number().int().min(100).default(790),
+  PRICE_ADVISORS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
+  PRICE_EVENT_CENTS: z.coerce.number().int().min(100).default(490),
   LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),
   PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(2999),

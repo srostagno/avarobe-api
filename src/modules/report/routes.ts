@@ -11,6 +11,7 @@ import {
   billingState,
   loadBillingUser,
   requireColorReport,
+  requireHairAdvisor,
   requireStyleReport,
   sendPaywall,
 } from '../billing/entitlements.js'
@@ -49,18 +50,27 @@ async function serializeBoards(boards: AvatarDocument['reportBoards'], kinds: re
   return Object.fromEntries(entries.filter((entry) => entry !== null))
 }
 
-type ReportAccess = { color: boolean; style: boolean }
+type ReportAccess = { color: boolean; style: boolean; hair?: boolean }
 
-// Each half goes out only with its report: the Color Advisor (the color
+// The hair board (hair colors, or facial hair in menswear) belongs to both
+// the Color Advisor and the Hair & Grooming Advisor.
+const boardAllowed = (kind: BoardKind, access: ReportAccess) =>
+  kind === 'hair' ? access.color || Boolean(access.hair) : isColorBoard(kind) ? access.color : access.style
+
+// Each half goes out only with its advisor: the Color Advisor (the color
 // report, drape test and color boards) and the Style Advisor (the style
-// profile and its boards). The admin review shows it the same way.
+// profile and its boards); the hair board also with Hair & Grooming. The
+// admin review shows it the same way.
 export async function serializeReport(avatar: AvatarDocument | null, access: ReportAccess) {
-  const kinds = BOARD_KINDS.filter((kind) => (isColorBoard(kind) ? access.color : access.style))
+  const kinds = BOARD_KINDS.filter((kind) => boardAllowed(kind, access))
 
   return {
     colorAvailable: access.color,
     styleAvailable: access.style,
+    hairAvailable: Boolean(access.hair),
     color: access.color ? (avatar?.colorReport?.data ?? null) : null,
+    // What the hair board shows, for the Hair & Grooming Advisor.
+    hairTest: access.color || access.hair ? (avatar?.colorReport?.data.hairTest ?? null) : null,
     drape:
       access.color && avatar?.drape
         ? {
@@ -79,7 +89,7 @@ async function reportAccess(app: Parameters<FastifyPluginAsync>[0], userId: Para
   const user = await loadBillingUser(app, userId)
   const state = user ? billingState(user) : null
 
-  return { color: Boolean(state?.colorReport), style: Boolean(state?.styleReport) }
+  return { color: Boolean(state?.colorReport), style: Boolean(state?.styleReport), hair: Boolean(state?.hairAdvisor) }
 }
 
 // The reports: the Color Advisor (advanced color analysis with a drape test)
@@ -94,7 +104,7 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
     const access = await reportAccess(app, userId)
 
-    if (!access.color && !access.style) {
+    if (!access.color && !access.style && !access.hair) {
       return serializeReport(null, access)
     }
 
@@ -149,8 +159,28 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
 
       const access = await reportAccess(app, userId)
 
+      // Written before for the hair board alone (Hair & Grooming): the rest
+      // of the color boards and the drape test start now.
       if (avatar.colorReport && !parsed.data.refresh) {
-        return serializeReport(avatar, access)
+        const missing = COLOR_BOARDS.filter((kind) => !avatar.reportBoards?.[kind])
+        const data = avatar.colorReport.data
+
+        if (missing.length === 0 && avatar.drape) {
+          return serializeReport(avatar, access)
+        }
+
+        const filled = await writeBoards(app, avatar._id, missing, buildColorBoards(data, avatar), {
+          ...(avatar.drape
+            ? {}
+            : { drape: { status: 'processing', key: null, wear: data.drape.wear, avoid: data.drape.avoid, updatedAt: new Date() } }),
+        })
+
+        if (!avatar.drape) {
+          startDrapeTest(app, avatar._id)
+        }
+
+        startBoards(app, avatar._id, missing)
+        return serializeReport(filled, access)
       }
 
       if (!(await reserveGenerations(app, userId, 'report', 1))) {
@@ -181,6 +211,66 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       startDrapeTest(app, avatar._id)
       startBoards(app, avatar._id, COLOR_BOARDS)
 
+      return serializeReport(updated, access)
+    },
+  )
+
+  // The hair board on its own, for the Hair & Grooming Advisor: their hair
+  // colors (or facial hair) on them. It's drawn from the color report, which
+  // is written now if they don't have it (shown only with the Color Advisor).
+  app.post(
+    '/hair',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+
+      try {
+        await requireHairAdvisor(app, userId, 'Your hair colors')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      const avatar = await app.collections.avatars.findOne({ userId })
+
+      if (!avatar?.colorAnalysis || !avatar.avatarKey) {
+        return reply.code(409).send({ message: 'Your avatar and colors need to be ready first.' })
+      }
+
+      const access = await reportAccess(app, userId)
+
+      if (avatar.reportBoards?.hair) {
+        return serializeReport(avatar, access)
+      }
+
+      let data = avatar.colorReport?.data ?? null
+
+      if (!data) {
+        if (!(await reserveGenerations(app, userId, 'report', 1))) {
+          return reply.code(429).send({ message: REPORT_LIMIT_MESSAGE })
+        }
+
+        try {
+          data = await generateColorReport(avatar)
+        } catch (error) {
+          request.log.error({ err: errorMessage(error) }, 'Color report for hair failed')
+          await releaseGenerations(app, userId, 'report', 1)
+          return reply.code(502).send({ message: 'We could not read your hair colors. Try again.' })
+        }
+      }
+
+      const updated = await writeBoards(
+        app,
+        avatar._id,
+        ['hair'],
+        buildColorBoards(data, avatar),
+        avatar.colorReport ? {} : { colorReport: { data, createdAt: new Date() } },
+      )
+
+      startBoards(app, avatar._id, ['hair'])
       return serializeReport(updated, access)
     },
   )
@@ -235,7 +325,13 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       const color = isColorBoard(kind)
 
       try {
-        if (color) {
+        if (kind === 'hair') {
+          const { color: hasColor, hair } = await reportAccess(app, userId)
+
+          if (!hasColor && !hair) {
+            await requireHairAdvisor(app, userId, 'This hair test')
+          }
+        } else if (color) {
           await requireColorReport(app, userId, 'This color test')
         } else {
           await requireStyleReport(app, userId, 'This style test')

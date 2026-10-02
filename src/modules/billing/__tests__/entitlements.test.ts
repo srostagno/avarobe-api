@@ -142,4 +142,23 @@ describe('billingState', () => {
     assert.equal(styled.freeHairRunsLeft, null)
     assert.equal(billingState(user({ pro: pro('month'), freeHairRuns: 1 }), now).hairCuts, true)
   })
+
+  it('moves the cuts to the Hair & Grooming Advisor, keeping them for earlier Style Advisor owners', () => {
+    // A Style Advisor bought after the split doesn't bring the cuts.
+    const styleOnly = billingState(user({ styleReportAt: daysAgo(1), styleWithoutHair: true, freeHairRuns: 1 }), now)
+    assert.equal(styleOnly.styleReport, true)
+    assert.equal(styleOnly.hairAdvisor, false)
+    assert.equal(styleOnly.hairCuts, false)
+    const hair = billingState(user({ hairAdvisorAt: daysAgo(1) }), now)
+    assert.equal(hair.hairAdvisor, true)
+    assert.equal(hair.hairCuts, true)
+    assert.equal(hair.styleReport, false)
+    assert.equal(hair.paid, true)
+    assert.equal(billingState(user({ pro: pro('month') }), now).hairAdvisor, true)
+  })
+
+  it('counts Event Stylist passes', () => {
+    assert.equal(billingState(user(), now).eventCredits, 0)
+    assert.equal(billingState(user({ eventCredits: 2 }), now).eventCredits, 2)
+  })
 })

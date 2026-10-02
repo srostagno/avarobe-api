@@ -146,6 +146,7 @@ export async function serializeLook(look: LookDocument) {
     plan: look.plan,
     source: look.source ?? 'stylist',
     iconId: look.iconId ?? null,
+    eventId: look.eventId?.toString() ?? null,
     analysis: look.analysis?.data ?? null,
     referenceUrl: await signedUrlOrNull(look.referenceKey ?? null),
     pieces: await Promise.all(

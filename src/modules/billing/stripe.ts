@@ -24,8 +24,10 @@ type ProductConfig = {
   // Credits per payment (per month for Pro).
   credits: () => number
   recurring?: 'month' | 'year'
-  // What the payment unlocks, for good: the reports, the color mirror.
-  unlocks?: { color?: boolean; style?: boolean; mirror?: boolean }
+  // What the payment unlocks, for good: the advisors, the color mirror.
+  unlocks?: { color?: boolean; style?: boolean; mirror?: boolean; hair?: boolean }
+  // Event Stylist passes per payment.
+  events?: number
 }
 
 export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
@@ -77,6 +79,30 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     credits: () => 0,
     unlocks: { color: true, mirror: true },
   },
+  hair_advisor: {
+    lookupKey: 'avarobe_hair_advisor_v1',
+    name: 'Avarobe Hair & Grooming Advisor',
+    description: 'Every haircut picked for your face, shown on you with what to tell your stylist, and the hair colors that suit you.',
+    amount: () => env.PRICE_HAIR_ADVISOR_CENTS,
+    credits: () => 0,
+    unlocks: { hair: true },
+  },
+  advisors_bundle: {
+    lookupKey: 'avarobe_advisors_bundle_v1',
+    name: 'Avarobe Color, Style and Hair & Grooming Advisors',
+    description: 'All three advisors: your colors with the live mirror, your style profile, and every cut on you.',
+    amount: () => env.PRICE_ADVISORS_BUNDLE_CENTS,
+    credits: () => 0,
+    unlocks: { color: true, style: true, hair: true, mirror: true },
+  },
+  event_pass: {
+    lookupKey: 'avarobe_event_pass_v1',
+    name: 'Avarobe Event Stylist',
+    description: 'Dressed for one event: three looks on you for its dress code, the pieces in stores, and how to finish them.',
+    amount: () => env.PRICE_EVENT_CENTS,
+    credits: () => 0,
+    events: 1,
+  },
   look_pack: {
     lookupKey: 'avarobe_look_pack_v1',
     name: 'Avarobe look pack',
@@ -99,7 +125,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     amount: () => env.PRICE_PRO_ANNUAL_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'year',
-    unlocks: { color: true, style: true },
+    unlocks: { color: true, style: true, hair: true },
   },
   // The fee for the first days of Pro. It's charged with the monthly
   // subscription's first (trial) invoice; the subscription itself is
@@ -418,7 +444,11 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
             paidAt: user.paidAt ?? now,
             ...(config.unlocks?.color ? { colorReportAt: user.colorReportAt ?? now } : {}),
             ...(config.unlocks?.style ? { styleReportAt: user.styleReportAt ?? now } : {}),
+            // A Style Advisor bought after the split doesn't bring the cuts.
+            ...(config.unlocks?.style && !config.unlocks.hair && !user.styleReportAt ? { styleWithoutHair: true } : {}),
+            ...(config.unlocks?.hair ? { hairAdvisorAt: user.hairAdvisorAt ?? now } : {}),
             ...(config.unlocks?.mirror ? { colorMirrorAt: user.colorMirrorAt ?? now } : {}),
+            ...(config.events ? { eventCredits: (user.eventCredits ?? 0) + config.events } : {}),
             ...(grant.set?.(user) ?? {}),
             updatedAt: now,
           },

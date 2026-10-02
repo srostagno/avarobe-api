@@ -17,6 +17,7 @@ import type {
   PurchaseDocument,
   RefreshTokenDocument,
   ShopSearchDocument,
+  StyleEventDocument,
   SurveyAnswerDocument,
   TasteDocument,
   UsageCounterDocument,
@@ -41,6 +42,7 @@ export type MongoCollections = {
   emailSends: Collection<EmailSendDocument>
   arrivals: Collection<ArrivalDocument>
   analyticsEvents: Collection<AnalyticsEventDocument>
+  styleEvents: Collection<StyleEventDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -66,6 +68,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     emailSends: mongoDb.collection<EmailSendDocument>('email_sends'),
     arrivals: mongoDb.collection<ArrivalDocument>('arrivals'),
     analyticsEvents: mongoDb.collection<AnalyticsEventDocument>('analytics_events'),
+    styleEvents: mongoDb.collection<StyleEventDocument>('style_events'),
   }
 }
 
@@ -84,6 +87,8 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.avatars.createIndex({ status: 1, updatedAt: 1 }),
     collections.avatars.createIndex({ createdAt: -1 }),
     collections.looks.createIndex({ userId: 1, createdAt: -1 }),
+    collections.styleEvents.createIndex({ userId: 1, createdAt: -1 }),
+    collections.looks.createIndex({ eventId: 1 }, { sparse: true }),
     collections.looks.createIndex({ userId: 1, batchId: 1 }),
     collections.looks.createIndex({ userId: 1, collectionIds: 1, createdAt: -1 }),
     collections.looks.createIndex({ status: 1, updatedAt: 1 }),

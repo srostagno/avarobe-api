@@ -31,6 +31,14 @@ export type UserDocument = {
   styleReportAt?: Date | null
   // The color mirror (live draping), bought on its own; Pro includes it.
   colorMirrorAt?: Date | null
+  // The Hair & Grooming Advisor: every recommended cut on them, and the hair
+  // colors (or facial hair) that suit them. Until Oct 2026 it came with the
+  // Style Advisor; styleWithoutHair marks a Style Advisor bought after the
+  // split, so earlier owners keep their cuts.
+  hairAdvisorAt?: Date | null
+  styleWithoutHair?: boolean
+  // Event Stylist passes bought and not yet used (one per event).
+  eventCredits?: number
   // Avarobe Pro (monthly or annual subscription).
   pro?: ProSubscription | null
   // Legacy: the Style Kit of the first price list (everything until then).
@@ -151,6 +159,12 @@ export type PurchaseProduct =
   | 'pro_trial'
   // The color mirror: every fabric draped on them live, and their #1 color.
   | 'color_mirror'
+  // The Hair & Grooming Advisor on its own.
+  | 'hair_advisor'
+  // Color, Style and Hair & Grooming advisors together.
+  | 'advisors_bundle'
+  // One event with the Event Stylist.
+  | 'event_pass'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'
@@ -665,6 +679,8 @@ export type LookDocument = {
   referenceKey?: string | null
   // Try-ons of an icon look (modules/looks/icons.ts): which one.
   iconId?: string | null
+  // One of the looks the Event Stylist made for an event (StyleEventDocument).
+  eventId?: ObjectId | null
   // 'locked': a look the stylist designed past the person's last credit,
   // shown with its pieces but not drawn until they unlock it.
   status: GenerationStatus | 'locked'
@@ -692,6 +708,36 @@ export type LookDocument = {
   // When its render last started, if not at creation (a retry or unlock).
   renderStartedAt?: Date | null
   readyAt: Date | null
+}
+
+// The Event Stylist: three looks for one event (a wedding, an interview, a
+// date) with its dress code, pieces to buy in stores, and how to finish it
+// (hair, makeup or grooming, accessories, a checklist).
+export type EventBudget = 'save' | 'mid' | 'splurge'
+
+export type EventPrep = {
+  hair: string
+  face: string
+  accessories: string
+  checklist: string[]
+}
+
+export type StyleEventDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  batchId: ObjectId
+  occasion: string
+  // The day as they picked it (YYYY-MM-DD), or null.
+  date: string | null
+  budget: EventBudget
+  notes: string | null
+  dressCode: string
+  summary: string
+  prep: { status: GenerationStatus; data: EventPrep | null }
+  // How it was paid: a pass, three Pro looks, or a comp account.
+  via: 'pass' | 'pro' | 'comp'
+  createdAt: Date
+  updatedAt: Date
 }
 
 export type CollectionDocument = {

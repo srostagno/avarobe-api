@@ -48,6 +48,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.shopSearches.deleteMany({ userId }),
     app.collections.surveyAnswers.deleteMany({ userId }),
     app.collections.colorChecks.deleteMany({ userId }),
+    app.collections.styleEvents.deleteMany({ userId }),
   ])
 
   return { files: keys.length }

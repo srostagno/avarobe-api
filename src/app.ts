@@ -18,6 +18,7 @@ import reportRoutes from './modules/report/routes.js'
 import tasteRoutes from './modules/taste/routes.js'
 import collectionRoutes from './modules/collections/routes.js'
 import eventRoutes from './modules/events/routes.js'
+import styleEventRoutes from './modules/style-events/routes.js'
 import hairRoutes from './modules/hair/routes.js'
 import checkRoutes from './modules/check/routes.js'
 import healthRoutes from './modules/health/routes.js'
@@ -100,6 +101,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(tasteRoutes, { prefix: '/taste' })
     await v1.register(hairRoutes, { prefix: '/hair' })
     await v1.register(checkRoutes, { prefix: '/check' })
+    await v1.register(styleEventRoutes, { prefix: '/style-events' })
     await v1.register(lifecycleRoutes, { prefix: '/email' })
     await v1.register(adminRoutes, { prefix: '/admin' })
     await v1.register(adminReportRoutes, { prefix: '/admin/reports' })

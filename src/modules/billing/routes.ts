@@ -48,6 +48,9 @@ const checkoutSchema = z.object({
     'pro_annual',
     'pro_trial',
     'color_mirror',
+    'hair_advisor',
+    'advisors_bundle',
+    'event_pass',
   ]),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
@@ -75,6 +78,9 @@ const SIMULATED_STAGES = [
   'style_report',
   'reports',
   'mirror',
+  'hair_advisor',
+  'advisors',
+  'event_pass',
   'pack',
   'pro_monthly',
   'pro_low',
@@ -140,11 +146,17 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
     case 'color_report':
       return { credits: 0, colorReportAt: now, paidAt: now }
     case 'style_report':
-      return { credits: 0, styleReportAt: now, paidAt: now }
+      return { credits: 0, styleReportAt: now, styleWithoutHair: true, paidAt: now }
     case 'reports':
-      return { credits: 0, colorReportAt: now, styleReportAt: now, paidAt: now }
+      return { credits: 0, colorReportAt: now, styleReportAt: now, styleWithoutHair: true, paidAt: now }
     case 'mirror':
       return { credits: 0, colorMirrorAt: now, paidAt: now }
+    case 'hair_advisor':
+      return { credits: 0, hairAdvisorAt: now, paidAt: now }
+    case 'advisors':
+      return { credits: 0, colorReportAt: now, styleReportAt: now, hairAdvisorAt: now, paidAt: now }
+    case 'event_pass':
+      return { credits: 0, eventCredits: 1, paidAt: now }
     case 'pack':
       return { credits: 10, paidAt: now }
     case 'pro_monthly':
@@ -154,7 +166,7 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
     case 'pro_ending':
       return pro('month', 12, { ending: true })
     case 'pro_annual':
-      return { ...pro('year', 30), colorReportAt: now, styleReportAt: now }
+      return { ...pro('year', 30), colorReportAt: now, styleReportAt: now, hairAdvisorAt: now }
     default:
       return {}
   }
@@ -199,6 +211,16 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
       return state.styleAddonUntil ? null : 'This price has ended. The Style Advisor is still available.'
     case 'color_mirror':
       return state.colorMirror ? 'You already have the Color Advisor and its mirror.' : null
+    case 'hair_advisor':
+      return state.hairAdvisor ? 'You already have your Hair & Grooming Advisor.' : null
+    case 'advisors_bundle':
+      return state.colorReport && state.styleReport && state.hairAdvisor
+        ? 'You already have all three advisors.'
+        : state.colorReport || state.styleReport || state.hairAdvisor
+          ? 'You already have one of the advisors. Add the others on their own.'
+          : null
+    case 'event_pass':
+      return state.comp ? 'Your account already has unlimited events.' : null
     case 'look_pack':
       return state.comp ? 'Your account already has unlimited looks.' : null
     case 'pro_monthly':
@@ -464,6 +486,9 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
             colorReportAt: '',
             styleReportAt: '',
             colorMirrorAt: '',
+            hairAdvisorAt: '',
+            styleWithoutHair: '',
+            eventCredits: '',
             pro: '',
             paidAt: '',
             freeAvatarRuns: '',
@@ -612,6 +637,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
                 'pro.nextCreditsAt': addMonths(now, 1),
                 colorReportAt: user.colorReportAt ?? now,
                 styleReportAt: user.styleReportAt ?? now,
+                hairAdvisorAt: user.hairAdvisorAt ?? now,
               },
               $inc: { credits: env.PRO_MONTHLY_CREDITS },
             },

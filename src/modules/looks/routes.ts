@@ -379,7 +379,10 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requirePro(app, userId, 'Shopping the pieces')
+        // An Event Stylist look comes with its pieces and stores.
+        if (!look.eventId) {
+          await requirePro(app, userId, 'Shopping the pieces')
+        }
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -519,7 +522,9 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        await requirePro(app, userId, 'Store search')
+        if (!look.eventId) {
+          await requirePro(app, userId, 'Store search')
+        }
 
         return await findPieceMatches(app, {
           userId,
@@ -573,8 +578,9 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       let creditSpent: boolean
 
       try {
-        // A free fix stays free when it has to be drawn again.
-        creditSpent = look.freeFix ? false : await spendCredits(app, userId, 1)
+        // A free fix stays free when it has to be drawn again, and so does
+        // an event's look (the event paid for all three).
+        creditSpent = look.freeFix || look.eventId ? false : await spendCredits(app, userId, 1)
       } catch (error) {
         await releaseGenerations(app, userId, 'look', 1)
 

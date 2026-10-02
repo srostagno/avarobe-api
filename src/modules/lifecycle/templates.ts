@@ -806,12 +806,15 @@ const PRODUCT_NAMES: Record<string, string> = {
   pro_trial: 'Avarobe Pro',
   // Since 2-Oct the mirror comes with the Color Advisor.
   color_mirror: 'Color Advisor',
+  hair_advisor: 'Hair & Grooming Advisor',
+  advisors_bundle: 'advisors set',
+  event_pass: 'Event Stylist',
 }
 
 export function checkoutRescueEmail(input: Recipient & { product: string; url: string }): EmailContent {
   const name = PRODUCT_NAMES[input.product] ?? 'purchase'
   const what = name === 'looks' ? 'Your looks are' : `Your ${name} is`
-  const report = /report|addon|bundle|mirror/.test(input.product)
+  const report = /report|addon|bundle|mirror|advisor|event/.test(input.product)
 
   return layout({
     subject: `${what} one step away`,

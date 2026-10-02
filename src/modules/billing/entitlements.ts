@@ -18,10 +18,21 @@ import { trackServerEvent } from '../analytics/service.js'
 //
 // Hair studio: the read of their hair and the ideal cut on them are free
 // (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
-// Style Advisor (it's their style, like silhouettes) or Pro; a haircut they
-// describe or bring in a photo is a Pro try-on and spends a credit.
+// Hair & Grooming Advisor (with the Style Advisor until Oct 2026) or Pro; a
+// haircut they describe or bring in a photo is a Pro try-on and spends a
+// credit.
+//
+// The Event Stylist: three looks for one event, with pieces in stores and how
+// to finish them. An event takes a pass (event_pass) or, on Pro, three of the
+// month's looks.
 
-export type PaywallCode = 'needs_pro' | 'needs_color_report' | 'needs_style_report' | 'needs_hair' | 'no_credits'
+export type PaywallCode =
+  | 'needs_pro'
+  | 'needs_color_report'
+  | 'needs_style_report'
+  | 'needs_hair'
+  | 'needs_event'
+  | 'no_credits'
 
 export class PaywallError extends Error {
   constructor(
@@ -46,6 +57,9 @@ type BillingFields = Pick<
   | 'colorReportAt'
   | 'styleReportAt'
   | 'colorMirrorAt'
+  | 'hairAdvisorAt'
+  | 'styleWithoutHair'
+  | 'eventCredits'
   | 'pro'
   | 'styleKitUntil'
   | 'paidAt'
@@ -97,6 +111,7 @@ export function billingState(user: BillingFields, now = Date.now()) {
   const colorReport = proActive || Boolean(colorReportAt || user.colorMirrorAt)
   const styleReport = proActive || Boolean(styleReportAt)
   const colorMirror = colorReport
+  const hairAdvisor = proActive || Boolean(user.hairAdvisorAt) || Boolean(styleReportAt && !user.styleWithoutHair)
   const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS
   const within = (at: Date | null) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
   const colorRecent = within(colorReportAt)
@@ -126,18 +141,20 @@ export function billingState(user: BillingFields, now = Date.now()) {
     colorReport,
     styleReport,
     colorMirror,
+    hairAdvisor,
+    eventCredits: user.eventCredits ?? 0,
     // Completing the pair at the bundle price, soon after buying one report.
     colorAddonUntil: !colorReport && styleRecent ? styleRecent : null,
     styleAddonUntil: !styleReport && colorRecent ? colorRecent : null,
     reportCreditCents,
     reportCreditUntil: reportCreditCents > 0 ? reportCreditUntil : null,
     // Bought anything, ever (reports, a look pack or Pro).
-    paid: Boolean(user.paidAt || colorReportAt || styleReportAt || user.colorMirrorAt || pro || user.styleKitUntil),
+    paid: Boolean(user.paidAt || colorReportAt || styleReportAt || user.colorMirrorAt || user.hairAdvisorAt || pro || user.styleKitUntil),
     credits: user.credits ?? env.FREE_CREDITS,
     freeAvatarRunsLeft: proActive ? null : Math.max(0, env.FREE_AVATAR_RUNS - (user.freeAvatarRuns ?? 0)),
     // Every recommended haircut on them; otherwise the free one(s).
-    hairCuts: styleReport || proActive,
-    freeHairRunsLeft: styleReport || proActive ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
+    hairCuts: hairAdvisor,
+    freeHairRunsLeft: hairAdvisor ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
   }
 }
 
@@ -160,6 +177,8 @@ export function serializeBilling(user: BillingFields) {
     colorReport: state.colorReport,
     styleReport: state.styleReport,
     colorMirror: state.colorMirror,
+    hairAdvisor: state.hairAdvisor,
+    eventCredits: state.eventCredits,
     colorAddonUntil: iso(state.colorAddonUntil),
     styleAddonUntil: iso(state.styleAddonUntil),
     reportCredit: state.reportCreditCents > 0 ? { amount: state.reportCreditCents, until: iso(state.reportCreditUntil) } : null,
@@ -181,6 +200,9 @@ const BILLING_PROJECTION = {
   colorReportAt: 1,
   styleReportAt: 1,
   colorMirrorAt: 1,
+  hairAdvisorAt: 1,
+  styleWithoutHair: 1,
+  eventCredits: 1,
   pro: 1,
   styleKitUntil: 1,
   paidAt: 1,
@@ -323,10 +345,56 @@ export async function useHairRun(app: FastifyInstance, userId: ObjectId) {
   )
 
   if (result.modifiedCount === 0) {
-    throw new PaywallError('needs_hair', 'All your recommended cuts, shown on you, come with the Style Advisor or Pro.')
+    throw new PaywallError('needs_hair', 'All your recommended cuts, shown on you, come with the Hair & Grooming Advisor or Pro.')
   }
 
   return true
+}
+
+// The hair colors (or facial hair) on them: the Hair & Grooming Advisor; the
+// Color Advisor shows the same board with the rest of its colors.
+export async function requireHairAdvisor(app: FastifyInstance, userId: ObjectId, feature: string) {
+  if (!(await loadState(app, userId)).hairAdvisor) {
+    throw new PaywallError('needs_hair', `${feature} comes with your Hair & Grooming Advisor.`)
+  }
+}
+
+export type EventAccess = 'comp' | 'pass' | 'pro'
+
+export const EVENT_LOOKS = 3
+
+// What one event takes: nothing on a comp account, else a pass if they have
+// one, else three looks on Pro. Throws the Event Stylist offer otherwise.
+export async function useEventAccess(app: FastifyInstance, userId: ObjectId): Promise<EventAccess> {
+  const state = await loadState(app, userId)
+
+  if (state.comp) {
+    return 'comp'
+  }
+
+  const pass = await app.collections.users.updateOne(
+    { _id: userId, eventCredits: { $gte: 1 } },
+    { $inc: { eventCredits: -1 }, $set: { updatedAt: new Date() } },
+  )
+
+  if (pass.modifiedCount === 1) {
+    return 'pass'
+  }
+
+  if (state.proActive) {
+    await spendCredits(app, userId, EVENT_LOOKS)
+    return 'pro'
+  }
+
+  throw new PaywallError('needs_event', 'The Event Stylist dresses you for one event: three looks, pieces in stores and how to finish them.')
+}
+
+export async function refundEventAccess(app: FastifyInstance, userId: ObjectId, access: EventAccess) {
+  if (access === 'pass') {
+    await app.collections.users.updateOne({ _id: userId }, { $inc: { eventCredits: 1 } })
+  } else if (access === 'pro') {
+    await refundCredits(app, userId, EVENT_LOOKS)
+  }
 }
 
 export async function releaseHairRun(app: FastifyInstance, userId: ObjectId) {
