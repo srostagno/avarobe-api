@@ -807,14 +807,19 @@ const PRODUCT_NAMES: Record<string, string> = {
   // Since 2-Oct the mirror comes with the Color Advisor.
   color_mirror: 'Color Advisor',
   hair_advisor: 'Hair & Grooming Advisor',
-  advisors_bundle: 'advisors set',
+  advisors_bundle: 'three advisors',
   event_pass: 'Event Stylist',
 }
 
+// Names that read as plural: "Your three advisors are…".
+const PLURAL_PRODUCTS = new Set(['look_pack', 'reports_bundle', 'advisors_bundle'])
+
 export function checkoutRescueEmail(input: Recipient & { product: string; url: string }): EmailContent {
   const name = PRODUCT_NAMES[input.product] ?? 'purchase'
-  const what = name === 'looks' ? 'Your looks are' : `Your ${name} is`
-  const report = /report|addon|bundle|mirror|advisor|event/.test(input.product)
+  const what = `Your ${name} ${PLURAL_PRODUCTS.has(input.product) ? 'are' : 'is'}`
+  // The color hero for the color and style advisors; hair and events show
+  // outfits for occasions.
+  const report = /report|addon|reports_bundle|advisors_bundle|mirror/.test(input.product)
 
   return layout({
     subject: `${what} one step away`,
