@@ -804,12 +804,13 @@ const PRODUCT_NAMES: Record<string, string> = {
   pro_monthly: 'Avarobe Pro',
   pro_annual: 'Avarobe Pro',
   pro_trial: 'Avarobe Pro',
+  color_mirror: 'color mirror',
 }
 
 export function checkoutRescueEmail(input: Recipient & { product: string; url: string }): EmailContent {
   const name = PRODUCT_NAMES[input.product] ?? 'purchase'
   const what = name === 'looks' ? 'Your looks are' : `Your ${name} is`
-  const report = /report|addon|bundle/.test(input.product)
+  const report = /report|addon|bundle|mirror/.test(input.product)
 
   return layout({
     subject: `${what} one step away`,

@@ -408,6 +408,10 @@ async function sendOne(
 
 // Where a rescue link lands: the offer they were paying for.
 function rescueNext(product: string) {
+  if (product === 'color_mirror') {
+    return '/studio?upgrade=mirror'
+  }
+
   if (/^color_|reports_bundle/.test(product)) {
     return '/studio?upgrade=palette'
   }
