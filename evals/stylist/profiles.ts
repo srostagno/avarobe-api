@@ -58,6 +58,15 @@ export const CLIENTS = {
     neutrals: sw('Black #101010, Pure White #FFFFFF, Charcoal #36393F, Navy #1B2A4A, Cool Gray #8E949A'),
     avoidColors: sw('Camel #B99A6B, Orange #E67E22, Mustard #C9A227, Warm Beige #D8C3A5'),
   }),
+  softSummerWoman: client('soft-summer-woman', { heightCm: 163, weightKg: 70, build: 'curvy', presentation: 'womenswear' }, {
+    season: 'Soft Summer',
+    undertone: 'cool',
+    contrast: 'low',
+    metals: 'silver',
+    bestColors: sw('Mauve #A97C8B, Dusty Rose #C48E98, Soft Plum #86677F, Slate Blue #6C7FA3, Periwinkle #8E9BD0, Soft Teal #5F8E91, Blue Spruce #4E6E73, Rose Brown #9C6F6A, Lavender Gray #A9A3BC, Soft Raspberry #A8546F'),
+    neutrals: sw('Soft White #EEECE6, Cool Taupe #A0958F, Pewter Gray #7D8086, Charcoal Blue #44505E, Soft Navy #33415C'),
+    avoidColors: sw('Orange #E67E22, Mustard #C9A227, Black #101010, Optic White #FFFFFF'),
+  }),
   lightSpringWoman: client('light-spring-woman', { heightCm: 163, weightKg: 88, build: 'plus', presentation: 'womenswear' }, {
     season: 'Light Spring',
     undertone: 'warm',

@@ -9,7 +9,7 @@ import {
   buildBaselineLookPlanRequest,
 } from './baseline.js'
 import { BRIEFS } from './briefs.js'
-import { fmt, judgeLooks, mean, pct, pool, retry, save, timed, withStylist } from './lib.js'
+import { fmt, judgeLooks, mean, pct, pool, retry, save, timed, usageLine, withStylist } from './lib.js'
 import { CLIENTS } from './profiles.js'
 
 type Arm = { id: string; label: string; model: string; effort: 'low' | 'medium' | 'high'; baseline?: boolean }
@@ -91,4 +91,5 @@ for (const arm of arms) {
   }
 }
 
-console.log(`\nSaved ${save(`briefs-${stamp}`, results)}`)
+console.log(`\n${usageLine()}`)
+console.log(`Saved ${save(`briefs-${stamp}`, results)}`)

@@ -644,6 +644,8 @@ export type LookDocument = {
   batchId: ObjectId
   occasion: {
     text: string
+    // Their own notes on the brief, kept so remixes and fixes still read them.
+    notes?: string | null
     dressCode: string
     summary: string
     // What the stylist understood the person asked for, shown back to them.

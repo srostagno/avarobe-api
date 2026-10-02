@@ -17,6 +17,7 @@ import { hairReference } from '../avatar/hair.js'
 import { refundCredits } from '../billing/entitlements.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
+  type RemixHistoryEntry,
   type StylistTaste,
   TRY_ON_INSTRUCTIONS,
   buildLookPlanRequest,
@@ -33,7 +34,7 @@ const HEX_PATTERN = /^#[0-9a-f]{6}$/i
 const RENDER_FAILED_MESSAGE = 'We could not render this look. Try again.'
 
 type LookPlanResponse = {
-  brief: { asks: string[]; styleSignature: string; climate: string }
+  brief: { asks: string[]; hardRules: string[]; styleSignature: string; climate: string }
   dressCode: string
   occasionSummary: string
   looks: LookPlan[]
@@ -110,13 +111,16 @@ export async function planLooks(input: {
   return requestPlan(buildLookPlanRequest(input), input.count, input.taste)
 }
 
-// One variant of a look: same style, the change the person picked.
+// One variant of a look: same style, the change the person picked. History
+// is the looks it came from for the same occasion (looks/history.ts), so
+// what they said about any of them still holds.
 export async function planRemix(input: {
   avatar: AvatarDocument
-  base: Pick<LookDocument, 'plan' | 'occasion'>
+  base: Pick<LookDocument, 'plan' | 'occasion'> & Partial<Pick<LookDocument, 'remix'>>
   change: RemixChange
   detail: string | null
   taste?: StylistTaste | null
+  history?: RemixHistoryEntry[]
 }) {
   return requestPlan(buildRemixRequest(input), 1, input.taste)
 }

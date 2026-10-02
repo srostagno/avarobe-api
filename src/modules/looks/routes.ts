@@ -33,6 +33,7 @@ import { ShopQuotaError, findPieceMatches } from '../shop/service.js'
 import { FEEDBACK_ASPECTS, describeFeedback } from '../taste/prompts.js'
 import { readTaste, scheduleTasteLearning, toStylistTaste } from '../taste/service.js'
 import { fixIsFree } from './fixes.js'
+import { remixHistory } from './history.js'
 import { reserveLookQuota } from './quota.js'
 import {
   lookStorageKeys,
@@ -256,6 +257,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         batchId,
         occasion: {
           text: occasion,
+          notes,
           dressCode: plan.dressCode,
           summary: plan.occasionSummary,
           asks: plan.asks,
@@ -850,7 +852,23 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       let plan: Awaited<ReturnType<typeof planRemix>>
 
       try {
-        plan = await planRemix({ avatar, base, change, detail, taste: toStylistTaste(await readTaste(app, userId)) })
+        // What they said about the looks this one came from still holds:
+        // a chain of fixes adds their words up instead of forgetting them.
+        const history = await remixHistory(base, (id) =>
+          app.collections.looks.findOne(
+            { _id: id, userId },
+            { projection: { plan: 1, occasion: 1, feedback: 1, remix: 1, remixOf: 1 } },
+          ),
+        )
+
+        plan = await planRemix({
+          avatar,
+          base,
+          change,
+          detail,
+          taste: toStylistTaste(await readTaste(app, userId)),
+          history,
+        })
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Look remix failed')
         await releaseGenerations(app, userId, 'look', 1)
@@ -877,6 +895,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         batchId: new ObjectId(),
         occasion: {
           text: change === 'occasion' && detail ? detail : base.occasion.text,
+          notes: change === 'occasion' ? null : (base.occasion.notes ?? null),
           dressCode: plan.dressCode,
           summary: plan.occasionSummary,
           // What they asked for is still the original brief (or the new

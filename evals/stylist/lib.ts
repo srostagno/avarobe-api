@@ -8,6 +8,37 @@ import { createStructuredResponse } from '../../src/utils/openai.js'
 export const OUT_DIR = new URL('./out/', import.meta.url).pathname
 export const JUDGE_MODEL = 'gpt-5.5'
 
+// Token use of every Responses call this process makes (stylist and judge),
+// so a run can say what it cost.
+export const usage = { calls: 0, input: 0, output: 0 }
+const realFetch = globalThis.fetch
+globalThis.fetch = async (input, init) => {
+  const response = await realFetch(input, init)
+
+  if (String(input instanceof Request ? input.url : input).endsWith('/responses')) {
+    void response
+      .clone()
+      .json()
+      .then((payload: { usage?: { input_tokens?: number; output_tokens?: number } }) => {
+        usage.calls += 1
+        usage.input += payload.usage?.input_tokens ?? 0
+        usage.output += payload.usage?.output_tokens ?? 0
+      })
+      .catch(() => undefined)
+  }
+
+  return response
+}
+
+// Prices are an assumption (USD per million tokens); override with
+// EVAL_PRICE_IN / EVAL_PRICE_OUT.
+export function usageLine() {
+  const priceIn = Number(process.env.EVAL_PRICE_IN ?? 5)
+  const priceOut = Number(process.env.EVAL_PRICE_OUT ?? 30)
+  const cost = (usage.input * priceIn + usage.output * priceOut) / 1_000_000
+  return `${usage.calls} calls, ${usage.input} input + ${usage.output} output tokens, about $${cost.toFixed(2)} at $${priceIn}/$${priceOut} per million`
+}
+
 export async function pool<T, R>(items: T[], size: number, run: (item: T, index: number) => Promise<R>) {
   const results: R[] = new Array(items.length)
   let next = 0
