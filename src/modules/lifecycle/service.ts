@@ -421,7 +421,7 @@ function rescueNext(product: string) {
   }
 
   if (product === 'event_pass') {
-    return '/studio/events/new'
+    return '/studio/events'
   }
 
   if (/^color_|reports_bundle/.test(product)) {
