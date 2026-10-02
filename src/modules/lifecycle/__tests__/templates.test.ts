@@ -4,12 +4,13 @@ import { describe, it } from 'node:test'
 import { ObjectId } from 'mongodb'
 
 import { env } from '../../../config/env.js'
-import { unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
+import { emailImageUrl, emailImageUser, unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
   looksNudgeEmail,
+  priceDropEmail,
   trialEndingEmail,
   trialStartedEmail,
   upgradeLastCallEmail,
@@ -144,6 +145,46 @@ describe('offer emails, trial off: the Color Report leads', () => {
       assert.ok(!/trial|\$1\.00/i.test(last.text))
     }),
   )
+})
+
+describe('price drop email', () => {
+  const photo = 'https://api.avarobe.com/api/v1/email/i/abc.jpg?e=1&s=sig'
+  const url = 'https://www.avarobe.com/continue?token=t&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop'
+
+  it('lead with their own photo and the new price, once, without an old price to compare', () => {
+    const email = priceDropEmail({ ...recipient, season: 'Light Spring', colors: COLORS, heroUrl: photo, url })
+    assert.equal(email.subject, `Your Color Report is now $${(env.PRICE_COLOR_REPORT_CENTS / 100).toFixed(2)}`)
+    assert.ok(email.html.includes(photo.replace(/&/g, '&amp;')))
+    assert.ok(email.text.includes('blurred half of your photo'))
+    assert.ok(email.text.includes('$4.99, once'))
+    assert.ok(email.text.includes('no subscription'))
+    assert.ok(email.html.includes('Light Spring'))
+    assert.ok(email.html.includes(url.replace(/&/g, '&amp;')))
+    assert.ok(!email.text.includes('$14.90'))
+  })
+
+  it('fall back to the report picture when there is no photo', () => {
+    const email = priceDropEmail({ ...recipient, season: null, colors: [], heroUrl: null, url })
+    assert.ok(email.html.includes('/email/color-report.jpg'))
+    assert.ok(!email.text.includes('blurred half'))
+    assert.ok(!email.text.includes('Your season'))
+  })
+})
+
+describe('email photo links', () => {
+  it('work for two weeks, and only for the account they were signed for', () => {
+    const id = new ObjectId()
+    const now = new Date('2026-10-02T12:00:00Z')
+    const link = new URL(emailImageUrl(id, now))
+    const file = link.pathname.split('/').pop() ?? ''
+    const expires = link.searchParams.get('e') ?? ''
+    const signature = link.searchParams.get('s') ?? ''
+
+    assert.equal(emailImageUser(file, expires, signature, now)?.toString(), id.toString())
+    assert.equal(emailImageUser(file, expires, signature, new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000)), null)
+    assert.equal(emailImageUser(`${new ObjectId().toString()}.jpg`, expires, signature, now), null)
+    assert.equal(emailImageUser(file, String(Number(expires) + 60), signature, now), null)
+  })
 })
 
 describe('checkout rescue email', () => {

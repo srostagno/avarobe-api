@@ -646,6 +646,53 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
   })
 }
 
+// Once, after the price cut, to people who opened an offer at the old price.
+// It leads with their own drape photo, their #1 color still blurred
+// (`heroUrl`, null when there is none), and the new price. "We lowered the
+// price" is all it claims: no struck-through old price.
+export function priceDropEmail(
+  input: Recipient & { season: string | null; colors: ColorSwatch[]; heroUrl: string | null; url: string },
+): EmailContent {
+  const price = money(env.PRICE_COLOR_REPORT_CENTS)
+  const personal = Boolean(input.heroUrl)
+
+  return layout({
+    subject: `Your Color Report is now ${price}`,
+    preheader: `We lowered the price. See your #1 color and your full palette on your own face: ${price}, once. No subscription.`,
+    hero: personal
+      ? {
+          src: input.heroUrl as string,
+          alt: 'Your photo: on the left your #1 color, blurred until you open your report; on the right, a color to keep away from your face',
+        }
+      : { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow('A lower price'),
+      heading(`Your #1 color, now ${price}.`),
+      greeting(input.firstName),
+      paragraph(
+        personal
+          ? 'We lowered the price of the Color Report. The blurred half of your photo is you in your #1 color, the shade that lights up your face. It’s ready in your report.'
+          : 'We lowered the price of the Color Report. Your #1 color, the shade that lights up your face, is ready in your report.',
+      ),
+      ...(input.season && input.colors.length > 0
+        ? [
+            palette(
+              input.season,
+              input.colors,
+              `You’ve seen ${input.colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
+            ),
+          ]
+        : []),
+      checklist(REPORT_FEATURES),
+      priceBox(`${price}, once`, 'One-time payment, no subscription.', 'Yours to keep.'),
+      button(`See my #1 color · ${price}`, input.url),
+      signature(),
+    ],
+  })
+}
+
 export function upgradeReminderEmail(input: Recipient & { season: string | null; colors: ColorSwatch[] }): EmailContent {
   const { season, colors } = input
 

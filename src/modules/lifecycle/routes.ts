@@ -1,10 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { ObjectId } from 'mongodb'
+import sharp from 'sharp'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { parseBody } from '../../utils/http.js'
-import { clickTarget, recordClick, recordOpen, recordUnsubscribe, userIdFromUnsubscribeToken } from './service.js'
+import { storage } from '../../utils/storage.js'
+import { clickTarget, emailImageUser, recordClick, recordOpen, recordUnsubscribe, userIdFromUnsubscribeToken } from './service.js'
 
 const unsubscribeSchema = z.object({
   token: z.string().min(10).max(200),
@@ -15,13 +17,19 @@ const unsubscribeSchema = z.object({
 })
 
 const clickSchema = z.object({ u: z.string().min(1).max(2000), s: z.string().min(10).max(200) })
+const imageSchema = z.object({ e: z.string().max(20), s: z.string().min(10).max(200) })
+
+// Where an email photo link falls back to (expired, tampered with, or the
+// photo is gone): the generic report image, so the email never breaks.
+const FALLBACK_IMAGE = 'https://www.avarobe.com/email/color-report.jpg'
 
 // A transparent 1x1 GIF.
 const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
 
 // The public side of the onboarding emails: the unsubscribe link (the token
 // is the account id signed with the server secret; account and security
-// emails are not affected), the open pixel and the click redirect.
+// emails are not affected), the open pixel, the click redirect and the
+// signed photo of the price-drop email.
 const lifecycleRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     '/unsubscribe',
@@ -73,6 +81,31 @@ const lifecycleRoutes: FastifyPluginAsync = async (app) => {
         .header('Content-Type', 'image/gif')
         .header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         .send(PIXEL)
+    },
+  )
+
+  // Their drape photo, best side blurred, for the price-drop email. JPEG,
+  // which every email client shows.
+  app.get<{ Params: { file: string } }>(
+    '/i/:file',
+    { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(imageSchema, request.query)
+      const userId = parsed.ok ? emailImageUser(request.params.file, parsed.data.e, parsed.data.s) : null
+      const avatar = userId ? await app.collections.avatars.findOne({ userId }, { projection: { drapePreview: 1 } }) : null
+      const key = avatar?.drapePreview?.lockedKey
+
+      if (!key) {
+        return reply.redirect(FALLBACK_IMAGE, 302)
+      }
+
+      try {
+        const jpeg = await sharp(await storage.read(key)).jpeg({ quality: 84, mozjpeg: true }).toBuffer()
+        return reply.header('Content-Type', 'image/jpeg').header('Cache-Control', 'private, max-age=86400').send(jpeg)
+      } catch (error) {
+        request.log.warn({ err: error }, 'Email image not served')
+        return reply.redirect(FALLBACK_IMAGE, 302)
+      }
     },
   )
 

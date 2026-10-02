@@ -118,6 +118,9 @@ export type LifecycleEmailKind =
   | 'trial_ending'
   // A checkout left unpaid: a link to finish it in their own browser.
   | 'checkout_rescue'
+  // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
+  // the old price and bought nothing.
+  | 'price_drop'
 
 export type ProSubscription = {
   subscriptionId: string

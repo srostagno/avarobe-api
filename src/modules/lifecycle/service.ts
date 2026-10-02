@@ -8,9 +8,11 @@ import { hmacSign, hmacVerify } from '../../utils/tokens.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from './schedule.js'
 import {
+  appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
   looksNudgeEmail,
+  priceDropEmail,
   trialEndingEmail,
   trialStartedEmail,
   upgradeLastCallEmail,
@@ -33,6 +35,19 @@ const SIMULATED_SUBSCRIPTION = 'sim_admin'
 // An unpaid checkout gets its rescue email after this long, within two days.
 const RESCUE_AFTER_MS = 60 * 60 * 1000
 const RESCUE_WITHIN_MS = 48 * 60 * 60 * 1000
+// The 2-Oct-2026 price cut ($14.90 → $4.99): one email to people who opened
+// an offer at the old price (since the 28-Sep price list) and bought
+// nothing. It goes out between 10:00 and 20:00 New York time, at least
+// `gap` after their last onboarding email, until `until`.
+const PRICE_DROP = {
+  cutAt: new Date('2026-10-02T09:25:00Z'),
+  offersSince: new Date('2026-09-28T00:00:00Z'),
+  until: new Date('2026-10-05T04:00:00Z'),
+  gap: 18 * 60 * 60 * 1000,
+  hours: { from: 10, to: 20 },
+}
+// How long the photo in that email keeps loading.
+const EMAIL_IMAGE_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
 // ---------------------------------------------------------------- unsubscribe
 
@@ -187,12 +202,14 @@ export function lifecycleContentFor(
   sendId?: ObjectId,
   // The rescue email's checkout and its sign-in link.
   rescue?: { product: string; url: string },
+  // The price-drop email's photo (null for none) and its sign-in link.
+  priceDrop?: { heroUrl: string | null; url: string },
 ): EmailContent {
   const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
-  // Free accounts see their first three colors in the app; the emails show
-  // the same ones, never the locked rest.
-  const freeColors = analysis?.bestColors.slice(0, 3) ?? []
+  // The emails show the same free colors as the app, never the locked rest:
+  // with their #1 color locked (LOCK_BEST_COLOR), the three after it.
+  const freeColors = (env.LOCK_BEST_COLOR ? analysis?.bestColors.slice(1, 4) : analysis?.bestColors.slice(0, 3)) ?? []
 
   switch (kind) {
     case 'welcome': {
@@ -219,6 +236,14 @@ export function lifecycleContentFor(
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
       return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? `${env.APP_URL}/studio` })
+    case 'price_drop':
+      return priceDropEmail({
+        ...recipient,
+        season: analysis?.season ?? null,
+        colors: freeColors,
+        heroUrl: priceDrop?.heroUrl ?? null,
+        url: priceDrop?.url ?? appLink('/studio', 'price_drop', { upgrade: 'palette' }),
+      })
   }
 }
 
@@ -486,6 +511,144 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   }
 }
 
+// ---------------------------------------------------------------- price drop
+
+// Their drape photo in an email: the locked copy (best side blurred), served
+// by the API through a link signed for this account that stops working
+// after two weeks. Email clients fetch images without signing in.
+const imageSignature = (userId: string, expires: number) =>
+  hmacSign(env.JWT_ACCESS_SECRET, `email-image:${userId}:${expires}`)
+
+export function emailImageUrl(userId: ObjectId, now = new Date()) {
+  const id = userId.toString()
+  const expires = Math.floor((now.getTime() + EMAIL_IMAGE_TTL_MS) / 1000)
+  const url = new URL(`/api/v1/email/i/${id}.jpg`, `${env.API_PUBLIC_URL}/`)
+  url.searchParams.set('e', String(expires))
+  url.searchParams.set('s', imageSignature(id, expires))
+  return url.toString()
+}
+
+// The account whose photo a signed image link shows, while it's valid.
+export function emailImageUser(file: string, expires: string, signature: string, now = new Date()) {
+  const id = file.replace(/\.jpg$/, '')
+  const seconds = Number(expires)
+
+  if (!ObjectId.isValid(id) || !Number.isFinite(seconds) || seconds * 1000 < now.getTime()) {
+    return null
+  }
+
+  return hmacVerify(env.JWT_ACCESS_SECRET, `email-image:${id}:${seconds}`, signature) ? new ObjectId(id) : null
+}
+
+const newYorkHour = (now: Date) =>
+  Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(now))
+
+// Every run while the window is open: the price-drop email to whoever is
+// due. Promotional, so never to anyone who opted out or without the postal
+// address; never to someone who bought anything, or before they've seen
+// their colors.
+export async function sendPriceDropEmails(app: FastifyInstance, now = new Date()) {
+  const hour = newYorkHour(now)
+
+  if (!env.EMAIL_POSTAL_ADDRESS || now >= PRICE_DROP.until || hour < PRICE_DROP.hours.from || hour >= PRICE_DROP.hours.to) {
+    return 0
+  }
+
+  const viewers = await app.collections.analyticsEvents.distinct('userId', {
+    name: 'paywall_offer',
+    at: { $gte: PRICE_DROP.offersSince, $lt: PRICE_DROP.cutAt },
+    userId: { $ne: null },
+  })
+  const users = await app.collections.users
+    .find({ _id: { $in: viewers as ObjectId[] }, emailTipsOptOutAt: null, 'lifecycleEmails.price_drop': { $exists: false } })
+    .limit(BATCH)
+    .toArray()
+  let sent = 0
+
+  for (const user of users) {
+    const billing = billingState(user, now.getTime())
+
+    if (isAdmin(user) || billing.paid || billing.comp || billing.proLive || billing.colorReport) {
+      continue
+    }
+
+    // Spaced from their other emails, like the onboarding ones.
+    if (user.lifecycleEmailLastAt && now.getTime() - user.lifecycleEmailLastAt.getTime() < PRICE_DROP.gap) {
+      continue
+    }
+
+    const avatar = await app.collections.avatars.findOne({ userId: user._id })
+
+    if (avatar?.status !== 'ready' || !avatar.colorAnalysis) {
+      continue
+    }
+
+    if (await sendPriceDrop(app, user, avatar, now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: AvatarDocument, now: Date) {
+  const field = 'lifecycleEmails.price_drop'
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    // Signed in from the email, straight to the Color Report offer, in
+    // their own browser (where Apple Pay works).
+    const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: '/studio?upgrade=palette' }))
+    signIn.searchParams.set('utm_source', 'email')
+    signIn.searchParams.set('utm_medium', 'lifecycle')
+    signIn.searchParams.set('utm_campaign', 'price_drop')
+    const heroUrl = avatar.drapePreview?.lockedKey ? emailImageUrl(user._id, now) : null
+    const content = lifecycleContentFor('price_drop', user, avatar, { count: 0, lastAt: null }, sendId, undefined, {
+      heroUrl,
+      url: signIn.toString(),
+    })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'price_drop',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), delivered, photo: Boolean(heroUrl) }, 'Price drop email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Price drop email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+    return false
+  }
+}
+
 let running = false
 
 // One pass: everyone who signed up recently and still wants tips gets the
@@ -557,6 +720,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendCheckoutRescues(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Checkout rescue run crashed')
+    })
+    void sendPriceDropEmails(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Price drop run crashed')
     })
   }
 

@@ -12,6 +12,7 @@ import path from 'node:path'
 import {
   avatarNudgeEmail,
   looksNudgeEmail,
+  priceDropEmail,
   trialEndingEmail,
   checkoutRescueEmail,
   trialStartedEmail,
@@ -50,6 +51,15 @@ const emails = {
   'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
   'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
   'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: 'https://www.avarobe.com/continue?token=preview' }),
+  // PREVIEW_PHOTO_URL: a public image standing in for their locked drape photo
+  // (a fictional face); without it, the email's fallback picture.
+  'price-drop': priceDropEmail({
+    ...recipient,
+    season: 'Warm Autumn',
+    colors,
+    heroUrl: process.env.PREVIEW_PHOTO_URL ?? null,
+    url: 'https://www.avarobe.com/continue?token=preview&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop',
+  }),
 }
 
 const log = {
