@@ -33,7 +33,7 @@ export function serializeUser(user: UserDocument) {
   }
 }
 
-// Without the Color Report the palette shows the season and a first taste of
+// Without the Color Advisor the palette shows the season and a first taste of
 // colors; the rest stays on the server, with counts so the page can hint at it.
 function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean, hideTop: boolean) {
   if (!analysis || full) {
@@ -65,7 +65,7 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
 }
 
 export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean; mirror?: boolean }) {
-  // Before they unlock their colors (the Color Report, or the color mirror,
+  // Before they unlock their colors (the Color Advisor, or the color mirror,
   // which shows their #1 live), the photo shows only their worst color (the
   // locked copy, until it exists: nothing).
   const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette && !options.mirror
@@ -96,7 +96,7 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     body: avatar.body,
     colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, bestLocked),
     // The color mirror drapes all their colors, so its owners get them for
-    // the mirror even without the Color Report (whose palette stays locked).
+    // the mirror even without the Color Advisor (whose palette stays locked).
     mirrorColors:
       options.mirror && !options.fullPalette && avatar.colorAnalysis
         ? {

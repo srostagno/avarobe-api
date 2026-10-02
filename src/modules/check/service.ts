@@ -47,7 +47,7 @@ export async function assertCheckAllowed(app: FastifyInstance, userId: ObjectId)
 
   throw state?.colorReport
     ? new PaywallError('needs_pro', 'More color checks come with Avarobe Pro.')
-    : new PaywallError('needs_color_report', 'More color checks come with your Color Report.')
+    : new PaywallError('needs_color_report', 'More color checks come with your Color Advisor.')
 }
 
 // Reads the garment against their colors, then draws that color next to

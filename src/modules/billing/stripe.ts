@@ -31,7 +31,7 @@ type ProductConfig = {
 export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   color_report: {
     lookupKey: 'avarobe_color_report_v2',
-    name: 'Avarobe Color Report',
+    name: 'Avarobe Color Advisor',
     description: 'Your full palette and a visual color report on your own face: drape test, boards and guides.',
     amount: () => env.PRICE_COLOR_REPORT_CENTS,
     credits: () => 0,
@@ -39,7 +39,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   },
   style_report: {
     lookupKey: 'avarobe_style_report_v1',
-    name: 'Avarobe Style Report',
+    name: 'Avarobe Style Advisor',
     description: 'Your style profile: the cuts, necklines and pieces that flatter you, shown on your avatar.',
     amount: () => env.PRICE_STYLE_REPORT_CENTS,
     credits: () => 0,
@@ -47,7 +47,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   },
   reports_bundle: {
     lookupKey: 'avarobe_reports_bundle_v1',
-    name: 'Avarobe Color + Style Reports',
+    name: 'Avarobe Color + Style Advisors',
     description: 'Both reports: your full color report and your style profile.',
     amount: () => env.PRICE_REPORTS_BUNDLE_CENTS,
     credits: () => 0,
@@ -55,16 +55,16 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   },
   color_addon: {
     lookupKey: 'avarobe_color_addon_v1',
-    name: 'Avarobe Color Report (completes your set)',
-    description: 'The Color Report at the bundle price, with your Style Report counted toward it.',
+    name: 'Avarobe Color Advisor (completes your set)',
+    description: 'The Color Advisor at the bundle price, with your Style Advisor counted toward it.',
     amount: colorAddonCents,
     credits: () => 0,
     unlocks: { color: true },
   },
   style_addon: {
     lookupKey: 'avarobe_style_addon_v1',
-    name: 'Avarobe Style Report (completes your set)',
-    description: 'The Style Report at the bundle price, with your Color Report counted toward it.',
+    name: 'Avarobe Style Advisor (completes your set)',
+    description: 'The Style Advisor at the bundle price, with your Color Advisor counted toward it.',
     amount: styleAddonCents,
     credits: () => 0,
     unlocks: { style: true },
@@ -75,7 +75,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     description: 'Every fabric draped under your face, live on your camera, with your #1 color and what each color does to you.',
     amount: () => env.PRICE_COLOR_MIRROR_CENTS,
     credits: () => 0,
-    unlocks: { mirror: true },
+    unlocks: { color: true, mirror: true },
   },
   look_pack: {
     lookupKey: 'avarobe_look_pack_v1',
@@ -95,7 +95,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   pro_annual: {
     lookupKey: 'avarobe_pro_annual_v1',
     name: 'Avarobe Pro (annual)',
-    description: 'Everything in Pro for a year, with your Color and Style Reports included.',
+    description: 'Everything in Pro for a year, with your Color and Style Advisors included.',
     amount: () => env.PRICE_PRO_ANNUAL_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'year',

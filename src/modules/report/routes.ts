@@ -51,8 +51,8 @@ async function serializeBoards(boards: AvatarDocument['reportBoards'], kinds: re
 
 type ReportAccess = { color: boolean; style: boolean }
 
-// Each half goes out only with its report: the Color Report (the color
-// report, drape test and color boards) and the Style Report (the style
+// Each half goes out only with its report: the Color Advisor (the color
+// report, drape test and color boards) and the Style Advisor (the style
 // profile and its boards). The admin review shows it the same way.
 export async function serializeReport(avatar: AvatarDocument | null, access: ReportAccess) {
   const kinds = BOARD_KINDS.filter((kind) => (isColorBoard(kind) ? access.color : access.style))
@@ -82,8 +82,8 @@ async function reportAccess(app: Parameters<FastifyPluginAsync>[0], userId: Para
   return { color: Boolean(state?.colorReport), style: Boolean(state?.styleReport) }
 }
 
-// The reports: the Color Report (advanced color analysis with a drape test)
-// and the Style Report (the style profile), each with its visual boards. Generated on request and kept
+// The reports: the Color Advisor (advanced color analysis with a drape test)
+// and the Style Advisor (the style profile), each with its visual boards. Generated on request and kept
 // until the selfie (color) or the body (style) changes. Writing them never
 // costs credits, so a report from before the boards is simply written again.
 const reportRoutes: FastifyPluginAsync = async (app) => {

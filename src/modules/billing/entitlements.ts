@@ -9,8 +9,8 @@ import { trackServerEvent } from '../analytics/service.js'
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
 // season, a few colors and their best and worst color on their face, and
 // their sign-up looks (SIGNUP_CREDITS; FREE_CREDITS for older accounts). The
-// Color Report unlocks the full palette and the visual color report; the
-// Style Report, the style profile. Pro (monthly, annual, or its first-time
+// Color Advisor unlocks the full palette and the visual color report; the
+// Style Advisor, the style profile. Pro (monthly, annual, or its first-time
 // trial) adds looks every month, both reports while it lasts and the tools:
 // try-ons, pieces and stores, the look analysis and more avatar changes; the
 // annual plan keeps the reports for good. Looks, remixes and try-ons spend
@@ -18,7 +18,7 @@ import { trackServerEvent } from '../analytics/service.js'
 //
 // Hair studio: the read of their hair and the ideal cut on them are free
 // (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
-// Style Report (it's their style, like silhouettes) or Pro; a haircut they
+// Style Advisor (it's their style, like silhouettes) or Pro; a haircut they
 // describe or bring in a photo is a Pro try-on and spends a credit.
 
 export type PaywallCode = 'needs_pro' | 'needs_color_report' | 'needs_style_report' | 'needs_hair' | 'no_credits'
@@ -91,11 +91,12 @@ export function billingState(user: BillingFields, now = Date.now()) {
   const proActive = comp || proLive || legacyKit
   const colorReportAt = user.colorReportAt ?? null
   const styleReportAt = user.styleReportAt ?? null
-  // Pro includes both reports while it lasts; bought ones are for good.
-  const colorReport = proActive || Boolean(colorReportAt)
+  // Pro includes both reports while it lasts; bought ones are for good. The
+  // color mirror sold on its own for a day (1-Oct-2026) and now comes with the
+  // Color Advisor, so either purchase unlocks both.
+  const colorReport = proActive || Boolean(colorReportAt || user.colorMirrorAt)
   const styleReport = proActive || Boolean(styleReportAt)
-  // The color mirror is its own purchase (Pro includes it).
-  const colorMirror = proActive || Boolean(user.colorMirrorAt)
+  const colorMirror = colorReport
   const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS
   const within = (at: Date | null) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
   const colorRecent = within(colorReportAt)
@@ -218,7 +219,7 @@ export async function hasColorReport(app: FastifyInstance, userId: ObjectId) {
   return (await loadState(app, userId)).colorReport
 }
 
-// What of their colors the avatar can show: the full palette (Color Report)
+// What of their colors the avatar can show: the full palette (Color Advisor)
 // and the color mirror's colors (Color Mirror).
 export async function paletteAccess(app: FastifyInstance, userId: ObjectId) {
   const state = await loadState(app, userId)
@@ -227,7 +228,7 @@ export async function paletteAccess(app: FastifyInstance, userId: ObjectId) {
 
 export async function requireColorReport(app: FastifyInstance, userId: ObjectId, feature: string) {
   if (!(await hasColorReport(app, userId))) {
-    throw new PaywallError('needs_color_report', `${feature} comes with your Color Report.`)
+    throw new PaywallError('needs_color_report', `${feature} comes with your Color Advisor.`)
   }
 }
 
@@ -238,7 +239,7 @@ export async function hasStyleReport(app: FastifyInstance, userId: ObjectId) {
 
 export async function requireStyleReport(app: FastifyInstance, userId: ObjectId, feature: string) {
   if (!(await hasStyleReport(app, userId))) {
-    throw new PaywallError('needs_style_report', `${feature} comes with your Style Report.`)
+    throw new PaywallError('needs_style_report', `${feature} comes with your Style Advisor.`)
   }
 }
 
@@ -305,7 +306,7 @@ export async function useAvatarRun(app: FastifyInstance, userId: ObjectId) {
   }
 }
 
-// One recommended haircut on the person: free with the Style Report or Pro,
+// One recommended haircut on the person: free with the Style Advisor or Pro,
 // otherwise their free hairstyle (FREE_HAIR_RUNS). Returns whether a free
 // run was used, so a failed render can give it back.
 export async function useHairRun(app: FastifyInstance, userId: ObjectId) {
@@ -322,7 +323,7 @@ export async function useHairRun(app: FastifyInstance, userId: ObjectId) {
   )
 
   if (result.modifiedCount === 0) {
-    throw new PaywallError('needs_hair', 'All your recommended cuts, shown on you, come with the Style Report or Pro.')
+    throw new PaywallError('needs_hair', 'All your recommended cuts, shown on you, come with the Style Advisor or Pro.')
   }
 
   return true

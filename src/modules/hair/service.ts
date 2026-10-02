@@ -90,7 +90,7 @@ async function readHair(app: FastifyInstance, avatar: AvatarDocument) {
 // Reads the selfie in the background. Only the run that started can finish
 // (a new selfie clears the profile, a redo restarts it). With a ready
 // profile, the ideal cut renders right away when the person may have it:
-// their free hairstyle, or every cut with the Style Report or Pro.
+// their free hairstyle, or every cut with the Style Advisor or Pro.
 export async function runHairProfile(app: FastifyInstance, avatarId: ObjectId, startedAt: Date) {
   const avatar = await app.collections.avatars.findOne({ _id: avatarId })
 
@@ -168,7 +168,7 @@ export function startHairProfile(app: FastifyInstance, avatarId: ObjectId, start
   })
 }
 
-// A recommended cut on the person: free with the Style Report or Pro,
+// A recommended cut on the person: free with the Style Advisor or Pro,
 // otherwise their free hairstyle. Throws PaywallError when neither applies.
 // A cut already shown (or showing) isn't rendered or charged again
 // (`started` is false); a failed one is retried in place. The caller has

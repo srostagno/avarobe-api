@@ -504,7 +504,7 @@ const TRIAL_FEATURES = () => [
 
 // The one-time alternatives to the trial.
 const PLAN = {
-  colorReport: () => ({ name: 'Color Report', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'Your full palette and drape test, yours to keep' }),
+  colorReport: () => ({ name: 'Color Advisor', price: money(env.PRICE_COLOR_REPORT_CENTS), detail: 'Your full palette and drape test, yours to keep' }),
   pack: () => ({ name: 'Look pack', price: money(env.PRICE_LOOK_PACK_CENTS), detail: `${env.LOOK_PACK_CREDITS} more looks. They never expire` }),
   proMonthly: () => ({
     name: 'Avarobe Pro',
@@ -513,7 +513,7 @@ const PLAN = {
   }),
 }
 
-// With the trial off (PRO_TRIAL): the Color Report leads, once and yours to
+// With the trial off (PRO_TRIAL): the Color Advisor leads, once and yours to
 // keep, and Pro monthly follows.
 const REPORT_FEATURES = [
   'Your full palette: 30+ colors in basics, accents and statements',
@@ -608,7 +608,7 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
           colors,
           `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
         ),
-        paragraph('Your Color Report is made from your own photo, and it’s yours to keep:'),
+        paragraph('Your Color Advisor is made from your own photo, and it’s yours to keep:'),
         checklist(REPORT_FEATURES),
         priceBox(reportOnce(), 'No subscription.', 'Yours to keep.'),
         button('See my full palette', appLink('/studio', 'upgrade_offer', { upgrade: 'palette' })),
@@ -657,7 +657,7 @@ export function priceDropEmail(
   const personal = Boolean(input.heroUrl)
 
   return layout({
-    subject: `Your Color Report is now ${price}`,
+    subject: `Your Color Advisor is now ${price}`,
     preheader: `We lowered the price. See your #1 color and your full palette on your own face: ${price}, once. No subscription.`,
     hero: personal
       ? {
@@ -673,8 +673,8 @@ export function priceDropEmail(
       greeting(input.firstName),
       paragraph(
         personal
-          ? 'We lowered the price of the Color Report. The blurred half of your photo is you in your #1 color, the shade that lights up your face. It’s ready in your report.'
-          : 'We lowered the price of the Color Report. Your #1 color, the shade that lights up your face, is ready in your report.',
+          ? 'We lowered the price of the Color Advisor. The blurred half of your photo is you in your #1 color, the shade that lights up your face. It’s ready in your report.'
+          : 'We lowered the price of the Color Advisor. Your #1 color, the shade that lights up your face, is ready in your report.',
       ),
       ...(input.season && input.colors.length > 0
         ? [
@@ -703,13 +703,13 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
     recipient: input,
     promotional: true,
     blocks: [
-      eyebrow('Your Color Report'),
+      eyebrow('Your Color Advisor'),
       heading('See every color that lights you up.'),
       greeting(input.firstName),
       ...(season && colors.length > 0
         ? [palette(season, colors, `You’ve seen ${colors.length} of your colors. Your report shows all of them.`)]
         : []),
-      paragraph('Your Color Report is a visual report made from your own photo, yours to keep:'),
+      paragraph('Your Color Advisor is a visual report made from your own photo, yours to keep:'),
       checklist([
         'Your full palette: 30+ colors in basics, accents and statements',
         'A drape test: your face next to your best and worst colors, like the one above',
@@ -751,7 +751,7 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
         heading('Your full palette, on your own face.'),
         greeting(input.firstName),
         paragraph(
-          'This is our last note about plans. Your Color Report shows every color that lights you up and the ones to keep away from your face, made from your own photo and yours to keep.',
+          'This is our last note about plans. Your Color Advisor shows every color that lights you up and the ones to keep away from your face, made from your own photo and yours to keep.',
         ),
         priceBox(reportOnce(), 'No subscription.', 'Yours to keep.'),
         button('See my full palette', appLink('/studio', 'upgrade_last_call', { upgrade: 'palette' })),
@@ -795,11 +795,11 @@ export function upgradeLastCallEmail(input: Recipient): EmailContent {
 // own browser where they left off. Promotional, so it carries the address.
 
 const PRODUCT_NAMES: Record<string, string> = {
-  color_report: 'Color Report',
-  color_addon: 'Color Report',
-  style_report: 'Style Report',
-  style_addon: 'Style Report',
-  reports_bundle: 'Color and Style Reports',
+  color_report: 'Color Advisor',
+  color_addon: 'Color Advisor',
+  style_report: 'Style Advisor',
+  style_addon: 'Style Advisor',
+  reports_bundle: 'Color and Style Advisors',
   look_pack: 'looks',
   pro_monthly: 'Avarobe Pro',
   pro_annual: 'Avarobe Pro',

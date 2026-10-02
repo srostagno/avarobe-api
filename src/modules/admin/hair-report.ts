@@ -73,7 +73,7 @@ export async function hairReport(app: FastifyInstance, days: number) {
   const users = await app.collections.users
     .find(
       { _id: { $in: [...accountIds.values()] } },
-      { projection: { email: 1, credits: 1, colorReportAt: 1, styleReportAt: 1, pro: 1, styleKitUntil: 1, paidAt: 1, freeAvatarRuns: 1, freeHairRuns: 1, compPaused: 1 } },
+      { projection: { email: 1, credits: 1, colorReportAt: 1, styleReportAt: 1, colorMirrorAt: 1, pro: 1, styleKitUntil: 1, paidAt: 1, freeAvatarRuns: 1, freeHairRuns: 1, compPaused: 1 } },
     )
     .toArray()
   const plans = new Map(

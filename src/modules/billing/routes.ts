@@ -188,17 +188,17 @@ function offer() {
 function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billingState>) {
   switch (product) {
     case 'color_report':
-      return state.colorReport ? 'You already have your Color Report.' : null
+      return state.colorReport ? 'You already have your Color Advisor.' : null
     case 'style_report':
-      return state.styleReport ? 'You already have your Style Report.' : null
+      return state.styleReport ? 'You already have your Style Advisor.' : null
     case 'reports_bundle':
       return state.colorReport || state.styleReport ? 'You already have one of the reports. Add the other one on its own.' : null
     case 'color_addon':
-      return state.colorAddonUntil ? null : 'This price has ended. The Color Report is still available.'
+      return state.colorAddonUntil ? null : 'This price has ended. The Color Advisor is still available.'
     case 'style_addon':
-      return state.styleAddonUntil ? null : 'This price has ended. The Style Report is still available.'
+      return state.styleAddonUntil ? null : 'This price has ended. The Style Advisor is still available.'
     case 'color_mirror':
-      return state.colorMirror ? 'You already have the color mirror.' : null
+      return state.colorMirror ? 'You already have the Color Advisor and its mirror.' : null
     case 'look_pack':
       return state.comp ? 'Your account already has unlimited looks.' : null
     case 'pro_monthly':
@@ -229,7 +229,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     available: stripeConfigured(),
     products: offer(),
     free: { credits: env.SIGNUP_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
-    // null while the trial is off: the web leads with the Color Report then.
+    // null while the trial is off: the web leads with the Color Advisor then.
     trial: env.PRO_TRIAL ? { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS } : null,
     reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
   }))

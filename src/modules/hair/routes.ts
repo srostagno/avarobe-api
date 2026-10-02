@@ -46,7 +46,7 @@ function hairLimitReached(reply: FastifyReply) {
 
 // The Hair studio: a read of their face shape and hair with the cuts that
 // suit them (free, with the ideal cut shown on them), every recommended cut
-// on them (Style Report or Pro), any haircut they describe or bring in a
+// on them (Style Advisor or Pro), any haircut they describe or bring in a
 // photo (Pro, one credit), and putting a haircut on their avatar.
 const hairRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)

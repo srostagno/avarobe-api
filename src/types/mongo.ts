@@ -41,7 +41,7 @@ export type UserDocument = {
   proTrialAt?: Date | null
   // Avatar renders used without Pro (create, redo, adjust, a new haircut).
   freeAvatarRuns?: number
-  // Hairstyle renders used without the Style Report or Pro (FREE_HAIR_RUNS).
+  // Hairstyle renders used without the Style Advisor or Pro (FREE_HAIR_RUNS).
   freeHairRuns?: number
   // Admins (COMP_EMAILS) testing the app as a regular customer.
   compPaused?: boolean

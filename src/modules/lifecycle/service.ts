@@ -609,7 +609,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
   const sendId = new ObjectId()
 
   try {
-    // Signed in from the email, straight to the Color Report offer, in
+    // Signed in from the email, straight to the Color Advisor offer, in
     // their own browser (where Apple Pay works).
     const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: '/studio?upgrade=palette' }))
     signIn.searchParams.set('utm_source', 'email')

@@ -108,7 +108,7 @@ const COLORS = [
   { name: 'Light aqua', hex: '#7FD1C7' },
 ]
 
-describe('offer emails, trial off: the Color Report leads', () => {
+describe('offer emails, trial off: the Color Advisor leads', () => {
   it(
     'lead the palette offer with the report, once, and Pro monthly after it, with no trial',
     withTrial(false, () => {
@@ -137,7 +137,7 @@ describe('offer emails, trial off: the Color Report leads', () => {
     'put the report first in the reminder and the last call',
     withTrial(false, () => {
       const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
-      assert.ok(reminder.text.indexOf('Color Report') < reminder.text.indexOf('Avarobe Pro'))
+      assert.ok(reminder.text.indexOf('Color Advisor') < reminder.text.indexOf('Avarobe Pro'))
       assert.ok(!/trial|\$1\.00/i.test(reminder.text))
       const last = upgradeLastCallEmail(recipient)
       assert.ok(last.html.includes('upgrade=palette'))
@@ -153,7 +153,7 @@ describe('price drop email', () => {
 
   it('lead with their own photo and the new price, once, without an old price to compare', () => {
     const email = priceDropEmail({ ...recipient, season: 'Light Spring', colors: COLORS, heroUrl: photo, url })
-    assert.equal(email.subject, `Your Color Report is now $${(env.PRICE_COLOR_REPORT_CENTS / 100).toFixed(2)}`)
+    assert.equal(email.subject, `Your Color Advisor is now $${(env.PRICE_COLOR_REPORT_CENTS / 100).toFixed(2)}`)
     assert.ok(email.html.includes(photo.replace(/&/g, '&amp;')))
     assert.ok(email.text.includes('blurred half of your photo'))
     assert.ok(email.text.includes('$4.99, once'))
@@ -191,7 +191,7 @@ describe('checkout rescue email', () => {
   it('names what they were buying and links to finish in their own browser', () => {
     const url = 'https://www.avarobe.com/continue?token=abc'
     const report = checkoutRescueEmail({ ...recipient, product: 'color_report', url })
-    assert.equal(report.subject, 'Your Color Report is one step away')
+    assert.equal(report.subject, 'Your Color Advisor is one step away')
     assert.ok(report.html.includes(url))
     assert.ok(report.text.includes('Apple Pay'))
     assert.ok(report.text.includes('expires in 3 days'))
@@ -209,7 +209,7 @@ describe('offer emails, trial on', () => {
     for (const price of ['$1.00', '$7.99 a month', '$4.99']) {
       assert.ok(offer.html.includes(price), price)
     }
-    assert.ok(offer.html.indexOf('7 days for $1.00') < offer.html.indexOf('Color Report'))
+    assert.ok(offer.html.indexOf('7 days for $1.00') < offer.html.indexOf('Color Advisor'))
     assert.ok(offer.text.includes("you won't be charged again"))
     const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
     assert.ok(reminder.subject.includes('Soft Summer'))

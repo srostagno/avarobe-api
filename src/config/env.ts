@@ -109,7 +109,7 @@ const envSchema = z.object({
   PRO_TRIAL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
   PRO_TRIAL_CREDITS: z.coerce.number().int().min(1).default(10),
   // Whether new accounts are offered the trial. Off since 1-Oct-2026: the
-  // Color Report leads, with Pro monthly after it ('on' brings the trial back;
+  // Color Advisor leads, with Pro monthly after it ('on' brings the trial back;
   // trials already running are unaffected either way).
   PRO_TRIAL: z.enum(['on', 'off']).optional(),
   // For this many days after buying a report, it counts toward the other
@@ -123,7 +123,7 @@ const envSchema = z.object({
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
   // Hairstyles rendered free: the ideal cut from the hair read. The rest of
-  // the recommendations come with the Style Report or Pro.
+  // the recommendations come with the Style Advisor or Pro.
   FREE_HAIR_RUNS: z.coerce.number().int().min(0).default(1),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
