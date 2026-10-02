@@ -114,8 +114,8 @@ describe('offer emails, trial off: the Color Report leads', () => {
       const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Light Spring', colors: COLORS } })
       assert.ok(offer.subject.includes('Light Spring'))
       assert.ok(offer.html.includes('upgrade=palette'))
-      assert.ok(offer.text.includes('$14.90, once'))
-      assert.ok(offer.html.indexOf('$14.90') < offer.html.indexOf('$10.90/mo'))
+      assert.ok(offer.text.includes('$4.99, once'))
+      assert.ok(offer.html.indexOf('$4.99') < offer.html.indexOf('$7.99/mo'))
       assert.ok(!offer.text.includes('$1.00'))
       assert.ok(!/trial/i.test(offer.text))
       assert.ok(offer.text.includes('Pro renews monthly until you cancel'))
@@ -126,8 +126,8 @@ describe('offer emails, trial off: the Color Report leads', () => {
     'keep Pro first for people who came for looks, with the report as the one-time option',
     withTrial(false, () => {
       const offer = upgradeOfferEmail(recipient)
-      assert.ok(offer.text.includes('$10.90 a month'))
-      assert.ok(offer.text.includes('$14.90'))
+      assert.ok(offer.text.includes('$7.99 a month'))
+      assert.ok(offer.text.includes('$4.99'))
       assert.ok(!/trial|\$1\.00/i.test(offer.text))
     }),
   )
@@ -140,7 +140,7 @@ describe('offer emails, trial off: the Color Report leads', () => {
       assert.ok(!/trial|\$1\.00/i.test(reminder.text))
       const last = upgradeLastCallEmail(recipient)
       assert.ok(last.html.includes('upgrade=palette'))
-      assert.ok(last.text.includes('$14.90, once'))
+      assert.ok(last.text.includes('$4.99, once'))
       assert.ok(!/trial|\$1\.00/i.test(last.text))
     }),
   )
@@ -164,14 +164,14 @@ describe('offer emails, trial on', () => {
     const offer = upgradeOfferEmail(recipient)
     assert.ok(offer.subject.includes('7 days for $1.00'))
     // The trial first, then what to pay once.
-    for (const price of ['$1.00', '$10.90 a month', '$14.90', '$9.90']) {
+    for (const price of ['$1.00', '$7.99 a month', '$4.99']) {
       assert.ok(offer.html.includes(price), price)
     }
     assert.ok(offer.html.indexOf('7 days for $1.00') < offer.html.indexOf('Color Report'))
     assert.ok(offer.text.includes("you won't be charged again"))
     const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [{ name: 'Dusty teal', hex: '#5B8A8A' }] })
     assert.ok(reminder.subject.includes('Soft Summer'))
-    assert.ok(reminder.html.includes('$14.90'))
+    assert.ok(reminder.html.includes('$4.99'))
     assert.ok(reminder.html.includes('$1.00'))
   }))
 
@@ -191,7 +191,7 @@ describe('offer emails, trial on', () => {
     assert.ok(offer.text.includes('Peach'))
     assert.ok(!offer.text.includes('free look'))
     assert.ok(offer.html.includes('upgrade=palette'))
-    for (const price of ['$1.00', '$10.90 a month', '$14.90']) {
+    for (const price of ['$1.00', '$7.99 a month', '$4.99']) {
       assert.ok(offer.html.includes(price), price)
     }
   }))
@@ -209,7 +209,7 @@ describe('trial notices', () => {
     const started = trialStartedEmail({ ...recipient, trialEnd })
     assert.ok(started.text.includes('Today you paid $1.00'))
     assert.ok(started.text.includes('Wednesday, October 7'))
-    assert.ok(started.text.includes('$10.90 a month'))
+    assert.ok(started.text.includes('$7.99 a month'))
     assert.ok(started.text.includes('/studio/account#plan'))
     const ending = trialEndingEmail({ ...recipient, trialEnd, looksLeft: 1 })
     assert.ok(ending.subject.includes('Wednesday, October 7'))

@@ -90,13 +90,16 @@ const envSchema = z.object({
   // The price list (US cents). The reports are one-time and yours to keep;
   // the look pack never expires; Pro is a subscription, monthly or annual.
   // Pro includes both reports while it lasts; the annual plan keeps them.
-  PRICE_COLOR_REPORT_CENTS: z.coerce.number().int().min(100).default(1490),
-  PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(990),
-  PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
-  PRICE_LOOK_PACK_CENTS: z.coerce.number().int().min(100).default(990),
+  // Cut on 2-Oct-2026 from $14.90 / $9.90 / $19.90 / $9.90 / $10.90 / $59.90:
+  // no purchases in the report-first offer's first 48 sign-ups, and "too
+  // expensive" was 65% of the reasons given. Review on 7-Oct.
+  PRICE_COLOR_REPORT_CENTS: z.coerce.number().int().min(100).default(499),
+  PRICE_STYLE_REPORT_CENTS: z.coerce.number().int().min(100).default(399),
+  PRICE_REPORTS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(699),
+  PRICE_LOOK_PACK_CENTS: z.coerce.number().int().min(100).default(499),
   LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
-  PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(1090),
-  PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(5990),
+  PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),
+  PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(2999),
   PRO_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(30),
   // The first-time offer: Pro for a few days at a small price, then monthly.
   // One trial per account, with fewer looks than a paid month.
