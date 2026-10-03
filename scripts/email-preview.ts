@@ -46,6 +46,16 @@ const emails = {
   'looks-nudge': looksNudgeEmail({ ...recipient, season: 'Warm Autumn', colors }),
   'upgrade-offer': upgradeOfferEmail(recipient),
   'upgrade-offer-colors': upgradeOfferEmail({ ...recipient, palette: { season: 'Warm Autumn', colors } }),
+  // Colors first, an hour after the read: their own photo and a one-tap checkout link.
+  'upgrade-offer-colors-first': upgradeOfferEmail({
+    ...recipient,
+    palette: {
+      season: 'Warm Autumn',
+      colors: [],
+      heroUrl: 'https://www.avarobe.com/demo/colors/lucia.webp',
+      url: 'https://www.avarobe.com/continue?token=preview',
+    },
+  }),
   'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
   'upgrade-last-call': upgradeLastCallEmail(recipient),
   'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),

@@ -23,6 +23,11 @@ export const LIFECYCLE_RULES = {
   // most of a day after the read (and after the looks nudge, if they have
   // an avatar).
   colorsOfferAfter: 20 * HOUR,
+  // Colors first (their colors, no avatar): the offer an hour after the
+  // read, in place of the welcome. It's the moment: almost nobody comes back
+  // another day, and an email's link opens their phone's own browser, signed
+  // in, where Apple Pay works.
+  colorsFirstOfferAfter: HOUR,
   offerWindow: 14 * DAY,
   reminderAfter: 2 * DAY,
   lastCallAfter: 5 * DAY,
@@ -93,15 +98,19 @@ export function pickLifecycleEmail(state: LifecycleState, now: Date): LifecycleE
 
   const sinceSignup = at - state.createdAt.getTime()
 
-  if (!state.sent.welcome && between(sinceSignup, LIFECYCLE_RULES.welcomeDelay, LIFECYCLE_RULES.welcomeWindow)) {
+  // Colors first, colors read: the offer is their first email, no welcome.
+  const colorsFirst = Boolean(state.colorsAt) && !state.avatarReadyAt
+
+  if (!state.sent.welcome && !colorsFirst && between(sinceSignup, LIFECYCLE_RULES.welcomeDelay, LIFECYCLE_RULES.welcomeWindow)) {
     return 'welcome'
   }
 
   if (!state.avatarReadyAt) {
     // Colors first: their colors and no avatar yet. The palette offer takes
-    // the avatar reminder's place; it points to the avatar too.
+    // the welcome's and the avatar reminder's place; it points to the avatar
+    // too.
     if (state.colorsAt) {
-      return offerSequence(state, at, state.colorsAt, LIFECYCLE_RULES.colorsOfferAfter)
+      return offerSequence(state, at, state.colorsAt, LIFECYCLE_RULES.colorsFirstOfferAfter)
     }
 
     return !state.sent.avatar_nudge &&

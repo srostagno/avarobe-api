@@ -103,8 +103,9 @@ describe('pickLifecycleEmail', () => {
 
   it('offers their palette to people who came for their colors and have no avatar, instead of the avatar reminder', () => {
     const base = state({ createdAt: ago(30 * HOUR), sent: { welcome: ago(29 * HOUR) }, lastSentAt: ago(29 * HOUR) })
-    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(10 * HOUR) }, now), null)
-    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(25 * HOUR) }, now), 'upgrade_offer')
+    // An hour after the read.
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(30 * 60 * 1000) }, now), null)
+    assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(2 * HOUR) }, now), 'upgrade_offer')
     // No colors read: the avatar reminder, as before.
     assert.equal(pickLifecycleEmail(base, now), 'avatar_nudge')
     assert.equal(pickLifecycleEmail({ ...base, colorsAt: ago(25 * HOUR), paid: true }, now), null)
@@ -126,6 +127,17 @@ describe('pickLifecycleEmail', () => {
     // Then the same two reminders, timed from the offer.
     const offered = { ...nudged, sent: { ...nudged.sent, upgrade_offer: ago(50 * HOUR) }, lastSentAt: ago(50 * HOUR) }
     assert.equal(pickLifecycleEmail(offered, now), 'upgrade_reminder')
+  })
+
+  it('sends colors-first accounts the offer an hour after their colors, as their first email', () => {
+    const fresh = state({ createdAt: ago(40 * 60 * 1000), colorsAt: ago(35 * 60 * 1000) })
+    // No welcome on top of it, and nothing before the hour.
+    assert.equal(pickLifecycleEmail(fresh, now), null)
+    const hourLater = state({ createdAt: ago(70 * 60 * 1000), colorsAt: ago(65 * 60 * 1000) })
+    assert.equal(pickLifecycleEmail(hourLater, now), 'upgrade_offer')
+    assert.equal(pickLifecycleEmail({ ...hourLater, paid: true }, now), null)
+    // Without their colors yet, the welcome as before.
+    assert.equal(pickLifecycleEmail(state({ createdAt: ago(20 * 60 * 1000) }), now), 'welcome')
   })
 
   it('sends the welcome first even when the person already did everything', () => {

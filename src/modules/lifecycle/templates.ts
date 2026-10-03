@@ -202,6 +202,22 @@ function plans(rows: { name: string; price: string; detail: string; badge?: stri
   }
 }
 
+// The rest of what Avarobe sells, each with its page: name and price on
+// one line, what it is under it, a link to read more.
+function products(rows: { name: string; price: string; detail: string; url: string }[]): Block {
+  const html = rows
+    .map(
+      (row) =>
+        `<tr><td style="padding:0 0 12px 0;border-bottom:1px solid ${COLOR.line};"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="top" style="padding:12px 0 0 0;font-family:${SANS};font-size:15px;line-height:21px;font-weight:600;color:${COLOR.ink};">${esc(row.name)}</td><td valign="top" align="right" style="padding:12px 0 0 0;font-family:${SERIF};font-size:17px;line-height:21px;color:${COLOR.ink};white-space:nowrap;">${esc(row.price)}</td></tr><tr><td colspan="2" style="padding:3px 0 0 0;font-family:${SANS};font-size:14px;line-height:20px;color:${COLOR.muted};">${esc(row.detail)} <a href="${esc(row.url)}" style="color:${COLOR.accent};font-weight:600;text-decoration:underline;">What’s inside</a></td></tr></table></td></tr>`,
+    )
+    .join('')
+
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;">${html}</table>`,
+    text: rows.map((row) => `- ${row.name}, ${row.price}: ${row.detail} ${row.url}`).join('\n'),
+  }
+}
+
 function signature(): Block {
   return {
     html: `<p style="margin:8px 0 0 0;font-family:${SANS};font-size:15px;line-height:24px;color:${COLOR.inkSoft};">See you inside,<br><span style="font-family:${SERIF};font-size:17px;font-style:italic;color:${COLOR.ink};">The Avarobe team</span></p>`,
@@ -565,7 +581,7 @@ const reportOnce = () => `${money(env.PRICE_COLOR_REPORT_CENTS)}, once`
 // who came for their colors, and have seen them but made no look, get one
 // that leads with their palette (`palette`).
 export function upgradeOfferEmail(
-  input: Recipient & { palette?: { season: string; colors: ColorSwatch[] } | null },
+  input: Recipient & { palette?: { season: string; colors: ColorSwatch[]; heroUrl?: string | null; url?: string } | null },
 ): EmailContent {
   if (input.palette) {
     return paletteOfferEmail({ ...input, palette: input.palette })
@@ -620,31 +636,69 @@ export function upgradeOfferEmail(
   })
 }
 
-function paletteOfferEmail(input: Recipient & { palette: { season: string; colors: ColorSwatch[] } }): EmailContent {
+// Everything in the Color Advisor, as the app's offer lists it.
+const COLOR_ADVISOR_FEATURES = [
+  'Your three best colors and your #1, on your own face',
+  'Your full palette: 30+ colors in basics, accents and statements',
+  'The live color mirror: 300+ fabrics on your face, each one marked yours, close or one to avoid',
+  'Your drape test, your neutrals, gold or silver, your lip or shirt colors and your next hair color, side by side on you',
+  'Outfits in your colors, color combinations and six practical guides',
+  'Your color video, and five “does this color suit me?” checks for when you shop',
+]
+
+// What else Avarobe sells, for the end of the colors offer.
+const OTHER_PRODUCTS = (campaign: LifecycleEmailKind) => [
+  { name: 'Style Advisor', price: `${money(env.PRICE_STYLE_REPORT_CENTS)} once`, detail: 'The cuts and necklines that flatter your body, tried on your avatar, with a fit guide and a capsule.', url: appLink('/advisors/style', campaign) },
+  { name: 'Hair & Grooming Advisor', price: `${money(env.PRICE_HAIR_ADVISOR_CENTS)} once`, detail: 'Every haircut that suits your face, shown on you, with what to tell your stylist.', url: appLink('/advisors/hair', campaign) },
+  { name: 'Event Stylist', price: `${money(env.PRICE_EVENT_CENTS)} an event`, detail: 'Three complete looks on you for your next event, every piece in stores.', url: appLink('/advisors/event', campaign) },
+  { name: 'All three advisors', price: `${money(env.PRICE_ADVISORS_BUNDLE_CENTS)} once`, detail: 'Color, Style and Hair & Grooming together, for less.', url: appLink('/advisors', campaign) },
+  { name: 'Avarobe Pro', price: `${money(env.PRICE_PRO_MONTHLY_CENTS)}/mo`, detail: `Your stylist all year: ${env.PRO_MONTHLY_CREDITS} looks a month on you and all three advisors. Cancel anytime.`, url: appLink('/advisors/pro', campaign) },
+  { name: 'The Outfit Formula Book', price: money(env.PRICE_OUTFIT_GUIDE_CENTS), detail: '120 outfit combinations that always work, as a PDF.', url: appLink('/guide', campaign) },
+]
+
+// The colors offer, an hour after their colors came in (colors first, no
+// look): their own photo with their best colors blurred (`heroUrl`), what
+// the Color Advisor holds, a button that opens checkout signed in (`url`,
+// a one-tap sign-in link), and the rest of what Avarobe sells.
+function paletteOfferEmail(
+  input: Recipient & { palette: { season: string; colors: ColorSwatch[]; heroUrl?: string | null; url?: string } },
+): EmailContent {
   const { season, colors } = input.palette
 
   if (!env.PRO_TRIAL) {
+    const price = money(env.PRICE_COLOR_REPORT_CENTS)
+    const personal = Boolean(input.palette.heroUrl)
+    const name = input.firstName.trim()
+    const buyUrl = input.palette.url ?? appLink('/studio', 'upgrade_offer', { buy: 'color_report', from: 'email_colors' })
+
     return layout({
-      subject: `Your full ${season} palette is waiting`,
-      preheader: `Your best colors are waiting. See them on your own face: ${reportOnce()}, yours to keep.`,
-      hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+      subject: name ? `${name}, your 3 best colors are waiting` : 'Your 3 best colors are waiting',
+      preheader: `Your ${season} colors on your own face: your #1, 30+ colors and the live mirror. ${price}, once.`,
+      hero: personal
+        ? {
+            src: input.palette.heroUrl as string,
+            alt: 'Your photo: three panels in your best colors, blurred until you open your Color Advisor, and one in the color that drains you',
+          }
+        : { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
       recipient: input,
       promotional: true,
       blocks: [
-        eyebrow('Your colors'),
-        heading('There’s more to your palette.'),
+        eyebrow('Your colors are ready'),
+        heading(`You’re a ${season}.`),
         greeting(input.firstName),
-        palette(
-          season,
-          colors,
-          paletteCaption(colors),
+        paragraph(
+          personal
+            ? 'The blurred photos are you in your three best colors; the clear one is the color that drains you. Your best colors are waiting in your Color Advisor, with everything else that’s yours.'
+            : 'Your three best colors are drawn on your own face, waiting in your Color Advisor, with everything else that’s yours.',
         ),
-        paragraph('Your Color Advisor is made from your own photo, and it’s yours to keep:'),
-        checklist(REPORT_FEATURES),
-        priceBox(reportOnce(), 'No subscription.', 'Yours to keep.'),
-        button('See my full palette', appLink('/studio', 'upgrade_offer', { upgrade: 'palette' })),
-        small('Want looks for every occasion too?'),
-        plans([PLAN.proMonthly()]),
+        ...(colors.length > 0 ? [palette(season, colors, paletteCaption(colors))] : []),
+        eyebrow('What’s in your Color Advisor'),
+        checklist(COLOR_ADVISOR_FEATURES),
+        priceBox(`${price}, once`, 'One-time payment, no subscription.', 'Yours to keep.'),
+        button(`Unlock my colors · ${price}`, buyUrl),
+        small('Opens your checkout, already signed in. Apple Pay, Google Pay or card.'),
+        eyebrow('More from Avarobe'),
+        products(OTHER_PRODUCTS('upgrade_offer')),
         small(RENEWAL_NOTE),
         signature(),
       ],

@@ -161,7 +161,7 @@ export async function recordUnsubscribe(app: FastifyInstance, sendId: string, us
 // ---------------------------------------------------------------- sending
 
 type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'> &
-  Partial<Pick<AvatarDocument, 'avatarKey' | 'colorsAt' | 'updatedAt'>>
+  Partial<Pick<AvatarDocument, 'avatarKey' | 'colorsAt' | 'updatedAt' | 'drapePreview'>>
 type LookFacts = { count: number; lastAt: Date | null }
 
 // Exported for scripts/lifecycle-dry-run.ts.
@@ -204,6 +204,8 @@ export function lifecycleContentFor(
   rescue?: { product: string; url: string },
   // The price-drop email's photo (null for none) and its sign-in link.
   priceDrop?: { heroUrl: string | null; url: string },
+  // The colors offer's photo (null for none) and its one-tap checkout link.
+  offer?: { heroUrl: string | null; url: string },
 ): EmailContent {
   const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
@@ -224,7 +226,10 @@ export function lifecycleContentFor(
       // No look made: they came for their colors, so it leads with them.
       return upgradeOfferEmail({
         ...recipient,
-        palette: looks.count === 0 && analysis ? { season: analysis.season, colors: freeColors } : null,
+        palette:
+          looks.count === 0 && analysis
+            ? { season: analysis.season, colors: freeColors, heroUrl: offer?.heroUrl ?? null, ...(offer?.url ? { url: offer.url } : {}) }
+            : null,
       })
     case 'upgrade_reminder':
       return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
@@ -369,9 +374,18 @@ async function sendOne(
   }
 
   const sendId = new ObjectId()
-  const content = lifecycleContentFor(kind, user, facts.avatar, facts.looks, sendId)
 
   try {
+    // The colors offer opens checkout signed in, on their own photo.
+    const offer =
+      kind === 'upgrade_offer' && facts.looks.count === 0 && facts.avatar?.colorAnalysis
+        ? {
+            url: await createLink(app, user, 'sign_in', undefined, { next: '/studio?buy=color_report&from=email_colors' }),
+            heroUrl: facts.avatar.drapePreview?.status === 'ready' && facts.avatar.drapePreview.lockedKey ? emailImageUrl(user._id, now) : null,
+          }
+        : undefined
+    const content = lifecycleContentFor(kind, user, facts.avatar, facts.looks, sendId, undefined, undefined, offer)
+
     await app.collections.emailSends.insertOne({
       _id: sendId,
       userId: user._id,
@@ -691,7 +705,22 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
     const ids = users.map((user) => user._id)
     const [avatars, lookStats] = await Promise.all([
       app.collections.avatars
-        .find({ userId: { $in: ids } }, { projection: { userId: 1, status: 1, readyAt: 1, colorAnalysis: 1, avatarKey: 1, colorsAt: 1, updatedAt: 1 } })
+        .find(
+          { userId: { $in: ids } },
+          {
+            projection: {
+              userId: 1,
+              status: 1,
+              readyAt: 1,
+              colorAnalysis: 1,
+              avatarKey: 1,
+              colorsAt: 1,
+              updatedAt: 1,
+              'drapePreview.status': 1,
+              'drapePreview.lockedKey': 1,
+            },
+          },
+        )
         .toArray(),
       app.collections.looks
         .aggregate<{ _id: ObjectId; count: number; lastAt: Date | null }>([
