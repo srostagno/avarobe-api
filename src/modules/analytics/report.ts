@@ -51,6 +51,29 @@ function stateKey(location: Pick<UserLocation, 'country' | 'region'> | null | un
   return location.country === 'US' ? (location.region ?? 'US') : location.country
 }
 
+// Which product a checkout sells, as the shop and the product pages name
+// them (the web's content/products.ts).
+const PRODUCT_FAMILY: Record<string, string> = {
+  color_report: 'color',
+  color_addon: 'color',
+  color_mirror: 'color',
+  style_report: 'style',
+  style_addon: 'style',
+  hair_advisor: 'hair',
+  event_pass: 'event',
+  advisors_bundle: 'advisors',
+  reports_bundle: 'advisors',
+  pro_monthly: 'pro',
+  pro_annual: 'pro',
+  pro_trial: 'pro',
+  pro_annual_switch: 'pro',
+  pro_start_now: 'pro',
+  look_pack: 'pro',
+  outfit_guide: 'guide',
+}
+
+export const familyOf = (product: string) => PRODUCT_FAMILY[product] ?? product
+
 // "2026-09-28" in Pacific time, the ad account's day.
 function pacificDay(date: Date) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date)
@@ -249,6 +272,52 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
     }
   }
 
+  // Interest in each product: its page opened, its details opened in the
+  // shop, a click to its page or to start free, checkout, paid; and every
+  // click by what the person had done last ("after", first-party.ts).
+  type Interest = { pageViews: Tally; details: Tally; pageClicks: Tally; starts: Tally; checkouts: Tally; paid: Tally; revenue: number }
+  const interest = new Map<string, Interest>()
+  const interestOf = (id: string) => {
+    const entry = interest.get(id) ?? {
+      pageViews: { events: 0, people: new Set<string>() },
+      details: { events: 0, people: new Set<string>() },
+      pageClicks: { events: 0, people: new Set<string>() },
+      starts: { events: 0, people: new Set<string>() },
+      checkouts: { events: 0, people: new Set<string>() },
+      paid: { events: 0, people: new Set<string>() },
+      revenue: 0,
+    }
+    interest.set(id, entry)
+    return entry
+  }
+  const clicksAfter = new Map<string, Tally>()
+
+  for (const row of scoped) {
+    const person = personOf(row)
+    const bump = (entry: Tally) => {
+      entry.events += 1
+      entry.people.add(person)
+    }
+
+    if (row.name === 'product_page_viewed') {
+      bump(interestOf(str(row.props.product)).pageViews)
+    } else if (row.name === 'product_clicked') {
+      const id = str(row.props.product)
+      const action = str(row.props.action)
+      const entry = interestOf(id)
+      bump(action === 'details' ? entry.details : action === 'start' ? entry.starts : entry.pageClicks)
+      tally(clicksAfter, `${id}|${action}|${str(row.props.after)}|${str(row.props.placement)}`, person)
+    } else if (row.name === 'checkout_started') {
+      const id = familyOf(str(row.props.product))
+      bump(interestOf(id).checkouts)
+      tally(clicksAfter, `${id}|buy|${typeof row.props.after === 'string' ? row.props.after : 'unknown'}|${str(row.props.placement)}`, person)
+    } else if (row.name === 'purchase_completed') {
+      const entry = interestOf(familyOf(str(row.props.product)))
+      bump(entry.paid)
+      entry.revenue += num(row.props.amount)
+    }
+  }
+
   // Pages and days.
   const pages = new Map<string, Tally>()
   const days = new Map<string, { visitors: Set<string>; signups: Set<string>; checkouts: Set<string>; payers: Set<string> }>()
@@ -368,6 +437,25 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
         revenue: entry.revenue,
       }))
       .sort((a, b) => b.started.events + b.created.events - (a.started.events + a.created.events)),
+    productInterest: [...interest.entries()]
+      .map(([id, entry]) => ({
+        product: id,
+        pageViews: people(entry.pageViews),
+        details: people(entry.details),
+        pageClicks: people(entry.pageClicks),
+        starts: people(entry.starts),
+        checkouts: people(entry.checkouts),
+        paid: people(entry.paid),
+        revenue: entry.revenue,
+      }))
+      .sort((a, b) => b.checkouts.people + b.details.people + b.pageViews.people - (a.checkouts.people + a.details.people + a.pageViews.people)),
+    productClicks: [...clicksAfter.entries()]
+      .map(([key, entry]) => {
+        const [product, action, after, placement] = key.split('|')
+        return { product: product ?? 'unknown', action: action ?? 'unknown', after: after ?? 'unknown', placement: placement ?? 'unknown', ...people(entry) }
+      })
+      .sort((a, b) => b.people - a.people || b.events - a.events)
+      .slice(0, 80),
     pages: [...pages.entries()]
       .map(([path, entry]) => ({ path, ...people(entry) }))
       .sort((a, b) => b.people - a.people)
