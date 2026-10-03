@@ -25,8 +25,15 @@ export function isGuideSession(session: Stripe.Checkout.Session) {
   return session.metadata?.app === 'avarobe' && session.metadata?.product === 'outfit_guide'
 }
 
+// Paid, or free with a 100%-off promotion code (Stripe's no_payment_required).
+// The same rule as billing's sessionSettled, kept here so the guide doesn't
+// import the Stripe module that imports it.
+export function guideSettled(session: Stripe.Checkout.Session) {
+  return session.payment_status === 'paid' || session.payment_status === 'no_payment_required'
+}
+
 export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkout.Session) {
-  if (!isGuideSession(session) || session.payment_status !== 'paid') {
+  if (!isGuideSession(session) || !guideSettled(session)) {
     return null
   }
 
@@ -53,8 +60,9 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     void trackServerEvent(app, { name: 'guide_purchased', userId, props: { amount: fresh.amount, account: Boolean(userId) } })
 
     // A signed-in buyer's purchase goes to Meta and GA from grantSession; a
-    // guest's only from here, with the same id the thank-you page uses.
-    if (!userId) {
+    // guest's only from here, with the same id the thank-you page uses. A
+    // free (100%-off) order isn't a purchase to report.
+    if (!userId && fresh.amount > 0) {
       void reportPurchase(app, {
         metadata: session.metadata,
         transactionId: session.id,

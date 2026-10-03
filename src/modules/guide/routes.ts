@@ -8,8 +8,9 @@ import { env } from '../../config/env.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
+import { isAdmin } from '../billing/entitlements.js'
 import { createGuideCheckout, retrieveSession, stripeConfigured } from '../billing/stripe.js'
-import { fulfillGuide, guideDownloadUrl, isGuideSession } from './service.js'
+import { fulfillGuide, guideDownloadUrl, guideSettled, isGuideSession } from './service.js'
 
 // Meta's _fbc can be long; attributionMetadata drops what Stripe can't keep.
 const idField = z.string().trim().min(1).max(1000).optional()
@@ -42,12 +43,14 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
     // Signed in or not: the guide is sold to anyone, and a signed-in buyer's
     // account is noted on the order.
     const userId = await optionalUserId(request)
+    const user = userId ? await app.collections.users.findOne({ _id: userId }, { projection: { email: 1 } }) : null
 
     try {
       const url = await createGuideCheckout({
-        userId: userId?.toString() ?? null,
+        userId: user ? user._id.toString() : null,
         email: parsed.data.email ?? null,
-        attribution: attributionMetadata(parsed.data.attribution, request),
+        // An admin's test purchase never reaches Meta or GA as a sale.
+        attribution: user && isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
       })
       return { url }
     } catch (error) {
@@ -71,7 +74,7 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'We could not find this order.' })
     }
 
-    if (session.payment_status !== 'paid') {
+    if (!guideSettled(session)) {
       return reply.code(409).send({ message: 'Your payment is still processing. This page will update in a moment.' })
     }
 
