@@ -296,6 +296,24 @@ export function buildSelfieDrapePreviewPrompt(best: ColorSwatch, worst: ColorSwa
   ].join(' ')
 }
 
+// The free preview as a 2x2: their three best colors and their worst
+// (bottom right), from the avatar and the selfie, or the selfie alone.
+export function buildDrapeGridPreviewPrompt(bests: ColorSwatch[], worst: ColorSwatch, fromSelfie: boolean) {
+  const [first, second, third] = bests
+
+  return [
+    fromSelfie
+      ? 'Image 1 is a selfie of this person. Keep them exactly recognizable: the same face, features, hair, skin tone and undertone as in the selfie.'
+      : 'Image 1 is this person. Image 2 is a close-up of the same face.',
+    'Create one square image divided into a 2 by 2 grid of four head-and-shoulders portraits of this SAME person, like a professional color analysis draping session.',
+    'In every panel they have the identical face, hair, skin tone and expression, facing the camera, with the same neutral light-grey background and the same soft daylight.',
+    'In each panel a plain, matte, solid-colored fabric drape covers their shoulders and chest up to the neck, hiding their clothes.',
+    `Drape colors: top-left ${describeSwatch(first!)}, top-right ${describeSwatch(second!)}, bottom-left ${describeSwatch(third!)}, bottom-right ${describeSwatch(worst)}.`,
+    'Render the true effect of each color on their complexion, the way it really looks in daylight; do not retouch the skin differently between panels.',
+    'Thin white gutters between panels. No text, no labels, no logos.',
+  ].join(' ')
+}
+
 // The drape test: four head-and-shoulders portraits in one image.
 export function buildDrapePrompt(drape: { wear: ColorSwatch[]; avoid: ColorSwatch[] }) {
   const [wear1, wear2] = drape.wear

@@ -6,6 +6,7 @@ import type {
   AvatarDocument,
   ColorReport,
   ColorSwatch,
+  DrapePreviewLayout,
   LookAnalysis,
   LookDocument,
   Presentation,
@@ -14,7 +15,7 @@ import type {
   Verdict,
 } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
-import { lockBestSide, toStoredWebp } from '../../utils/images.js'
+import { lockBestPanels, lockBestSide, toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
 import { hairReference } from '../avatar/hair.js'
@@ -23,6 +24,7 @@ import {
   LOOK_ANALYSIS_INSTRUCTIONS,
   STYLE_PROFILE_INSTRUCTIONS,
   buildColorReportRequest,
+  buildDrapeGridPreviewPrompt,
   buildDrapePreviewPrompt,
   buildSelfieDrapePreviewPrompt,
   buildDrapePrompt,
@@ -167,13 +169,15 @@ export async function runDrapeTest(app: FastifyInstance, avatarId: ObjectId) {
   }
 }
 
-// The free preview (their best and worst color on their face): starts once
-// per selfie, from the free color analysis. A failed one can start again.
-// Returns whether it started.
+// The free preview (their best colors and their worst on their face):
+// starts once per selfie, from the free color analysis. A failed one can
+// start again. Returns whether it started.
 export async function startDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
   const avatar = await app.collections.avatars.findOne({ _id: avatarId })
-  const best = avatar?.colorAnalysis?.bestColors[0]
+  const bests = avatar?.colorAnalysis?.bestColors.slice(0, 3) ?? []
+  const best = bests[0]
   const worst = avatar?.colorAnalysis?.avoidColors[0]
+  const layout: DrapePreviewLayout = env.BEST_COLORS_GRID && bests.length === 3 ? 'grid' : 'pair'
 
   // Without an avatar yet (colors first) it's drawn from the selfie alone.
   if (!avatar || avatar.status !== 'ready' || !best || !worst) {
@@ -191,7 +195,11 @@ export async function startDrapePreview(app: FastifyInstance, avatarId: ObjectId
         { 'drapePreview.status': 'processing', 'drapePreview.updatedAt': { $lt: new Date(Date.now() - 10 * 60 * 1000) } },
       ],
     },
-    { $set: { drapePreview: { status: 'processing', key: null, best, worst, updatedAt: new Date() } } },
+    {
+      $set: {
+        drapePreview: { status: 'processing', key: null, layout, best, ...(layout === 'grid' ? { bests } : {}), worst, updatedAt: new Date() },
+      },
+    },
   )
 
   if (claimed.modifiedCount === 0) {
@@ -224,9 +232,12 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
       storage.read(avatar.selfieKey),
       avatar.avatarKey ? hairReference(avatar, 3) : Promise.resolve(null),
     ])
-    const base = avatarImage
-      ? buildDrapePreviewPrompt(preview.best, preview.worst)
-      : buildSelfieDrapePreviewPrompt(preview.best, preview.worst)
+    const grid = preview.layout === 'grid' && preview.bests?.length === 3
+    const base = grid
+      ? buildDrapeGridPreviewPrompt(preview.bests!, preview.worst, !avatarImage)
+      : avatarImage
+        ? buildDrapePreviewPrompt(preview.best, preview.worst)
+        : buildSelfieDrapePreviewPrompt(preview.best, preview.worst)
     const png = await generateImageFromReferences({
       images: avatarImage
         ? [
@@ -236,14 +247,14 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
           ]
         : [{ data: selfie, filename: 'selfie.jpg', contentType: 'image/jpeg' }],
       prompt: hair ? `${base} ${hair.line}` : base,
-      size: '1536x1024',
+      size: grid ? '1024x1024' : '1536x1024',
     })
     const stamp = Date.now()
     const key = `users/${avatar.userId.toString()}/drape-preview-${stamp}.webp`
     const webp = await toStoredWebp(png)
 
     await storage.put(key, webp, 'image/webp')
-    const lockedKey = await storeLockedPreview(app, avatar.userId, webp, stamp)
+    const lockedKey = await storeLockedPreview(app, avatar.userId, webp, stamp, grid ? 'grid' : 'pair')
 
     // A new selfie while it rendered: the preview is of the old face.
     if ((await mark({ 'drapePreview.status': 'ready', 'drapePreview.key': key, 'drapePreview.lockedKey': lockedKey })).matchedCount === 0) {
@@ -255,13 +266,13 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
   }
 }
 
-// The locked copy of the preview (best side blurred). Null if it couldn't be
-// made: it's made again the next time it's needed.
-async function storeLockedPreview(app: FastifyInstance, userId: ObjectId, webp: Buffer, stamp: number) {
+// The locked copy of the preview (the best colors blurred). Null if it
+// couldn't be made: it's made again the next time it's needed.
+async function storeLockedPreview(app: FastifyInstance, userId: ObjectId, webp: Buffer, stamp: number, layout: DrapePreviewLayout) {
   try {
     const key = `users/${userId.toString()}/drape-preview-${stamp}-locked.webp`
 
-    await storage.put(key, await lockBestSide(webp), 'image/webp')
+    await storage.put(key, await (layout === 'grid' ? lockBestPanels(webp) : lockBestSide(webp)), 'image/webp')
     return key
   } catch (error) {
     app.log.error({ err: errorMessage(error), userId: userId.toString() }, 'Locked drape preview failed')
@@ -279,7 +290,7 @@ export async function ensureLockedPreview(app: FastifyInstance, avatar: AvatarDo
   }
 
   try {
-    const lockedKey = await storeLockedPreview(app, avatar.userId, await storage.read(preview.key), Date.now())
+    const lockedKey = await storeLockedPreview(app, avatar.userId, await storage.read(preview.key), Date.now(), preview.layout ?? 'pair')
 
     if (!lockedKey) {
       return avatar

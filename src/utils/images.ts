@@ -115,6 +115,28 @@ export async function lockBestSide(image: Buffer) {
   return sharp(image).composite([{ input: blurred, left: 0, top: 0 }]).webp({ quality: 86 }).toBuffer()
 }
 
+// The grid preview's locked copy: the three best panels blurred (the top
+// row and the bottom left), the worst one (bottom right) left as is.
+export async function lockBestPanels(image: Buffer) {
+  const { width = 0, height = 0 } = await sharp(image).metadata()
+  const halfWidth = Math.floor(width / 2)
+  const halfHeight = Math.floor(height / 2)
+  const blur = (region: { left: number; top: number; width: number; height: number }) =>
+    sharp(image).extract(region).blur(40).modulate({ saturation: 0.08, brightness: 1.04 }).toBuffer()
+  const [top, bottomLeft] = await Promise.all([
+    blur({ left: 0, top: 0, width, height: halfHeight }),
+    blur({ left: 0, top: halfHeight, width: halfWidth, height: height - halfHeight }),
+  ])
+
+  return sharp(image)
+    .composite([
+      { input: top, left: 0, top: 0 },
+      { input: bottomLeft, left: 0, top: halfHeight },
+    ])
+    .webp({ quality: 86 })
+    .toBuffer()
+}
+
 // A locked look's teaser: small and blurred enough to see the outfit's
 // shape and colors on them, not the details.
 export async function blurTeaser(image: Buffer) {

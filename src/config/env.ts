@@ -60,6 +60,10 @@ const envSchema = z.object({
   // Before they pay, their best color on their face stays locked (blurred);
   // only the worst one shows. 'off' gives both away free again.
   LOCK_BEST_COLOR: z.enum(['on', 'off']).optional(),
+  // The free preview: their three best colors and their worst on their face
+  // (a 2x2 grid, the best three locked until they pay). 'off' goes back to
+  // the best-and-worst pair.
+  BEST_COLORS_GRID: z.enum(['on', 'off']).optional(),
   // Postal address for the footer of promotional emails (CAN-SPAM). The
   // upgrade offer and its reminders only go out once it is set.
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
@@ -185,6 +189,7 @@ export const env = {
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
   LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
+  BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')

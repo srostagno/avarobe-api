@@ -35,14 +35,14 @@ export function serializeUser(user: UserDocument) {
 
 // Without the Color Advisor the palette shows the season and a first taste of
 // colors; the rest stays on the server, with counts so the page can hint at it.
-function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean, hideTop: boolean) {
+function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full: boolean, hideTop: number) {
   if (!analysis || full) {
     return analysis ? { ...analysis, locked: false } : null
   }
 
-  // With the best color locked on the photo, the free swatches skip it too:
-  // their #1 stays a surprise until they unlock it.
-  const freeBest = hideTop ? analysis.bestColors.slice(1, 4) : analysis.bestColors.slice(0, 3)
+  // With their best colors locked on the photo (one, or three in the grid),
+  // the free swatches skip them too: they stay a surprise until unlocked.
+  const freeBest = analysis.bestColors.slice(hideTop, hideTop + 3)
 
   return {
     season: analysis.season,
@@ -69,6 +69,8 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
   // which shows their #1 live), the photo shows only their worst color (the
   // locked copy, until it exists: nothing).
   const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette && !options.mirror
+  const layout = avatar.drapePreview?.layout ?? 'pair'
+  const lockedCount = bestLocked ? (layout === 'grid' ? 3 : 1) : 0
   const drapeKey = bestLocked ? (avatar.drapePreview?.lockedKey ?? null) : (avatar.drapePreview?.key ?? null)
   const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
@@ -96,7 +98,7 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     body: avatar.body,
     // How they shop: the body's, or asked before it (colors first).
     presentation: avatar.body?.presentation ?? avatar.presentation ?? null,
-    colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, bestLocked),
+    colorAnalysis: serializeColorAnalysis(avatar.colorAnalysis, options.fullPalette, lockedCount),
     // The color mirror drapes all their colors, so its owners get them for
     // the mirror even without the Color Advisor (whose palette stays locked).
     mirrorColors:
@@ -107,13 +109,15 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
             avoidColors: avatar.colorAnalysis.avoidColors,
           }
         : null,
-    // Free: their worst color on their face; their best one too, unless
-    // LOCK_BEST_COLOR keeps it (and its name) for those who unlock it.
+    // Free: their worst color on their face; their best ones too, unless
+    // LOCK_BEST_COLOR keeps them (and their names) for those who unlock them.
     drapePreview: avatar.drapePreview
       ? {
           status: avatar.drapePreview.status,
           url: drapePreviewUrl,
+          layout,
           best: bestLocked ? null : avatar.drapePreview.best,
+          bests: bestLocked ? null : (avatar.drapePreview.bests ?? null),
           worst: avatar.drapePreview.worst,
           bestLocked,
         }

@@ -511,13 +511,20 @@ export type ReportBoard = {
 export type DrapePreview = {
   status: GenerationStatus
   key: string | null
-  // The same photo with the best-color side blurred, for those who haven't
-  // unlocked it (LOCK_BEST_COLOR). Made with the photo, or on first view.
+  // The same photo with the best colors blurred, for those who haven't
+  // unlocked them (LOCK_BEST_COLOR). Made with the photo, or on first view.
   lockedKey?: string | null
+  // 'pair': best and worst side by side (the first previews). 'grid': a 2x2
+  // of their three best colors and their worst (bottom right).
+  layout?: DrapePreviewLayout
   best: ColorSwatch
+  // The grid's three best colors, in reading order; best is the first.
+  bests?: ColorSwatch[]
   worst: ColorSwatch
   updatedAt: Date
 }
+
+export type DrapePreviewLayout = 'pair' | 'grid'
 
 // One image of the avatar with four fabric drapes near the face: two colors
 // that flatter, two that don't (top row wear, bottom row avoid).
