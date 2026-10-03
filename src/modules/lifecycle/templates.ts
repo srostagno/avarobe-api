@@ -396,7 +396,7 @@ function colorsWelcomeEmail(input: Recipient & { season: string | null }): Email
 
   return layout({
     subject: name ? `Welcome to Avarobe, ${name}` : 'Welcome to Avarobe',
-    preheader: 'Your colors from one selfie: your season, and your best and worst color on your own face.',
+    preheader: 'Your colors from one selfie: your season, and the color that drains you, on your own face.',
     hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
     recipient: input,
     blocks: [
@@ -404,7 +404,7 @@ function colorsWelcomeEmail(input: Recipient & { season: string | null }): Email
       heading('See your colors. On\u00a0you.'),
       greeting(input.firstName),
       paragraph(
-        'Thanks for joining. One selfie is all Avarobe needs to read your undertone, contrast and season, and to show your best and worst color on your own face. Then it styles outfits in your colors, on an avatar that looks like you.',
+        'Thanks for joining. One selfie is all Avarobe needs to read your undertone, contrast and season, and to show the color that drains you on your own face. Your Color Advisor adds your best colors, on you. Then Avarobe styles outfits in your colors, on an avatar that looks like you.',
       ),
       steps([
         {
@@ -413,8 +413,8 @@ function colorsWelcomeEmail(input: Recipient & { season: string | null }): Email
           done: Boolean(season),
         },
         {
-          title: 'See your best and worst color on you',
-          body: season ? 'Done. It’s waiting in your studio.' : 'Your face in your best color next to your worst, from the same selfie.',
+          title: 'See the color to keep away from your face',
+          body: season ? 'Done. It’s waiting in your studio.' : 'Your face in the color that drains you, from the same selfie.',
           done: Boolean(season),
         },
         {
