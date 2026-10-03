@@ -92,13 +92,19 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
   // as a guest with the same email; comp accounts always), and its link.
   app.get('/mine', { preHandler: authenticate }, async (request) => {
     const userId = requireUserId(request)
-    const user = await loadBillingUser(app, userId)
+    const [user, account] = await Promise.all([
+      loadBillingUser(app, userId),
+      app.collections.users.findOne({ _id: userId }, { projection: { emailVerifiedAt: 1 } }),
+    ])
 
     if (!user) {
       return { owned: false, downloadUrl: null }
     }
 
-    let order = await app.collections.guideOrders.findOne({ $or: [{ userId }, { email: user.email }] }, { sort: { createdAt: 1 } })
+    // A guest purchase counts only once the account has proven that email;
+    // otherwise anyone could sign up with a buyer's address and take the link.
+    const match = account?.emailVerifiedAt ? [{ userId }, { email: user.email.toLowerCase() }] : [{ userId }]
+    let order = await app.collections.guideOrders.findOne({ $or: match }, { sort: { createdAt: 1 } })
 
     if (!order && billingState(user).comp) {
       order = await compGuideOrder(app, userId, user.email)

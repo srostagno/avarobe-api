@@ -66,7 +66,8 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     return null
   }
 
-  const email = session.customer_details?.email ?? session.customer_email ?? null
+  // Lowercased like account emails, so a guest purchase can find its account.
+  const email = (session.customer_details?.email ?? session.customer_email ?? null)?.trim().toLowerCase() ?? null
   const userId = session.metadata?.userId && ObjectId.isValid(session.metadata.userId) ? new ObjectId(session.metadata.userId) : null
   const now = new Date()
   const fresh: GuideOrderDocument = {
