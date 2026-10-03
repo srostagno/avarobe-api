@@ -20,7 +20,49 @@ const avatarsSchema = z.object({
   // Paging: the createdAt of the last avatar on the previous page.
   before: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(48).default(24),
+  // Only the avatars of people who paid for something.
+  buyers: z.enum(['1', '0']).optional(),
 })
+
+// What each account bought (one-time products, Pro, the book), for the
+// avatars review: paid purchases and paid book orders, never comp ones.
+async function purchasesByUser(app: FastifyInstance, userIds: ObjectId[]) {
+  const [purchases, guides] = await Promise.all([
+    app.collections.purchases
+      .find({ userId: { $in: userIds }, amountTotal: { $gt: 0 } }, { projection: { userId: 1, product: 1, amountTotal: 1, createdAt: 1 } })
+      .toArray(),
+    app.collections.guideOrders
+      .find({ userId: { $in: userIds }, amount: { $gt: 0 } }, { projection: { userId: 1, amount: 1, createdAt: 1 } })
+      .toArray(),
+  ])
+  const byUser = new Map<string, { total: number; products: string[]; lastAt: Date }>()
+  const add = (userId: ObjectId | null, product: string, amount: number, at: Date) => {
+    if (!userId) {
+      return
+    }
+
+    const entry = byUser.get(userId.toString()) ?? { total: 0, products: [], lastAt: at }
+    entry.total += amount
+    entry.products.push(product)
+    entry.lastAt = at > entry.lastAt ? at : entry.lastAt
+    byUser.set(userId.toString(), entry)
+  }
+
+  for (const purchase of purchases) add(purchase.userId, purchase.product, purchase.amountTotal, purchase.createdAt)
+  for (const order of guides) add(order.userId, 'outfit_guide', order.amount, order.createdAt)
+
+  return byUser
+}
+
+// Everyone who ever paid for something (for the "buyers only" filter).
+async function buyerIds(app: FastifyInstance) {
+  const [fromPurchases, fromGuides] = await Promise.all([
+    app.collections.purchases.distinct('userId', { amountTotal: { $gt: 0 } }),
+    app.collections.guideOrders.distinct('userId', { amount: { $gt: 0 }, userId: { $ne: null } }),
+  ])
+
+  return [...fromPurchases, ...fromGuides].filter((id): id is ObjectId => Boolean(id))
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -154,10 +196,12 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
-    const { days, before, limit } = parsed.data
+    const { days, before, limit, buyers } = parsed.data
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const inPeriod = { createdAt: { $gte: since }, userId: { $nin: await adminUserIds(app) } }
-    const [found, total, stats] = await Promise.all([
+    const [admins, paid] = await Promise.all([adminUserIds(app), buyerIds(app)])
+    const notAdmin = { $nin: admins }
+    const inPeriod = buyers === '1' ? { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } } : { createdAt: { $gte: since }, userId: notAdmin }
+    const [found, total, stats, buyersInPeriod] = await Promise.all([
       app.collections.avatars
         .find(before ? { ...inPeriod, createdAt: { $gte: since, $lt: before } } : inPeriod, {
           projection: { selfieKey: 0, colorReport: 0, styleProfile: 0, reportBoards: 0, drape: 0 },
@@ -183,8 +227,10 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
           },
         ])
         .toArray(),
+      app.collections.avatars.distinct('userId', { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } }),
     ])
     const page = found.slice(0, limit)
+    const bought = await purchasesByUser(app, page.map((avatar) => avatar.userId))
     const looks = await app.collections.looks
       .aggregate<LookStats>([
         { $match: { avatarId: { $in: page.map((avatar) => avatar._id) }, status: { $ne: 'locked' } } },
@@ -206,6 +252,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       page.map(async (avatar) => {
         const versions = renders(avatar)
         const lookStats = looksByAvatar.get(avatar._id.toString())
+        const purchase = bought.get(avatar.userId.toString())
 
         return {
           id: avatar._id.toString(),
@@ -248,6 +295,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             up: lookStats?.up ?? 0,
             down: lookStats?.down ?? 0,
           },
+          // What this account paid for, if anything (US cents).
+          buyer: purchase ? { total: purchase.total, products: purchase.products, lastAt: purchase.lastAt } : null,
         }
       }),
     )
@@ -260,6 +309,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       ready: stats[0]?.ready ?? 0,
       failed: stats[0]?.failed ?? 0,
       refined: stats[0]?.refined ?? 0,
+      // Accounts with an avatar in the period that paid for something.
+      buyers: buyersInPeriod.length,
       items,
       nextBefore: found.length > limit ? page.at(-1)?.createdAt ?? null : null,
     }
