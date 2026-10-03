@@ -104,6 +104,9 @@ const envSchema = z.object({
   PRICE_HAIR_ADVISOR_CENTS: z.coerce.number().int().min(100).default(790),
   PRICE_ADVISORS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
   PRICE_EVENT_CENTS: z.coerce.number().int().min(100).default(490),
+  // The Outfit Formula Book (PDF), and where the server finds the file.
+  PRICE_OUTFIT_GUIDE_CENTS: z.coerce.number().int().min(100).default(1490),
+  OUTFIT_GUIDE_PDF: z.string().default('assets/products/outfit-formula-book.pdf'),
   LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),
   PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(2999),

@@ -165,6 +165,8 @@ export type PurchaseProduct =
   | 'advisors_bundle'
   // One event with the Event Stylist.
   | 'event_pass'
+  // The Outfit Formula Book, a PDF guide (also sold to guests, see GuideOrderDocument).
+  | 'outfit_guide'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'
@@ -741,6 +743,22 @@ export type StyleEventDocument = {
   via: 'pass' | 'pro' | 'comp'
   createdAt: Date
   updatedAt: Date
+}
+
+// The Outfit Formula Book: one paid checkout, with or without an account. The
+// token is the buyer's download link (emailed and shown after paying).
+export type GuideOrderDocument = {
+  _id: ObjectId
+  sessionId: string
+  email: string | null
+  userId: ObjectId | null
+  token: string
+  amount: number
+  currency: string
+  emailedAt: Date | null
+  downloads: number
+  lastDownloadAt: Date | null
+  createdAt: Date
 }
 
 export type CollectionDocument = {

@@ -6,6 +6,7 @@ import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
 import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
@@ -94,6 +95,13 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     amount: () => env.PRICE_ADVISORS_BUNDLE_CENTS,
     credits: () => 0,
     unlocks: { color: true, style: true, hair: true, mirror: true },
+  },
+  outfit_guide: {
+    lookupKey: 'avarobe_outfit_guide_v1',
+    name: 'The Outfit Formula Book',
+    description: '120 outfit formulas that always work, with the Color, Shape and Finish method. A PDF guide, yours to keep.',
+    amount: () => env.PRICE_OUTFIT_GUIDE_CENTS,
+    credits: () => 0,
   },
   event_pass: {
     lookupKey: 'avarobe_event_pass_v1',
@@ -325,6 +333,35 @@ export async function createCheckout(input: {
   return session.url
 }
 
+// The Outfit Formula Book: a checkout open to guests (Stripe asks for the
+// email). A signed-in buyer's account is noted too, so it shows in their
+// purchases.
+export async function createGuideCheckout(input: { userId: string | null; email: string | null; attribution?: Record<string, string> }) {
+  const metadata = { ...input.attribution, app: APP, product: 'outfit_guide', ...(input.userId ? { userId: input.userId } : {}) }
+  // Branding rides along like in createCheckout (newer than these types).
+  const extra = { branding_settings: BRANDING }
+  const params: Stripe.Checkout.SessionCreateParams = {
+    ...extra,
+    mode: 'payment',
+    line_items: [{ price: await priceFor('outfit_guide'), quantity: 1 }],
+    client_reference_id: `${APP}_guide_${input.userId ?? 'guest'}`,
+    ...(input.email ? { customer_email: input.email } : {}),
+    metadata,
+    allow_promotion_codes: true,
+    custom_text: { submit: { message: 'One-time payment. Instant PDF download, and we email it to you too.' } },
+    payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
+    success_url: `${env.APP_URL}/guide/thanks?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${env.APP_URL}/guide?checkout=cancelled`,
+  }
+  const session = await stripe().checkout.sessions.create(params)
+
+  if (!session.url) {
+    throw new Error('Stripe returned a checkout session without a URL.')
+  }
+
+  return session.url
+}
+
 // The latest Avarobe checkouts as Stripe has them (the admin's checkout
 // table): what was opened, and whether it was paid, abandoned or is open.
 export async function recentCheckouts(days: number) {
@@ -499,6 +536,12 @@ async function subscriptionTrialEnd(subscriptionId: string) {
 // Grants a paid Avarobe checkout session. For Pro it grants the first
 // payment through its invoice, the same key the invoice webhook uses.
 export async function grantSession(app: FastifyInstance, session: Stripe.Checkout.Session) {
+  // The Outfit Formula Book, guests included: its own order and email; a
+  // signed-in buyer's purchase is recorded below like any other.
+  if (isGuideSession(session)) {
+    await fulfillGuide(app, session)
+  }
+
   const userId = avarobeUserId(session.metadata)
   const product = session.metadata?.product
 

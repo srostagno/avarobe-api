@@ -207,9 +207,28 @@ function greeting(firstName: string): Block {
   return paragraph(firstName.trim() ? `Hi ${firstName.trim()},` : 'Hi there,')
 }
 
-function footer(recipient: Recipient, promotional: boolean): Block {
+function footer(recipient: Recipient, promotional: boolean, receipt?: string): Block {
   const link = (label: string, url: string) =>
     `<a href="${esc(url)}" style="color:${COLOR.muted};text-decoration:underline;">${esc(label)}</a>`
+
+  // A purchase delivery, maybe to someone without an account.
+  if (receipt) {
+    const why = `You're receiving this because you bought ${receipt} on avarobe.com with ${recipient.email}.`
+    const help = 'Questions or trouble downloading? Write to hello@avarobe.com.'
+    const address = env.EMAIL_POSTAL_ADDRESS
+    return {
+      html: [
+        esc(why),
+        `Questions or trouble downloading? Write to ${link('hello@avarobe.com', 'mailto:hello@avarobe.com')}.`,
+        `Avarobe &middot; Your AI stylist &middot; ${link('avarobe.com', env.APP_URL)}`,
+        ...(address ? [esc(address)] : []),
+      ]
+        .map((line) => `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:12px;line-height:18px;color:${COLOR.muted};">${line}</p>`)
+        .join(''),
+      text: [why, help, env.APP_URL, ...(address ? [address] : [])].join('\n'),
+    }
+  }
+
   const preferences = `${env.APP_URL}/studio/account`
   const address = env.EMAIL_POSTAL_ADDRESS
   const lines = [
@@ -242,8 +261,10 @@ function layout(input: {
   blocks: Block[]
   recipient: Recipient
   promotional?: boolean
+  // A purchase delivery: the footer says what they bought, not the account.
+  receipt?: string
 }): EmailContent {
-  const foot = footer(input.recipient, input.promotional ?? false)
+  const foot = footer(input.recipient, input.promotional ?? false, input.receipt)
   // Invisible filler after the preheader, so inbox previews don't run into
   // the body text.
   const filler = '&#847;&zwnj;&nbsp;'.repeat(60)
@@ -902,6 +923,32 @@ export function trialEndingEmail(input: Recipient & { trialEnd: Date; looksLeft:
         `Rather not continue? Cancel in your account settings before ${end} and you won't be charged. Prefer a year? Pro annual is ${money(env.PRICE_PRO_ANNUAL_CENTS)} (${perMonth(env.PRICE_PRO_ANNUAL_CENTS)}/mo) and keeps both reports for good.`,
       ),
       small(`Manage or cancel your plan: ${env.APP_URL}/studio/account#plan`),
+      signature(),
+    ],
+  })
+}
+
+// ---------------------------------------------------------------- products
+
+// The Outfit Formula Book's delivery: the download link, for good.
+export function outfitGuideEmail(input: { email: string; firstName: string; downloadUrl: string }): EmailContent {
+  return layout({
+    subject: 'Your Outfit Formula Book is here',
+    preheader: '120 outfit formulas, ready to download. Your link works anytime.',
+    hero: { src: `${env.APP_URL}/guide/cover-email.jpg`, alt: 'The Outfit Formula Book: 120 outfit combinations that always work' },
+    recipient: { firstName: input.firstName, email: input.email, unsubscribeUrl: '' },
+    receipt: 'The Outfit Formula Book',
+    blocks: [
+      eyebrow('The Outfit Formula Book'),
+      heading('Your guide is ready.'),
+      greeting(input.firstName),
+      paragraph(
+        'Thank you for your order. Your copy of The Outfit Formula Book is ready: 120 combinations that always work, the Color, Shape and Finish method, a color pairs cheat sheet and printable planners.',
+      ),
+      button('Download my guide (PDF)', input.downloadUrl),
+      small('Save it to your phone or print it. This link is yours and works anytime, so keep this email.'),
+      paragraph('Curious which of these colors are yours? Avarobe finds your color season from one selfie, free.'),
+      button('Find my colors', `${env.APP_URL}/color-analysis?utm_source=guide&utm_medium=email&utm_campaign=outfit_formula_book`),
       signature(),
     ],
   })
