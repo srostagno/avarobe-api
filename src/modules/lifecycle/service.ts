@@ -6,7 +6,7 @@ import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, UserDocument } fr
 import { deliverEmail } from '../../utils/email.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
-import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from './schedule.js'
+import { LIFECYCLE_RULES, lastLifecycleEmailAt, pickLifecycleEmail, tooSoonAfter, type LifecycleState } from './schedule.js'
 import {
   appLink,
   avatarNudgeEmail,
@@ -181,7 +181,7 @@ export function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, lo
   return {
     createdAt: user.createdAt,
     sent,
-    lastSentAt: user.lifecycleEmailLastAt ?? null,
+    lastSentAt: lastLifecycleEmailAt(user),
     avatarReadyAt: avatarReady ? (avatar.readyAt ?? user.createdAt) : null,
     // Reads made before colorsAt existed go by the avatar's own times.
     colorsAt: avatar?.colorAnalysis ? (avatar.colorsAt ?? avatar.readyAt ?? avatar.updatedAt ?? user.createdAt) : null,
@@ -484,6 +484,13 @@ export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()
       continue
     }
 
+    // Spaced from their other emails like the onboarding ones (the colors
+    // offer often goes out the same hour). It still goes later in its
+    // window if they haven't paid by then.
+    if (tooSoonAfter(lastLifecycleEmailAt(user), now.getTime())) {
+      continue
+    }
+
     // Paid since (this checkout or anything else): nothing to rescue.
     if (await app.collections.purchases.findOne({ userId: user._id, createdAt: { $gte: checkout.at } })) {
       continue
@@ -501,7 +508,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   const field = 'lifecycleEmails.checkout_rescue'
   const claimed = await app.collections.users.updateOne(
     { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
-    { $set: { [field]: now } },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
   )
 
   if (claimed.modifiedCount === 0) {
@@ -535,7 +542,12 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
     app.log.error({ err: error, userId: user._id.toString() }, 'Checkout rescue email failed; will retry')
     await Promise.all([
       app.collections.emailSends.deleteOne({ _id: sendId }),
-      app.collections.users.updateOne({ _id: user._id }, { $unset: { [field]: '' } }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
     ])
     return false
   }
@@ -603,7 +615,9 @@ export async function sendPriceDropEmails(app: FastifyInstance, now = new Date()
     }
 
     // Spaced from their other emails, like the onboarding ones.
-    if (user.lifecycleEmailLastAt && now.getTime() - user.lifecycleEmailLastAt.getTime() < PRICE_DROP.gap) {
+    const lastSentAt = lastLifecycleEmailAt(user)
+
+    if (lastSentAt && now.getTime() - lastSentAt.getTime() < PRICE_DROP.gap) {
       continue
     }
 

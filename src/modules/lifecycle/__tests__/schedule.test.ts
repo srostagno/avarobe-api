@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { LIFECYCLE_RULES, pickLifecycleEmail, type LifecycleState } from '../schedule.js'
+import { LIFECYCLE_RULES, lastLifecycleEmailAt, pickLifecycleEmail, tooSoonAfter, type LifecycleState } from '../schedule.js'
 
 const HOUR = 60 * 60 * 1000
 const now = new Date('2026-10-01T18:00:00Z')
@@ -143,5 +143,36 @@ describe('pickLifecycleEmail', () => {
   it('sends the welcome first even when the person already did everything', () => {
     const busy = state({ createdAt: ago(HOUR), avatarReadyAt: ago(50 * 60 * 1000), looks: 3, lastLookAt: ago(10 * 60 * 1000), outOfFreeLooks: true })
     assert.equal(pickLifecycleEmail(busy, now), 'welcome')
+  })
+
+  it('holds the colors offer after a checkout rescue, even one that never set lifecycleEmailLastAt', () => {
+    const colorsFirst = { createdAt: ago(3 * HOUR), colorsAt: ago(2 * HOUR) }
+    const rescued = lastLifecycleEmailAt({ lifecycleEmails: { checkout_rescue: ago(HOUR) } })
+    assert.equal(pickLifecycleEmail(state({ ...colorsFirst, lastSentAt: rescued }), now), null)
+    assert.equal(pickLifecycleEmail(state({ ...colorsFirst, lastSentAt: null }), now), 'upgrade_offer')
+  })
+})
+
+describe('lastLifecycleEmailAt', () => {
+  it('takes the later of the last onboarding email and a checkout rescue', () => {
+    assert.equal(lastLifecycleEmailAt({}), null)
+    assert.equal(lastLifecycleEmailAt({ lifecycleEmails: { checkout_rescue: ago(2 * HOUR) } })?.getTime(), ago(2 * HOUR).getTime())
+    assert.equal(
+      lastLifecycleEmailAt({ lifecycleEmailLastAt: ago(30 * HOUR), lifecycleEmails: { checkout_rescue: ago(2 * HOUR) } })?.getTime(),
+      ago(2 * HOUR).getTime(),
+    )
+    assert.equal(
+      lastLifecycleEmailAt({ lifecycleEmailLastAt: ago(HOUR), lifecycleEmails: { checkout_rescue: ago(5 * HOUR) } })?.getTime(),
+      ago(HOUR).getTime(),
+    )
+  })
+})
+
+describe('tooSoonAfter', () => {
+  it('keeps any two lifecycle emails, a checkout rescue included, the gap apart', () => {
+    assert.equal(tooSoonAfter(null, now.getTime()), false)
+    assert.equal(tooSoonAfter(ago(10 * 60 * 1000), now.getTime()), true)
+    assert.equal(tooSoonAfter(ago(LIFECYCLE_RULES.gap - HOUR), now.getTime()), true)
+    assert.equal(tooSoonAfter(ago(LIFECYCLE_RULES.gap + HOUR), now.getTime()), false)
   })
 })

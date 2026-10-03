@@ -60,6 +60,22 @@ function between(elapsed: number, after: number, window: number) {
   return elapsed >= after && elapsed <= window
 }
 
+// The last lifecycle email of any kind. Checkout rescues sent before
+// 3-Oct-2026 didn't record themselves in lifecycleEmailLastAt, so they
+// count from their own date.
+export function lastLifecycleEmailAt(user: {
+  lifecycleEmailLastAt?: Date | null
+  lifecycleEmails?: Partial<Record<LifecycleEmailKind, Date>>
+}): Date | null {
+  const times = [user.lifecycleEmailLastAt, user.lifecycleEmails?.checkout_rescue].filter((value): value is Date => value instanceof Date)
+  return times.length > 0 ? new Date(Math.max(...times.map((value) => value.getTime()))) : null
+}
+
+// Whether another email now would crowd the last one.
+export function tooSoonAfter(lastSentAt: Date | null, at: number) {
+  return lastSentAt !== null && at - lastSentAt.getTime() < LIFECYCLE_RULES.gap
+}
+
 // The offer, then two reminders timed from it, while nothing is bought.
 // `anchor` is what the offer follows: the last look, or the color read.
 function offerSequence(state: LifecycleState, at: number, anchor: Date, after: number): LifecycleEmailKind | null {
@@ -92,7 +108,7 @@ function offerSequence(state: LifecycleState, at: number, anchor: Date, after: n
 export function pickLifecycleEmail(state: LifecycleState, now: Date): LifecycleEmailKind | null {
   const at = now.getTime()
 
-  if (state.lastSentAt && at - state.lastSentAt.getTime() < LIFECYCLE_RULES.gap) {
+  if (tooSoonAfter(state.lastSentAt, at)) {
     return null
   }
 
