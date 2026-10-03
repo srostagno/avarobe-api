@@ -136,13 +136,23 @@ function palette(season: string, colors: ColorSwatch[], caption: string): Block 
     )
     .join('')
 
+  // No swatches before they pay: the season and the caption only.
+  const strip = shown.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cells}</tr></table>`
+    : ''
+
   return {
-    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px 0;"><tr><td bgcolor="${COLOR.ivory}" style="border-radius:16px;padding:20px 20px 16px 20px;"><p style="margin:0 0 2px 0;font-family:${SANS};font-size:12px;line-height:16px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:${COLOR.muted};">Your season</p><p style="margin:0 0 14px 0;font-family:${SERIF};font-size:26px;line-height:32px;font-style:italic;color:${COLOR.accent};">${esc(season)}</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cells}</tr></table><p style="margin:12px 0 0 0;font-family:${SANS};font-size:13px;line-height:19px;color:${COLOR.muted};">${esc(caption)}</p></td></tr></table>`,
-    text: `Your season: ${season} (${colors
-      .slice(0, 4)
-      .map((color) => color.name)
-      .join(', ')}). ${caption}`,
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px 0;"><tr><td bgcolor="${COLOR.ivory}" style="border-radius:16px;padding:20px 20px 16px 20px;"><p style="margin:0 0 2px 0;font-family:${SANS};font-size:12px;line-height:16px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:${COLOR.muted};">Your season</p><p style="margin:0 0 14px 0;font-family:${SERIF};font-size:26px;line-height:32px;font-style:italic;color:${COLOR.accent};">${esc(season)}</p>${strip}<p style="margin:12px 0 0 0;font-family:${SANS};font-size:13px;line-height:19px;color:${COLOR.muted};">${esc(caption)}</p></td></tr></table>`,
+    text: `Your season: ${season}${shown.length ? ` (${shown.map((color) => color.name).join(', ')})` : ''}. ${caption}`,
   }
+}
+
+// Under the season card: what they've seen, or (no colors before they pay)
+// what's waiting.
+function paletteCaption(colors: ColorSwatch[]) {
+  return colors.length
+    ? `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`
+    : 'Your best colors, your #1 and 30+ more, with your neutrals and the ones to keep away from your face, are in your Color Advisor.'
 }
 
 function chips(items: { label: string; url: string }[]): Block {
@@ -616,7 +626,7 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
   if (!env.PRO_TRIAL) {
     return layout({
       subject: `Your full ${season} palette is waiting`,
-      preheader: `You’ve seen ${colors.length} of your colors. See all of them on your own face: ${reportOnce()}, yours to keep.`,
+      preheader: `Your best colors are waiting. See them on your own face: ${reportOnce()}, yours to keep.`,
       hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
       recipient: input,
       promotional: true,
@@ -627,7 +637,7 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
         palette(
           season,
           colors,
-          `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
+          paletteCaption(colors),
         ),
         paragraph('Your Color Advisor is made from your own photo, and it’s yours to keep:'),
         checklist(REPORT_FEATURES),
@@ -643,7 +653,7 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
 
   return layout({
     subject: `Your full ${season} palette is waiting`,
-    preheader: `You’ve seen ${colors.length} of your colors. See all of them on your own face: ${env.PRO_TRIAL_DAYS} days of Pro for ${trialPrice()}.`,
+    preheader: `Your best colors are waiting. See them on your own face: ${env.PRO_TRIAL_DAYS} days of Pro for ${trialPrice()}.`,
     hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
     recipient: input,
     promotional: true,
@@ -654,7 +664,7 @@ function paletteOfferEmail(input: Recipient & { palette: { season: string; color
       palette(
         season,
         colors,
-        `You’ve seen ${colors.length} of your colors. Your full palette has 30+, with your neutrals and the ones to keep away from your face.`,
+        paletteCaption(colors),
       ),
       paragraph(`See all of them on your own face, and try everything in Avarobe Pro for ${env.PRO_TRIAL_DAYS} days:`),
       checklist(TRIAL_FEATURES()),

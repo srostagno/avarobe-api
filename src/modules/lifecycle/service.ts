@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { AvatarDocument, LifecycleEmailKind, UserDocument } from '../../types/mongo.js'
+import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, UserDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
@@ -207,9 +207,9 @@ export function lifecycleContentFor(
 ): EmailContent {
   const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
-  // The emails show the same free colors as the app, never the locked rest:
-  // with their #1 color locked (LOCK_BEST_COLOR), the three after it.
-  const freeColors = (env.LOCK_BEST_COLOR ? analysis?.bestColors.slice(1, 4) : analysis?.bestColors.slice(0, 3)) ?? []
+  // Like the app, the emails show no best colors before they pay: the
+  // season only (the palette card has no swatches then).
+  const freeColors: ColorSwatch[] = []
 
   switch (kind) {
     case 'welcome': {
