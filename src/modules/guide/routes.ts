@@ -5,12 +5,13 @@ import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
+import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
 import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
-import { isAdmin } from '../billing/entitlements.js'
+import { billingState, isAdmin, loadBillingUser } from '../billing/entitlements.js'
 import { createGuideCheckout, retrieveSession, stripeConfigured } from '../billing/stripe.js'
-import { fulfillGuide, guideDownloadUrl, guideSettled, isGuideSession } from './service.js'
+import { compGuideOrder, fulfillGuide, guideDownloadUrl, guideSettled, isGuideSession } from './service.js'
 
 // Meta's _fbc can be long; attributionMetadata drops what Stripe can't keep.
 const idField = z.string().trim().min(1).max(1000).optional()
@@ -85,6 +86,25 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return { downloadUrl: guideDownloadUrl(order), email: order.email }
+  })
+
+  // Whether the signed-in person has the guide (bought with this account, or
+  // as a guest with the same email; comp accounts always), and its link.
+  app.get('/mine', { preHandler: authenticate }, async (request) => {
+    const userId = requireUserId(request)
+    const user = await loadBillingUser(app, userId)
+
+    if (!user) {
+      return { owned: false, downloadUrl: null }
+    }
+
+    let order = await app.collections.guideOrders.findOne({ $or: [{ userId }, { email: user.email }] }, { sort: { createdAt: 1 } })
+
+    if (!order && billingState(user).comp) {
+      order = await compGuideOrder(app, userId, user.email)
+    }
+
+    return order ? { owned: true, downloadUrl: guideDownloadUrl(order) } : { owned: false, downloadUrl: null }
   })
 
   app.get('/download/:token', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {

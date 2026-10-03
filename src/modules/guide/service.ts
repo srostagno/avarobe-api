@@ -32,6 +32,35 @@ export function guideSettled(session: Stripe.Checkout.Session) {
   return session.payment_status === 'paid' || session.payment_status === 'no_payment_required'
 }
 
+// Comp accounts (the founder, testers) read the guide free: an order of
+// their own, made once, so they get a download link like any buyer.
+export async function compGuideOrder(app: FastifyInstance, userId: ObjectId, email: string) {
+  const order: GuideOrderDocument = {
+    _id: new ObjectId(),
+    sessionId: `comp_${userId.toString()}`,
+    email,
+    userId,
+    token: randomBytes(24).toString('base64url'),
+    amount: 0,
+    currency: 'usd',
+    emailedAt: new Date(),
+    downloads: 0,
+    lastDownloadAt: null,
+    createdAt: new Date(),
+  }
+
+  try {
+    await app.collections.guideOrders.insertOne(order)
+    return order
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error
+    }
+
+    return app.collections.guideOrders.findOne({ sessionId: order.sessionId })
+  }
+}
+
 export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkout.Session) {
   if (!isGuideSession(session) || !guideSettled(session)) {
     return null
