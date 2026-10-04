@@ -113,12 +113,15 @@ describe('offer emails, trial off: the Color Advisor leads', () => {
     'lead the palette offer with the report, once, and Pro monthly after it, with no trial',
     withTrial(false, () => {
       const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Light Spring', colors: COLORS } })
-      assert.ok(offer.subject.includes('3 best colors'))
+      assert.ok(offer.subject.includes('full color report'))
       assert.ok(offer.html.includes('Light Spring'))
       assert.ok(offer.html.includes('buy=color_report'))
       assert.ok(offer.text.includes('$4.99, once'))
       // What it holds, and the rest of what Avarobe sells, each with its page.
       assert.ok(offer.text.includes('The live color mirror'))
+      // Its video, and what an analyst charges in person, for scale.
+      assert.ok(offer.html.includes('/videos/color.jpg') && offer.html.includes('/advisors/color'))
+      assert.ok(offer.text.includes('$150–$400'))
       assert.ok(offer.html.includes('/advisors/style') && offer.html.includes('/advisors/hair') && offer.html.includes('/guide'))
       assert.ok(offer.html.indexOf('$4.99') < offer.html.indexOf('$7.99/mo'))
       assert.ok(!offer.text.includes('$1.00'))

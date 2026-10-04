@@ -26,6 +26,8 @@ const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-s
 // Images live on the public site so they load in any inbox, even for test
 // sends from development.
 const ASSETS = 'https://www.avarobe.com/email'
+// The product videos' posters (avarobe-web public/videos).
+const VIDEOS = 'https://www.avarobe.com/videos'
 
 function esc(value: string) {
   return value
@@ -89,6 +91,15 @@ function small(text: string): Block {
 function button(label: string, url: string): Block {
   return {
     html: `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 26px 0;"><tr><td align="center" bgcolor="${COLOR.ink}" style="border-radius:999px;"><a href="${esc(url)}" style="display:inline-block;padding:16px 30px;font-family:${SANS};font-size:15px;line-height:18px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:999px;">${esc(label)}&nbsp;&rarr;</a></td></tr></table>`,
+    text: `${label}: ${url}`,
+  }
+}
+
+// A video's poster, linked to the page that plays it (mail can't play video):
+// a play badge on the picture and a line under it.
+function videoLink(poster: string, label: string, url: string): Block {
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px 0;"><tr><td><a href="${esc(url)}" style="text-decoration:none;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="padding:0 14px 0 0;"><img src="${esc(poster)}" width="96" height="120" alt="" style="display:block;width:96px;height:120px;border-radius:12px;object-fit:cover;"></td><td valign="middle" style="font-family:${SANS};font-size:15px;line-height:21px;font-weight:600;color:${COLOR.ink};">&#9654;&nbsp; ${esc(label)}<br><span style="font-weight:400;font-size:14px;color:${COLOR.muted};">Everything inside, shown on an example</span></td></tr></table></a></td></tr></table>`,
     text: `${label}: ${url}`,
   }
 }
@@ -638,7 +649,7 @@ export function upgradeOfferEmail(
 
 // Everything in the Color Advisor, as the app's offer lists it.
 const COLOR_ADVISOR_FEATURES = [
-  'Your three best colors and your #1, on your own face',
+  'Your best colors and your #1, on your own face',
   'Your full palette: 30+ colors in basics, accents and statements',
   'The live color mirror: 300+ fabrics on your face, each one marked yours, close or one to avoid',
   'Your drape test, your neutrals, gold or silver, your lip or shirt colors and your next hair color, side by side on you',
@@ -647,6 +658,10 @@ const COLOR_ADVISOR_FEATURES = [
 ]
 
 // What else Avarobe sells, for the end of the colors offer.
+// What a color analysis costs with an analyst in person, for scale next to
+// the price (as on the site, lib/color-advisor.ts).
+const IN_PERSON_PRICE = '$150–$400'
+
 const OTHER_PRODUCTS = (campaign: LifecycleEmailKind) => [
   { name: 'Style Advisor', price: `${money(env.PRICE_STYLE_REPORT_CENTS)} once`, detail: 'The cuts and necklines that flatter your body, tried on your avatar, with a fit guide and a capsule.', url: appLink('/advisors/style', campaign) },
   { name: 'Hair & Grooming Advisor', price: `${money(env.PRICE_HAIR_ADVISOR_CENTS)} once`, detail: 'Every haircut that suits your face, shown on you, with what to tell your stylist.', url: appLink('/advisors/hair', campaign) },
@@ -671,9 +686,11 @@ function paletteOfferEmail(
     const name = input.firstName.trim()
     const buyUrl = input.palette.url ?? appLink('/studio', 'upgrade_offer', { buy: 'color_report', from: 'email_colors' })
 
+    // The full report, not "three colors": a price for three colors read as
+    // too little for too much (Silvio, Oct 4).
     return layout({
-      subject: name ? `${name}, your 3 best colors are waiting` : 'Your 3 best colors are waiting',
-      preheader: `Your ${season} colors on your own face: your #1, 30+ colors and the live mirror. ${price}, once.`,
+      subject: name ? `${name}, your full color report is ready` : 'Your full color report is ready',
+      preheader: `Everything a color analyst would tell you, on your own face: your best colors, 30+ colors, the live mirror and guides. ${price}, once.`,
       hero: personal
         ? {
             src: input.palette.heroUrl as string,
@@ -683,19 +700,20 @@ function paletteOfferEmail(
       recipient: input,
       promotional: true,
       blocks: [
-        eyebrow('Your colors are ready'),
+        eyebrow('Your full color report is ready'),
         heading(`You’re a ${season}.`),
         greeting(input.firstName),
         paragraph(
           personal
-            ? 'The blurred photos are you in your three best colors; the clear one is the color that drains you. Your best colors are waiting in your Color Advisor, with everything else that’s yours.'
-            : 'Your three best colors are drawn on your own face, waiting in your Color Advisor, with everything else that’s yours.',
+            ? 'Your full color report is made from your selfie: everything a color analyst would tell you, shown on your own face. That’s you above, in your best colors (blurred until you open it) and in the color that drains you.'
+            : 'Your full color report is made from your selfie: everything a color analyst would tell you, shown on your own face.',
         ),
         ...(colors.length > 0 ? [palette(season, colors, paletteCaption(colors))] : []),
-        eyebrow('What’s in your Color Advisor'),
+        eyebrow('What’s inside'),
+        videoLink(`${VIDEOS}/color.jpg`, 'See what’s inside · 24 s', appLink('/advisors/color', 'upgrade_offer')),
         checklist(COLOR_ADVISOR_FEATURES),
-        priceBox(`${price}, once`, 'One-time payment, no subscription.', 'Yours to keep.'),
-        button(`Unlock my colors · ${price}`, buyUrl),
+        priceBox(`${price}, once`, `With a color analyst in person: ${IN_PERSON_PRICE}.`, 'One-time payment, no subscription. Yours to keep.'),
+        button(`Get my full report · ${price}`, buyUrl),
         small('Opens your checkout, already signed in. Apple Pay, Google Pay or card.'),
         eyebrow('More from Avarobe'),
         products(OTHER_PRODUCTS('upgrade_offer')),
