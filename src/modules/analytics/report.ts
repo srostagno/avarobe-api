@@ -275,10 +275,26 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
   // Interest in each product: its page opened, its details opened in the
   // shop, a click to its page or to start free, checkout, paid; and every
   // click by what the person had done last ("after", first-party.ts).
-  type Interest = { pageViews: Tally; details: Tally; pageClicks: Tally; starts: Tally; checkouts: Tally; paid: Tally; revenue: number }
+  // Seen: its card on screen in the shop (product_seen); videos: its video
+  // started and watched to the end.
+  type Interest = {
+    seen: Tally
+    videoStarts: Tally
+    videoCompletes: Tally
+    pageViews: Tally
+    details: Tally
+    pageClicks: Tally
+    starts: Tally
+    checkouts: Tally
+    paid: Tally
+    revenue: number
+  }
   const interest = new Map<string, Interest>()
   const interestOf = (id: string) => {
     const entry = interest.get(id) ?? {
+      seen: { events: 0, people: new Set<string>() },
+      videoStarts: { events: 0, people: new Set<string>() },
+      videoCompletes: { events: 0, people: new Set<string>() },
       pageViews: { events: 0, people: new Set<string>() },
       details: { events: 0, people: new Set<string>() },
       pageClicks: { events: 0, people: new Set<string>() },
@@ -299,7 +315,13 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
       entry.people.add(person)
     }
 
-    if (row.name === 'product_page_viewed') {
+    if (row.name === 'product_seen') {
+      bump(interestOf(str(row.props.product)).seen)
+    } else if (row.name === 'product_video_started') {
+      bump(interestOf(str(row.props.product)).videoStarts)
+    } else if (row.name === 'product_video_completed') {
+      bump(interestOf(str(row.props.product)).videoCompletes)
+    } else if (row.name === 'product_page_viewed') {
       bump(interestOf(str(row.props.product)).pageViews)
     } else if (row.name === 'product_clicked') {
       const id = str(row.props.product)
@@ -440,6 +462,9 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
     productInterest: [...interest.entries()]
       .map(([id, entry]) => ({
         product: id,
+        seen: people(entry.seen),
+        videoStarts: people(entry.videoStarts),
+        videoCompletes: people(entry.videoCompletes),
         pageViews: people(entry.pageViews),
         details: people(entry.details),
         pageClicks: people(entry.pageClicks),
@@ -448,7 +473,7 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
         paid: people(entry.paid),
         revenue: entry.revenue,
       }))
-      .sort((a, b) => b.checkouts.people + b.details.people + b.pageViews.people - (a.checkouts.people + a.details.people + a.pageViews.people)),
+      .sort((a, b) => b.checkouts.people + b.seen.people + b.pageViews.people - (a.checkouts.people + a.seen.people + a.pageViews.people)),
     productClicks: [...clicksAfter.entries()]
       .map(([key, entry]) => {
         const [product, action, after, placement] = key.split('|')
