@@ -108,6 +108,11 @@ const envSchema = z.object({
   PRICE_HAIR_ADVISOR_CENTS: z.coerce.number().int().min(100).default(790),
   PRICE_ADVISORS_BUNDLE_CENTS: z.coerce.number().int().min(100).default(1990),
   PRICE_EVENT_CENTS: z.coerce.number().int().min(100).default(490),
+  // The personal magazine (4-Oct-2026): ten looks on location, its photos made
+  // with this model and quality.
+  PRICE_MAGAZINE_CENTS: z.coerce.number().int().min(100).default(990),
+  MAGAZINE_IMAGE_MODEL: z.string().default('gpt-image-2.5-sunburst'),
+  MAGAZINE_IMAGE_QUALITY: z.enum(['low', 'medium', 'high']).default('high'),
   // The Outfit Formula Book (PDF), and where the server finds the file.
   PRICE_OUTFIT_GUIDE_CENTS: z.coerce.number().int().min(100).default(1490),
   OUTFIT_GUIDE_PDF: z.string().default('assets/products/outfit-formula-book.pdf'),

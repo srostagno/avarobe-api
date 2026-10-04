@@ -912,6 +912,8 @@ const PRODUCT_NAMES: Record<string, string> = {
   hair_advisor: 'Hair & Grooming Advisor',
   advisors_bundle: 'three advisors',
   event_pass: 'Event Stylist',
+  // "Your Personal Magazine is one step away".
+  magazine: 'Personal Magazine',
 }
 
 // Names that read as plural: "Your three advisors are…".
@@ -1031,6 +1033,26 @@ export function outfitGuideEmail(input: { email: string; firstName: string; down
       small('Save it to your phone or print it. This link is yours and works anytime, so keep this email.'),
       paragraph('Curious which of these colors are yours? Avarobe finds your color season from one selfie, free.'),
       button('Find my colors', `${env.APP_URL}/color-analysis?utm_source=guide&utm_medium=email&utm_campaign=outfit_formula_book`),
+      signature(),
+    ],
+  })
+}
+
+// When their personal magazine is ready (modules/magazine): a link to read it.
+export function magazineReadyEmail(input: { email: string; firstName: string; url: string }): EmailContent {
+  return layout({
+    subject: input.firstName ? `${input.firstName}, your magazine is ready` : 'Your magazine is ready',
+    preheader: 'Your cover, a letter from your stylist and ten looks on you, on location.',
+    hero: { src: `${env.APP_URL}/demo/magazine/email-hero.jpg`, alt: 'Two personal magazine covers made with Avarobe' },
+    recipient: { firstName: input.firstName, email: input.email, unsubscribeUrl: '' },
+    receipt: 'Your Personal Magazine',
+    blocks: [
+      eyebrow('Your Personal Magazine'),
+      heading('Your issue is out.'),
+      greeting(input.firstName),
+      paragraph('Your magazine is ready: your own cover, a letter from your stylist, and ten looks on you, on location, with why each one works and the pieces to find.'),
+      button('Read my magazine', input.url),
+      small('Open it on your phone or computer. You can save it as a PDF from there and keep it.'),
       signature(),
     ],
   })

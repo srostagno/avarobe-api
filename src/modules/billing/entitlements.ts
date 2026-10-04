@@ -32,6 +32,7 @@ export type PaywallCode =
   | 'needs_style_report'
   | 'needs_hair'
   | 'needs_event'
+  | 'needs_magazine'
   | 'no_credits'
 
 export class PaywallError extends Error {
@@ -60,6 +61,7 @@ type BillingFields = Pick<
   | 'hairAdvisorAt'
   | 'styleWithoutHair'
   | 'eventCredits'
+  | 'magazineCredits'
   | 'pro'
   | 'styleKitUntil'
   | 'paidAt'
@@ -143,6 +145,7 @@ export function billingState(user: BillingFields, now = Date.now()) {
     colorMirror,
     hairAdvisor,
     eventCredits: user.eventCredits ?? 0,
+    magazineCredits: user.magazineCredits ?? 0,
     // Completing the pair at the bundle price, soon after buying one report.
     colorAddonUntil: !colorReport && styleRecent ? styleRecent : null,
     styleAddonUntil: !styleReport && colorRecent ? colorRecent : null,
@@ -179,6 +182,7 @@ export function serializeBilling(user: BillingFields) {
     colorMirror: state.colorMirror,
     hairAdvisor: state.hairAdvisor,
     eventCredits: state.eventCredits,
+    magazineCredits: state.magazineCredits,
     colorAddonUntil: iso(state.colorAddonUntil),
     styleAddonUntil: iso(state.styleAddonUntil),
     reportCredit: state.reportCreditCents > 0 ? { amount: state.reportCreditCents, until: iso(state.reportCreditUntil) } : null,
@@ -203,6 +207,7 @@ const BILLING_PROJECTION = {
   hairAdvisorAt: 1,
   styleWithoutHair: 1,
   eventCredits: 1,
+  magazineCredits: 1,
   pro: 1,
   styleKitUntil: 1,
   paidAt: 1,
@@ -394,6 +399,33 @@ export async function refundEventAccess(app: FastifyInstance, userId: ObjectId, 
     await app.collections.users.updateOne({ _id: userId }, { $inc: { eventCredits: 1 } })
   } else if (access === 'pro') {
     await refundCredits(app, userId, EVENT_LOOKS)
+  }
+}
+
+// What one magazine takes: nothing on a comp account, else a magazine
+// credit. Throws the magazine offer otherwise.
+export async function useMagazineAccess(app: FastifyInstance, userId: ObjectId): Promise<'credit' | 'comp'> {
+  const state = await loadState(app, userId)
+
+  if (state.comp) {
+    return 'comp'
+  }
+
+  const credit = await app.collections.users.updateOne(
+    { _id: userId, magazineCredits: { $gte: 1 } },
+    { $inc: { magazineCredits: -1 }, $set: { updatedAt: new Date() } },
+  )
+
+  if (credit.modifiedCount === 1) {
+    return 'credit'
+  }
+
+  throw new PaywallError('needs_magazine', 'Your personal magazine: ten looks on you, on location, with the words to go with them.')
+}
+
+export async function refundMagazineAccess(app: FastifyInstance, userId: ObjectId, access: 'credit' | 'comp') {
+  if (access === 'credit') {
+    await app.collections.users.updateOne({ _id: userId }, { $inc: { magazineCredits: 1 } })
   }
 }
 

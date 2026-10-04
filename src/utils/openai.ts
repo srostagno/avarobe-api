@@ -172,7 +172,8 @@ export type ImageInput = {
 export async function generateImageFromReferences(input: {
   images: ImageInput[]
   prompt: string
-  size?: '1024x1024' | '1024x1536' | '1536x1024'
+  // Other sizes (multiples of 16) work with the gpt-image-2.5 models.
+  size?: '1024x1024' | '1024x1536' | '1536x1024' | `${number}x${number}`
   // Defaults to AI_IMAGE_MODEL / AI_IMAGE_QUALITY.
   model?: string
   quality?: 'low' | 'medium' | 'high'

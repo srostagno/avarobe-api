@@ -438,6 +438,10 @@ function rescueNext(product: string) {
     return '/studio/events'
   }
 
+  if (product === 'magazine') {
+    return '/studio/magazine'
+  }
+
   if (/^color_|reports_bundle/.test(product)) {
     return '/studio?upgrade=palette'
   }

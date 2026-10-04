@@ -18,6 +18,7 @@ import type {
   RefreshTokenDocument,
   ShopSearchDocument,
   StyleEventDocument,
+  MagazineDocument,
   GuideOrderDocument,
   SurveyAnswerDocument,
   TasteDocument,
@@ -44,6 +45,7 @@ export type MongoCollections = {
   arrivals: Collection<ArrivalDocument>
   analyticsEvents: Collection<AnalyticsEventDocument>
   styleEvents: Collection<StyleEventDocument>
+  magazines: Collection<MagazineDocument>
   guideOrders: Collection<GuideOrderDocument>
 }
 
@@ -71,6 +73,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     arrivals: mongoDb.collection<ArrivalDocument>('arrivals'),
     analyticsEvents: mongoDb.collection<AnalyticsEventDocument>('analytics_events'),
     styleEvents: mongoDb.collection<StyleEventDocument>('style_events'),
+    magazines: mongoDb.collection<MagazineDocument>('magazines'),
     guideOrders: mongoDb.collection<GuideOrderDocument>('guide_orders'),
   }
 }
@@ -91,6 +94,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.avatars.createIndex({ createdAt: -1 }),
     collections.looks.createIndex({ userId: 1, createdAt: -1 }),
     collections.styleEvents.createIndex({ userId: 1, createdAt: -1 }),
+    collections.magazines.createIndex({ userId: 1, createdAt: -1 }),
     collections.guideOrders.createIndex({ sessionId: 1 }, { unique: true }),
     collections.guideOrders.createIndex({ token: 1 }, { unique: true }),
     collections.looks.createIndex({ eventId: 1 }, { sparse: true }),

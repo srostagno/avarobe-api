@@ -29,6 +29,8 @@ type ProductConfig = {
   unlocks?: { color?: boolean; style?: boolean; mirror?: boolean; hair?: boolean }
   // Event Stylist passes per payment.
   events?: number
+  // Personal magazines per payment.
+  magazines?: number
 }
 
 export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
@@ -110,6 +112,14 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     amount: () => env.PRICE_EVENT_CENTS,
     credits: () => 0,
     events: 1,
+  },
+  magazine: {
+    lookupKey: 'avarobe_magazine_v1',
+    name: 'Your Personal Magazine',
+    description: 'Your own magazine: a cover, a letter from your stylist and ten looks on you, on location, in your colors.',
+    amount: () => env.PRICE_MAGAZINE_CENTS,
+    credits: () => 0,
+    magazines: 1,
   },
   look_pack: {
     lookupKey: 'avarobe_look_pack_v1',
@@ -486,6 +496,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
             ...(config.unlocks?.hair ? { hairAdvisorAt: user.hairAdvisorAt ?? now } : {}),
             ...(config.unlocks?.mirror ? { colorMirrorAt: user.colorMirrorAt ?? now } : {}),
             ...(config.events ? { eventCredits: (user.eventCredits ?? 0) + config.events } : {}),
+            ...(config.magazines ? { magazineCredits: (user.magazineCredits ?? 0) + config.magazines } : {}),
             ...(grant.set?.(user) ?? {}),
             updatedAt: now,
           },

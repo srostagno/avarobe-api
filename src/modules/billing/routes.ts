@@ -51,6 +51,7 @@ const checkoutSchema = z.object({
     'hair_advisor',
     'advisors_bundle',
     'event_pass',
+    'magazine',
   ]),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
@@ -221,6 +222,8 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
           : null
     case 'event_pass':
       return state.comp ? 'Your account already has unlimited events.' : null
+    case 'magazine':
+      return state.comp ? 'Your account already makes magazines free.' : null
     case 'look_pack':
       return state.comp ? 'Your account already has unlimited looks.' : null
     case 'pro_monthly':
@@ -489,6 +492,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
             hairAdvisorAt: '',
             styleWithoutHair: '',
             eventCredits: '',
+            magazineCredits: '',
             pro: '',
             paidAt: '',
             freeAvatarRuns: '',

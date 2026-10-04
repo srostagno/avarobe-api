@@ -39,6 +39,8 @@ export type UserDocument = {
   styleWithoutHair?: boolean
   // Event Stylist passes bought and not yet used (one per event).
   eventCredits?: number
+  // Personal magazines bought and not yet made (one per issue).
+  magazineCredits?: number
   // Avarobe Pro (monthly or annual subscription).
   pro?: ProSubscription | null
   // Legacy: the Style Kit of the first price list (everything until then).
@@ -165,6 +167,8 @@ export type PurchaseProduct =
   | 'advisors_bundle'
   // One event with the Event Stylist.
   | 'event_pass'
+  // One personal magazine: ten looks on location.
+  | 'magazine'
   // The Outfit Formula Book, a PDF guide (also sold to guests, see GuideOrderDocument).
   | 'outfit_guide'
 
@@ -750,6 +754,40 @@ export type StyleEventDocument = {
   via: 'pass' | 'pro' | 'comp'
   createdAt: Date
   updatedAt: Date
+}
+
+// The personal magazine's words and shots, planned once (modules/magazine).
+export type MagazineShot = { location: string; outfit: string; pose: string }
+
+export type MagazinePlan = {
+  theme: string
+  coverLines: string[]
+  letter: string
+  archetype: string
+  shape: string
+  cover: MagazineShot
+  looks: (MagazineShot & { kicker: string; headline: string; copy: string; pieces: string[] })[]
+}
+
+export type MagazinePhoto = { status: GenerationStatus; key: string | null }
+
+// A personal magazine: a cover, a letter and up to ten looks on location,
+// all on their own avatar. Paid with a magazine credit (or a comp account).
+export type MagazineDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  status: GenerationStatus
+  moments: string[]
+  season: string
+  palette: ColorSwatch[]
+  plan: MagazinePlan | null
+  // The cover (with room above the head for the masthead), then one per look.
+  cover: MagazinePhoto
+  looks: MagazinePhoto[]
+  via: 'credit' | 'comp'
+  createdAt: Date
+  updatedAt: Date
+  readyAt: Date | null
 }
 
 // The Outfit Formula Book: one paid checkout, with or without an account. The
