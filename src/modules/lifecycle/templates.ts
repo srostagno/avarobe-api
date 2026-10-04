@@ -1,5 +1,6 @@
 import { env } from '../../config/env.js'
 import type { ColorSwatch, LifecycleEmailKind } from '../../types/mongo.js'
+import type { CrossSellKind } from './cross-sell.js'
 
 // The onboarding emails. Email clients only reliably render tables and
 // inline styles, so the layout is built that way; every block also has a
@@ -1056,4 +1057,272 @@ export function magazineReadyEmail(input: { email: string; firstName: string; ur
       signature(),
     ],
   })
+}
+
+// ---------------------------------------------------------------- cross-sell
+// Buyers: the next product they don't have (lifecycle/cross-sell.ts), one
+// per email. They've paid, so their best colors can show (Color Advisor
+// owners only). Promotional: postal address and unsubscribe in the footer.
+
+export type CrossSellContent = {
+  kind: CrossSellKind
+  // The price on the button, and the regular one when it's the pair price.
+  price: number
+  regular: number | null
+  // When the pair price ends (null at the regular price).
+  until: Date | null
+  // The pair-price reminder's report.
+  side: 'style' | 'color' | null
+  // What they have, for the wording.
+  owns: { color: boolean; style: boolean }
+  // Opens checkout signed in (the book: its page).
+  url: string
+  season: string | null
+  // Their best colors; empty unless they own the Color Advisor.
+  colors: ColorSwatch[]
+  now: Date
+}
+
+// The pair price ends during this day in the US (Pacific: the earliest
+// date there), so the email never promises a day too many.
+const endDay = (date: Date) =>
+  date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/Los_Angeles' })
+const endWeekday = (date: Date) => date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' })
+
+const STYLE_FEATURES = [
+  'Your style archetype, in words you can shop with',
+  'Silhouettes and necklines tried on your own avatar, with the ones that flatter you marked',
+  'A fit guide: the lengths, rises and waists that work on you',
+  'A 12-piece capsule in your colors and shapes',
+]
+const HAIR_FEATURES = [
+  'Your face shape and hair type, and what they mean for your cut',
+  'Six haircuts picked for you, each one on your own photo',
+  'The brief for your stylist, in salon words',
+  'The hair colors that flatter your skin (or, for menswear, the beard styles that suit your jaw)',
+]
+const MAGAZINE_FEATURES = [
+  'Your own cover, with your name as the masthead',
+  'A letter from your stylist about your colors and shapes',
+  'Ten looks on you, on location, one for each moment you pick',
+  'Why each look works, and the pieces to find',
+]
+const EVENT_FEATURES = [
+  'Three complete looks for its dress code, on you',
+  'Every piece found in stores, at your budget',
+  'Shoes, bags, hair and makeup to finish each look',
+  'A checklist for the day',
+]
+
+const BUY_NOTE = 'Opens your checkout, already signed in. Apple Pay, Google Pay or card.'
+const ONCE_NOTE = 'One-time payment, no subscription. Yours to keep.'
+
+// What's coming up, for the Event Stylist (by the month in New York).
+function upcomingEvents(now: Date) {
+  const month = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'numeric' }).format(now))
+
+  switch (month) {
+    case 10:
+      return 'Halloween parties and fall weddings are coming up.'
+    case 11:
+      return 'Thanksgiving and the first holiday parties are coming up.'
+    case 12:
+      return 'Holiday parties and New Year’s Eve are coming up.'
+    default:
+      return 'A wedding, an interview, a night out?'
+  }
+}
+
+export function crossSellEmail(input: Recipient & CrossSellContent): EmailContent {
+  const price = money(input.price)
+  const pair = input.regular !== null && input.until !== null
+  const video = (id: string, seconds: number, path: string) =>
+    videoLink(`${VIDEOS}/${id}.jpg`, `See what’s inside · ${seconds} s`, appLink(path, input.kind))
+  const yourColors = (caption: string) => (input.season && input.colors.length > 0 ? [palette(input.season, input.colors, caption)] : [])
+  // The other report at the pair price, or at its own.
+  const reportPrice = (owned: string) =>
+    pair
+      ? priceBox(`${price}, once`, `Instead of ${money(input.regular!)}, because you have the ${owned}. Ends ${endDay(input.until!)}.`, ONCE_NOTE)
+      : priceBox(`${price}, once`, 'For you, on your own photos.', ONCE_NOTE)
+  const base = { recipient: input, promotional: true }
+
+  switch (input.kind) {
+    case 'xsell_style':
+      return layout({
+        ...base,
+        subject: 'You know your colors. Now see your shapes.',
+        preheader: `The Style Advisor tries silhouettes and necklines on your own avatar. ${pair ? `${price} instead of ${money(input.regular!)} for you, until ${endDay(input.until!)}.` : `${price}, once.`}`,
+        hero: { src: `${ASSETS}/style.jpg`, alt: 'The same woman in a wrap dress and in straight trousers, side by side' },
+        blocks: [
+          eyebrow('Your next advisor'),
+          heading('You know your colors. Now see your shapes.'),
+          greeting(input.firstName),
+          paragraph(
+            'Your Color Advisor shows the colors that light up your face. The Style Advisor does the same for your body: it reads your proportions, then tries silhouettes and necklines on your own avatar, so you can see what flatters you and why.',
+          ),
+          ...yourColors('Your colors. The Style Advisor puts them into the cuts that suit you.'),
+          video('style', 21, '/advisors/style'),
+          checklist(STYLE_FEATURES),
+          reportPrice('Color Advisor'),
+          button(`Get my Style Advisor · ${price}`, input.url),
+          small(BUY_NOTE),
+          eyebrow('Get more from your colors'),
+          chips([
+            { label: 'My palette', url: appLink('/studio/report', input.kind) },
+            { label: 'The color mirror', url: appLink('/studio/mirror', input.kind) },
+            { label: 'Does this color suit me?', url: appLink('/studio/check', input.kind) },
+          ]),
+          signature(),
+        ],
+      })
+
+    case 'xsell_color':
+      return layout({
+        ...base,
+        subject: input.owns.style ? 'You know your shapes. Now find your colors.' : 'The colors that light up your face',
+        preheader: `Everything a color analyst would tell you, from one selfie, shown on your own face. ${pair ? `${price} instead of ${money(input.regular!)} for you, until ${endDay(input.until!)}.` : `${price}, once.`}`,
+        hero: { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+        blocks: [
+          eyebrow('Color Advisor'),
+          heading(input.owns.style ? 'You know your shapes. Now find your colors.' : 'Find the colors that light up your face.'),
+          greeting(input.firstName),
+          paragraph(
+            input.owns.style
+              ? 'Your Style Advisor shows the shapes that flatter you. The Color Advisor finds the colors that light up your face, from one selfie, and shows every one of them on you.'
+              : 'The Color Advisor finds your colors from one selfie: everything a color analyst would tell you, shown on your own face.',
+          ),
+          video('color', 24, '/advisors/color'),
+          checklist(COLOR_ADVISOR_FEATURES),
+          pair
+            ? reportPrice('Style Advisor')
+            : priceBox(`${price}, once`, `With a color analyst in person: ${IN_PERSON_PRICE}.`, ONCE_NOTE),
+          button(`Get my Color Advisor · ${price}`, input.url),
+          small(BUY_NOTE),
+          signature(),
+        ],
+      })
+
+    case 'xsell_addon_last_call': {
+      const style = input.side !== 'color'
+      const name = style ? 'Style Advisor' : 'Color Advisor'
+      const owned = style ? 'Color Advisor' : 'Style Advisor'
+      const regular = money(input.regular ?? (style ? env.PRICE_STYLE_REPORT_CENTS : env.PRICE_COLOR_REPORT_CENTS))
+      const until = input.until ?? input.now
+
+      return layout({
+        ...base,
+        subject: `Your ${name} at ${price} ends ${endWeekday(until)}`,
+        preheader: `Because you have the ${owned}: ${price} instead of ${regular}, until ${endDay(until)}.`,
+        hero: style
+          ? { src: `${ASSETS}/style.jpg`, alt: 'The same woman in a wrap dress and in straight trousers, side by side' }
+          : { src: `${ASSETS}/color-report.jpg`, alt: 'A drape test: the same face next to black, camel, fuchsia and sage' },
+        blocks: [
+          eyebrow('Last call'),
+          heading(`Your pair price ends ${endWeekday(until)}.`),
+          greeting(input.firstName),
+          paragraph(
+            `Because you have the ${owned}, your ${name} is ${price} instead of ${regular}. That price ends ${endDay(until)}; after that it’s ${regular}.`,
+          ),
+          checklist(style ? STYLE_FEATURES : COLOR_ADVISOR_FEATURES.slice(0, 4)),
+          button(`Get my ${name} · ${price}`, input.url),
+          small(BUY_NOTE),
+          signature(),
+        ],
+      })
+    }
+
+    case 'xsell_hair':
+      return layout({
+        ...base,
+        subject: 'See your next haircut before you get it',
+        preheader: `Six cuts picked for your face, on your own photo, and the hair colors that suit you. ${price}, once.`,
+        hero: { src: `${ASSETS}/hair.jpg`, alt: 'The same woman with copper hair and with auburn hair, side by side' },
+        blocks: [
+          eyebrow('Hair & Grooming Advisor'),
+          heading('See your next haircut before you get it.'),
+          greeting(input.firstName),
+          paragraph(
+            input.season
+              ? `Your hair frames your face as much as anything you wear. As a ${input.season}, some hair colors light you up and some wash you out. The Hair & Grooming Advisor reads your face shape and hair type from a selfie and shows the cuts and colors that suit you, on you.`
+              : 'Your hair frames your face as much as anything you wear. The Hair & Grooming Advisor reads your face shape and hair type from a selfie and shows the cuts and hair colors that suit you, on you.',
+          ),
+          video('hair', 21, '/advisors/hair'),
+          checklist(HAIR_FEATURES),
+          priceBox(`${price}, once`, 'Every cut picked for you, on your own photo.', ONCE_NOTE),
+          button(`Get my Hair & Grooming Advisor · ${price}`, input.url),
+          small(BUY_NOTE),
+          signature(),
+        ],
+      })
+
+    case 'xsell_magazine':
+      return layout({
+        ...base,
+        subject: input.firstName.trim() ? `${input.firstName.trim()}, you on the cover` : 'You, on the cover',
+        preheader: `Your Personal Magazine: ten looks on you, on location, in your colors, with your own cover. ${price}, once.`,
+        hero: { src: 'https://www.avarobe.com/demo/magazine/email-hero.jpg', alt: 'Two personal magazine covers made with Avarobe' },
+        blocks: [
+          eyebrow('Your Personal Magazine'),
+          heading('A magazine about you, with you on the cover.'),
+          greeting(input.firstName),
+          paragraph(
+            'Pick the moments of your season (brunch, a big day at work, a wedding, a trip) and we plan a look for each one and shoot it on you, on location. Then we write it up: your cover, a letter from your stylist and why every look works.',
+          ),
+          ...yourColors('Every look in your issue is planned in your colors.'),
+          video('magazine', 19, '/advisors/magazine'),
+          checklist(MAGAZINE_FEATURES),
+          priceBox(`${price}, once`, 'One issue, about five minutes after you pick your moments.', ONCE_NOTE),
+          button(`Make my magazine · ${price}`, input.url),
+          small(BUY_NOTE),
+          signature(),
+        ],
+      })
+
+    case 'xsell_event':
+      return layout({
+        ...base,
+        subject: 'What are you wearing to your next event?',
+        preheader: `Three complete looks for its dress code, on you, with every piece in stores. ${price} an event.`,
+        hero: {
+          src: `${ASSETS}/occasions.jpg`,
+          alt: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
+        },
+        blocks: [
+          eyebrow('Event Stylist'),
+          heading('Never wonder what to wear to it again.'),
+          greeting(input.firstName),
+          paragraph(
+            `${upcomingEvents(input.now)} Tell us the event, the dress code and your budget: you get three complete outfits shown on you, every piece findable in stores, and how to finish the look.`,
+          ),
+          video('event', 17, '/advisors/event'),
+          checklist(EVENT_FEATURES),
+          priceBox(`${price} an event`, 'Three complete looks for one event, on you.', 'One-time payment, no subscription.'),
+          button(`Style my event · ${price}`, input.url),
+          small(BUY_NOTE),
+          signature(),
+        ],
+      })
+
+    case 'xsell_guide':
+      return layout({
+        ...base,
+        subject: '120 outfit formulas that always work',
+        preheader: `The Outfit Formula Book: 120 combinations, the Color, Shape and Finish method and printable planners. A ${price} PDF, yours to keep.`,
+        hero: { src: 'https://www.avarobe.com/guide/cover-email.jpg', alt: 'The Outfit Formula Book: 120 outfit combinations that always work' },
+        blocks: [
+          eyebrow('The Outfit Formula Book'),
+          heading('Never stare at a full closet again.'),
+          greeting(input.firstName),
+          paragraph(
+            input.season
+              ? `Your ${input.season} palette tells you which colors are yours. The Outfit Formula Book shows how to put them together: 120 outfit combinations that always work, the Color, Shape and Finish method, a color pairs cheat sheet and printable planners.`
+              : 'The Outfit Formula Book: 120 outfit combinations that always work, the Color, Shape and Finish method, a color pairs cheat sheet and printable planners.',
+          ),
+          video('guide', 15, '/guide'),
+          priceBox(price, 'A PDF, yours to keep.', 'One-time payment. Instant download, and we email it to you too.'),
+          button(`Get the book · ${price}`, input.url),
+          signature(),
+        ],
+      })
+  }
 }

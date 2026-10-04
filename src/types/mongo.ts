@@ -133,6 +133,15 @@ export type LifecycleEmailKind =
   // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
   // the old price and bought nothing.
   | 'price_drop'
+  // Buyers: the next product they don't have, one email at a time
+  // (lifecycle/cross-sell.ts). Each goes out once.
+  | 'xsell_style'
+  | 'xsell_color'
+  | 'xsell_addon_last_call'
+  | 'xsell_hair'
+  | 'xsell_magazine'
+  | 'xsell_event'
+  | 'xsell_guide'
 
 export type ProSubscription = {
   subscriptionId: string

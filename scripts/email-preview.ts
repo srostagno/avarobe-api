@@ -11,6 +11,7 @@ import path from 'node:path'
 
 import {
   avatarNudgeEmail,
+  crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
   trialEndingEmail,
@@ -70,6 +71,26 @@ const emails = {
     heroUrl: process.env.PREVIEW_PHOTO_URL ?? null,
     url: 'https://www.avarobe.com/continue?token=preview&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop',
   }),
+  // Buyers: the next product they don't have (lifecycle/cross-sell.ts).
+  ...crossSellPreviews(),
+}
+
+function crossSellPreviews() {
+  const now = new Date()
+  const until = new Date(now.getTime() + 9 * 24 * 60 * 60 * 1000)
+  const url = 'https://www.avarobe.com/continue?token=preview'
+  const owner = { ...recipient, season: 'Warm Autumn', colors, now, url, side: null, owns: { color: true, style: false } }
+
+  return {
+    'xsell-style-pair-price': crossSellEmail({ ...owner, kind: 'xsell_style', price: 691, regular: 790, until }),
+    'xsell-style': crossSellEmail({ ...owner, kind: 'xsell_style', price: 790, regular: null, until: null }),
+    'xsell-color': crossSellEmail({ ...owner, kind: 'xsell_color', price: 499, regular: null, until: null, colors: [], owns: { color: false, style: true } }),
+    'xsell-last-call': crossSellEmail({ ...owner, kind: 'xsell_addon_last_call', price: 691, regular: 790, until: new Date(now.getTime() + 30 * 60 * 60 * 1000), side: 'style' }),
+    'xsell-hair': crossSellEmail({ ...owner, kind: 'xsell_hair', price: 790, regular: null, until: null }),
+    'xsell-magazine': crossSellEmail({ ...owner, kind: 'xsell_magazine', price: 990, regular: null, until: null }),
+    'xsell-event': crossSellEmail({ ...owner, kind: 'xsell_event', price: 490, regular: null, until: null }),
+    'xsell-guide': crossSellEmail({ ...owner, kind: 'xsell_guide', price: 1490, regular: null, until: null, url: 'https://www.avarobe.com/guide' }),
+  }
 }
 
 const log = {

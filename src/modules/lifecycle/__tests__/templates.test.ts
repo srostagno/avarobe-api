@@ -9,6 +9,7 @@ import {
   appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
+  crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
   trialEndingEmail,
@@ -296,5 +297,51 @@ describe('unsubscribe tokens', () => {
     assert.equal(userIdFromUnsubscribeToken(token)?.toString(), id.toString())
     assert.equal(userIdFromUnsubscribeToken(`${new ObjectId().toString()}.${token.split('.')[1]}`), null)
     assert.equal(userIdFromUnsubscribeToken('garbage'), null)
+  })
+})
+
+describe('cross-sell emails', () => {
+  const now = new Date('2026-10-04T18:00:00Z')
+  const base = {
+    ...recipient,
+    now,
+    url: 'https://www.avarobe.com/continue?token=abc',
+    season: 'Warm Autumn',
+    colors: [
+      { name: 'Olive', hex: '#5B5A2C' },
+      { name: 'Rust', hex: '#A0482A' },
+    ],
+    side: null,
+    owns: { color: true, style: false },
+  }
+
+  it('offers the Style Advisor at the pair price, with their colors and a one-tap checkout', () => {
+    const email = crossSellEmail({ ...base, kind: 'xsell_style', price: 691, regular: 790, until: new Date('2026-10-17T20:00:00Z') })
+    assert.equal(email.subject, 'You know your colors. Now see your shapes.')
+    assert.match(email.text, /Instead of \$7\.90, because you have the Color Advisor\. Ends Saturday, October 17\./)
+    assert.match(email.html, /continue\?token=abc/)
+    assert.match(email.text, /Olive, Rust/)
+    assert.match(email.text, /Unsubscribe from tips and reminders/)
+  })
+
+  it('shows no colors to someone who never bought them, and the regular price without a pair price', () => {
+    const email = crossSellEmail({ ...base, kind: 'xsell_color', price: 499, regular: null, until: null, colors: [], owns: { color: false, style: true } })
+    assert.equal(email.subject, 'You know your shapes. Now find your colors.')
+    assert.doesNotMatch(email.text, /Your season:/)
+    assert.doesNotMatch(email.text, /Instead of/)
+    assert.match(email.text, /\$4\.99, once/)
+  })
+
+  it('names the day the pair price ends in the reminder', () => {
+    const email = crossSellEmail({ ...base, kind: 'xsell_addon_last_call', side: 'style', price: 691, regular: 790, until: new Date('2026-10-06T02:00:00Z') })
+    // 02:00 UTC is still the 5th in the US.
+    assert.equal(email.subject, 'Your Style Advisor at $6.91 ends Monday')
+    assert.match(email.text, /That price ends Monday, October 5;/)
+  })
+
+  it('times the Event Stylist to the season, and sends the book to its page', () => {
+    assert.match(crossSellEmail({ ...base, kind: 'xsell_event', price: 490, regular: null, until: null }).text, /Halloween parties/)
+    const book = crossSellEmail({ ...base, kind: 'xsell_guide', price: 1490, regular: null, until: null, url: 'https://www.avarobe.com/guide?utm_source=email' })
+    assert.match(book.html, /href="https:\/\/www\.avarobe\.com\/guide\?utm_source=email"/)
   })
 })

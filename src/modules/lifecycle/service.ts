@@ -5,12 +5,14 @@ import { env } from '../../config/env.js'
 import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, UserDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
-import { billingState, isAdmin } from '../billing/entitlements.js'
+import { billingState, colorAddonCents, isAdmin, styleAddonCents } from '../billing/entitlements.js'
+import { CROSS_SELL_RULES, addonEnding, pickCrossSell, type CrossSellKind, type CrossSellState } from './cross-sell.js'
 import { LIFECYCLE_RULES, lastLifecycleEmailAt, pickLifecycleEmail, tooSoonAfter, type LifecycleState } from './schedule.js'
 import {
   appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
+  crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
   trialEndingEmail,
@@ -19,6 +21,7 @@ import {
   upgradeOfferEmail,
   upgradeReminderEmail,
   welcomeEmail,
+  type CrossSellContent,
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
@@ -206,6 +209,9 @@ export function lifecycleContentFor(
   priceDrop?: { heroUrl: string | null; url: string },
   // The colors offer's photo (null for none) and its one-tap checkout link.
   offer?: { heroUrl: string | null; url: string },
+  // A cross-sell's one-tap checkout link, and which pair price ends soon.
+  crossSell?: { url: string; side: 'style' | 'color' | null },
+  now = new Date(),
 ): EmailContent {
   const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
@@ -249,6 +255,85 @@ export function lifecycleContentFor(
         heroUrl: priceDrop?.heroUrl ?? null,
         url: priceDrop?.url ?? appLink('/studio', 'price_drop', { upgrade: 'palette' }),
       })
+    case 'xsell_style':
+    case 'xsell_color':
+    case 'xsell_addon_last_call':
+    case 'xsell_hair':
+    case 'xsell_magazine':
+    case 'xsell_event':
+    case 'xsell_guide':
+      return crossSellEmail({ ...recipient, ...crossSellContentFor(kind, user, avatar, crossSell, now) })
+  }
+}
+
+// ---------------------------------------------------------------- cross-sell
+
+type Offer = { product: string; price: number; regular: number | null; until: Date | null; side: 'style' | 'color' | null }
+
+// What a cross-sell sells and for how much: the other report at the pair
+// price while it lasts (the same check checkout makes), the rest at theirs.
+export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Date, side: 'style' | 'color' | null = null): Offer {
+  const billing = billingState(user, now.getTime())
+  const live = (until: Date | null) => (until && until.getTime() > now.getTime() ? until : null)
+  const report = (which: 'style' | 'color'): Omit<Offer, 'side'> => {
+    const until = live(which === 'style' ? billing.styleAddonUntil : billing.colorAddonUntil)
+    const regular = which === 'style' ? env.PRICE_STYLE_REPORT_CENTS : env.PRICE_COLOR_REPORT_CENTS
+
+    return until
+      ? { product: `${which}_addon`, price: which === 'style' ? styleAddonCents() : colorAddonCents(), regular, until }
+      : { product: `${which}_report`, price: regular, regular: null, until: null }
+  }
+  const once = (product: string, price: number): Offer => ({ product, price, regular: null, until: null, side: null })
+
+  switch (kind) {
+    case 'xsell_style':
+      return { ...report('style'), side: null }
+    case 'xsell_color':
+      return { ...report('color'), side: null }
+    case 'xsell_addon_last_call': {
+      const which = side ?? (live(billing.styleAddonUntil) ? 'style' : 'color')
+      return { ...report(which), side: which }
+    }
+    case 'xsell_hair':
+      return once('hair_advisor', env.PRICE_HAIR_ADVISOR_CENTS)
+    case 'xsell_magazine':
+      return once('magazine', env.PRICE_MAGAZINE_CENTS)
+    case 'xsell_event':
+      return once('event_pass', env.PRICE_EVENT_CENTS)
+    case 'xsell_guide':
+      return once('outfit_guide', env.PRICE_OUTFIT_GUIDE_CENTS)
+  }
+}
+
+// The book sells on its own page; the rest open their checkout in the
+// studio (?buy=), signed in when the email carries a sign-in link.
+function crossSellPage(kind: CrossSellKind, product: string) {
+  return product === 'outfit_guide' ? appLink('/guide', kind) : appLink('/studio', kind, { buy: product, from: `email_${kind}` })
+}
+
+export function crossSellContentFor(
+  kind: CrossSellKind,
+  user: UserDocument,
+  avatar: AvatarFacts | undefined,
+  link?: { url: string; side: 'style' | 'color' | null },
+  now = new Date(),
+): CrossSellContent {
+  const offer = crossSellOffer(kind, user, now, link?.side ?? null)
+  const billing = billingState(user, now.getTime())
+  const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
+
+  return {
+    kind,
+    price: offer.price,
+    regular: offer.regular,
+    until: offer.until,
+    side: offer.side,
+    owns: { color: billing.colorReport, style: billing.styleReport },
+    url: link?.url ?? crossSellPage(kind, offer.product),
+    season: analysis?.season ?? null,
+    // They paid for their colors, so the email can show them.
+    colors: billing.colorReport ? (analysis?.bestColors ?? []).slice(0, 4) : [],
+    now,
   }
 }
 
@@ -697,6 +782,134 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
   }
 }
 
+// ---------------------------------------------------------------- cross-sell sending
+
+// Every run in US daytime: buyers whose latest purchase is recent get the
+// next product they don't have, when one is due (lifecycle/cross-sell.ts).
+// Promotional, so never to anyone who opted out or before the postal
+// address is set.
+export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
+  const hour = newYorkHour(now)
+
+  if (!env.EMAIL_POSTAL_ADDRESS || hour < CROSS_SELL_RULES.sendHours.from || hour >= CROSS_SELL_RULES.sendHours.to) {
+    return 0
+  }
+
+  const buyers = await app.collections.purchases
+    .aggregate<{ _id: ObjectId; lastAt: Date }>([
+      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.horizon) } } },
+      { $group: { _id: '$userId', lastAt: { $max: '$createdAt' } } },
+    ])
+    .toArray()
+  let sent = 0
+
+  for (const buyer of buyers) {
+    const user = await app.collections.users.findOne({ _id: buyer._id, emailTipsOptOutAt: null })
+
+    if (!user || isAdmin(user)) {
+      continue
+    }
+
+    const billing = billingState(user, now.getTime())
+    const [products, magazine, guide] = await Promise.all([
+      app.collections.purchases.distinct('product', { userId: user._id }),
+      app.collections.magazines.findOne({ userId: user._id }, { projection: { _id: 1 } }),
+      app.collections.guideOrders.findOne({ $or: [{ userId: user._id }, { email: user.email.toLowerCase() }] }, { projection: { _id: 1 } }),
+    ])
+    const state: CrossSellState = {
+      lastPurchaseAt: buyer.lastAt,
+      owns: {
+        color: billing.colorReport,
+        style: billing.styleReport,
+        hair: billing.hairAdvisor,
+        magazine: billing.magazineCredits > 0 || Boolean(magazine) || products.includes('magazine'),
+        event: billing.eventCredits > 0 || products.includes('event_pass'),
+        guide: Boolean(guide) || products.includes('outfit_guide'),
+      },
+      addonUntil: { color: billing.colorAddonUntil, style: billing.styleAddonUntil },
+      sent: user.lifecycleEmails ?? {},
+      lastSentAt: lastLifecycleEmailAt(user),
+      promotionsAllowed: true,
+    }
+    const kind = pickCrossSell(state, now)
+
+    if (kind && (await sendCrossSell(app, user, kind, kind === 'xsell_addon_last_call' ? addonEnding(state, now.getTime()) : null, now))) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, side: 'style' | 'color' | null, now: Date) {
+  const field = `lifecycleEmails.${kind}`
+  // Claimed only if no other email went out within the gap meanwhile (the
+  // other loops run at the same time).
+  const claimed = await app.collections.users.updateOne(
+    {
+      _id: user._id,
+      [field]: { $exists: false },
+      emailTipsOptOutAt: null,
+      $or: [{ lifecycleEmailLastAt: null }, { lifecycleEmailLastAt: { $lt: new Date(now.getTime() - LIFECYCLE_RULES.gap) } }],
+    },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const offer = crossSellOffer(kind, user, now, side)
+    // Signed in from the email, straight to that checkout, in their own
+    // browser (where Apple Pay works). The book needs no account.
+    let url = crossSellPage(kind, offer.product)
+
+    if (offer.product !== 'outfit_guide') {
+      const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=${offer.product}&from=email_${kind}` }))
+      signIn.searchParams.set('utm_source', 'email')
+      signIn.searchParams.set('utm_medium', 'lifecycle')
+      signIn.searchParams.set('utm_campaign', kind)
+      url = signIn.toString()
+    }
+
+    const avatar = (await app.collections.avatars.findOne({ userId: user._id })) ?? undefined
+    const content = lifecycleContentFor(kind, user, avatar, { count: 0, lastAt: null }, sendId, undefined, undefined, undefined, { url, side }, now)
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind,
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), kind, product: offer.product, delivered }, 'Cross-sell email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString(), kind }, 'Cross-sell email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+    return false
+  }
+}
+
 let running = false
 
 // One pass: everyone who signed up recently and still wants tips gets the
@@ -786,6 +999,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendPriceDropEmails(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Price drop run crashed')
+    })
+    void sendCrossSells(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Cross-sell run crashed')
     })
   }
 
