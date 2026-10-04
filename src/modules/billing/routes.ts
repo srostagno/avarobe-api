@@ -357,6 +357,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           amount: session.amount_total ?? 0,
           currency: session.currency ?? 'usd',
           sessionId: session.id,
+          // The id the server reports this purchase to Meta and GA with
+          // (reportSession): a subscription's first invoice, the checkout
+          // otherwise. The page's browser events use it, so the two merge.
+          eventId: (typeof session.invoice === 'string' ? session.invoice : session.invoice?.id) ?? session.id,
         },
       }
     },
