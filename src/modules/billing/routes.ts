@@ -61,6 +61,8 @@ const checkoutSchema = z.object({
     .catch(undefined),
   // Which offer led here (first-party analytics), e.g. new_look_results.
   placement: z.string().regex(/^[a-z0-9_]{1,40}$/).optional(),
+  // Stripe's form inside our page (the web asks in Instagram's browser).
+  embedded: z.boolean().optional(),
   // Where to come back to if they cancel; only paths inside the studio.
   returnPath: z
     .string()
@@ -285,11 +287,12 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
 
       try {
         const discountCents = parsed.data.product === 'pro_annual' ? state.reportCreditCents : 0
-        const url = await createCheckout({
+        const { url, clientSecret } = await createCheckout({
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
           discountCents,
+          embedded: parsed.data.embedded,
           // An admin's own test purchase never reaches Meta or Google as a
           // conversion: without the browser ids there's nothing to report.
           attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
@@ -301,9 +304,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
             product: parsed.data.product,
             amount: Math.max(0, PRODUCTS[parsed.data.product].amount() - discountCents),
             placement: parsed.data.placement ?? 'unknown',
+            ui: parsed.data.embedded ? 'embedded' : 'hosted',
           },
         })
-        return { url }
+        return { url, clientSecret }
       } catch (error) {
         if (error instanceof BillingNotConfiguredError) {
           return reply.code(503).send({ message: 'Payments are coming soon.' })

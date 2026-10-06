@@ -265,6 +265,9 @@ const BRANDING = {
   font_family: 'inter',
 }
 
+// The embedded form takes everything but the icon (Stripe refuses one there).
+const EMBEDDED_BRANDING = Object.fromEntries(Object.entries(BRANDING).filter(([key]) => key !== 'icon'))
+
 // What checkout says next to the pay button: how a subscription renews and
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
@@ -290,7 +293,12 @@ export async function createCheckout(input: {
   discountCents?: number
   // Analytics ids for server-side purchase events (conversions.ts).
   attribution?: Record<string, string>
-}) {
+  // Checkout inside our page (Stripe's embedded form) instead of Stripe's:
+  // the web asks for it in Instagram's and Facebook's browsers, where a
+  // card is typed either way and leaving for checkout.stripe.com lost most
+  // buyers (Oct 5: 3 of 16 paid there, 9 of 18 in Safari or Chrome).
+  embedded?: boolean
+}): Promise<{ url: string | null; clientSecret: string | null }> {
   const userId = input.user._id.toString()
   const metadata = { ...input.attribution, app: APP, product: input.product, userId }
   const discount = input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents) : null
@@ -301,12 +309,28 @@ export async function createCheckout(input: {
     client_reference_id: `${APP}_${userId}`,
     customer_email: input.user.email,
     metadata,
-    // Stripe takes either a discount or the promotion code field.
-    ...(discount ? { discounts: [{ coupon: discount }] } : { allow_promotion_codes: true }),
+    // Stripe takes either a discount or the promotion code field. The field
+    // is left to subscriptions: on a $5 purchase it sends people off to
+    // hunt for a code.
+    ...(discount
+      ? { discounts: [{ coupon: discount }] }
+      : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
+        ? { allow_promotion_codes: true }
+        : {}),
     custom_text: { submit: { message: submitMessage(input.product) } },
-    branding_settings: BRANDING,
-    success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
+    // The embedded form comes back to the same success page; closing it is
+    // the way back, so it has no cancel link.
+    ...(input.embedded
+      ? {
+          ui_mode: 'embedded' as const,
+          branding_settings: EMBEDDED_BRANDING,
+          return_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+        }
+      : {
+          branding_settings: BRANDING,
+          success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
+        }),
   }
   const params: Stripe.Checkout.SessionCreateParams =
     input.product === 'pro_trial'
@@ -336,11 +360,11 @@ export async function createCheckout(input: {
       }
   const session = await stripe().checkout.sessions.create(params)
 
-  if (!session.url) {
-    throw new Error('Stripe returned a checkout session without a URL.')
+  if (input.embedded ? !session.client_secret : !session.url) {
+    throw new Error('Stripe returned a checkout session without a URL or client secret.')
   }
 
-  return session.url
+  return { url: session.url ?? null, clientSecret: input.embedded ? session.client_secret : null }
 }
 
 // The Outfit Formula Book: a checkout open to guests (Stripe asks for the
@@ -357,7 +381,6 @@ export async function createGuideCheckout(input: { userId: string | null; email:
     client_reference_id: `${APP}_guide_${input.userId ?? 'guest'}`,
     ...(input.email ? { customer_email: input.email } : {}),
     metadata,
-    allow_promotion_codes: true,
     custom_text: { submit: { message: 'One-time payment. Instant PDF download, and we email it to you too.' } },
     payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
     success_url: `${env.APP_URL}/guide/thanks?session_id={CHECKOUT_SESSION_ID}`,
