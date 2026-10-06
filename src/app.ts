@@ -24,6 +24,7 @@ import guideRoutes from './modules/guide/routes.js'
 import hairRoutes from './modules/hair/routes.js'
 import checkRoutes from './modules/check/routes.js'
 import healthRoutes from './modules/health/routes.js'
+import editRoutes from './modules/looks/edit-routes.js'
 import iconLookRoutes from './modules/looks/icon-routes.js'
 import lookRoutes from './modules/looks/routes.js'
 import lifecycleRoutes from './modules/lifecycle/routes.js'
@@ -97,6 +98,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(avatarRoutes, { prefix: '/avatar' })
     await v1.register(lookRoutes, { prefix: '/looks' })
     await v1.register(iconLookRoutes, { prefix: '/looks/icons' })
+    await v1.register(editRoutes, { prefix: '/looks/edits' })
     await v1.register(collectionRoutes, { prefix: '/collections' })
     await v1.register(billingRoutes, { prefix: '/billing' })
     await v1.register(reportRoutes, { prefix: '/report' })

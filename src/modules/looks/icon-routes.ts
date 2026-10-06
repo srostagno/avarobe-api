@@ -6,8 +6,13 @@ import { z } from 'zod'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { Presentation } from '../../types/mongo.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
+import { EDITS } from './edits.js'
 import { ICON_LOOKS, type IconLook } from './icons.js'
 import { startTryOn } from './try-on.js'
+
+// Everything that can be tried on in one tap: the icon looks and every
+// Edit's looks (ids are unique across both).
+const CATALOG: IconLook[] = [...ICON_LOOKS, ...EDITS.flatMap((edit) => edit.looks)]
 
 const tryOnSchema = z.object({
   notes: z.string().trim().max(280).optional(),
@@ -21,9 +26,9 @@ function iconImageUrl(look: IconLook) {
 
 // The catalog for a wardrobe. Unisex wardrobes (and anyone without an avatar
 // yet) get both, alternating so the grid mixes them.
-function iconLooksFor(presentation: Presentation | null) {
-  const menswear = ICON_LOOKS.filter((look) => look.presentation === 'menswear')
-  const womenswear = ICON_LOOKS.filter((look) => look.presentation === 'womenswear')
+export function looksFor<T extends Pick<IconLook, 'presentation'>>(looks: T[], presentation: Presentation | null) {
+  const menswear = looks.filter((look) => look.presentation === 'menswear')
+  const womenswear = looks.filter((look) => look.presentation === 'womenswear')
 
   if (presentation === 'menswear') {
     return menswear
@@ -38,12 +43,14 @@ function iconLooksFor(presentation: Presentation | null) {
     menswear[index],
   ])
     .flat()
-    .filter((look): look is IconLook => Boolean(look))
+    .filter((look): look is T => Boolean(look))
 }
 
-// The web serves the display image from its public folder.
-function serializeIconLook(look: IconLook) {
-  return { ...look, image: `/icon-looks/${look.id}.webp` }
+// The web serves the display image from its public folder. Generator-only
+// fields (an Edit look's scene and source) stay here.
+export function serializeIconLook(look: IconLook) {
+  const { id, presentation, name, era, mood, description, person, items } = look
+  return { id, presentation, name, era, mood, description, person, items, image: `/icon-looks/${id}.webp` }
 }
 
 const iconLookRoutes: FastifyPluginAsync = async (app) => {
@@ -53,17 +60,17 @@ const iconLookRoutes: FastifyPluginAsync = async (app) => {
     const userId = requireUserId(request)
     const avatar = await app.collections.avatars.findOne({ userId }, { projection: { body: 1 } })
 
-    return { looks: iconLooksFor(avatar?.body?.presentation ?? null).map(serializeIconLook) }
+    return { looks: looksFor(ICON_LOOKS, avatar?.body?.presentation ?? null).map(serializeIconLook) }
   })
 
-  // Try-on of an icon look: the upload flow, with the catalog image as the
-  // outfit photo. The render runs in the background.
+  // Try-on of an icon look or an Edit's look: the upload flow, with the
+  // catalog image as the outfit photo. The render runs in the background.
   app.post(
     '/:id/try-on',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const userId = requireUserId(request)
-      const icon = ICON_LOOKS.find((look) => look.id === (request.params as { id?: string }).id)
+      const icon = CATALOG.find((look) => look.id === (request.params as { id?: string }).id)
 
       if (!icon) {
         return reply.code(404).send({ message: 'Look not found.' })
