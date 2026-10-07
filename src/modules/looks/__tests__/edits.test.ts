@@ -44,6 +44,20 @@ describe('Edits', () => {
     assert.equal(editsFor('womenswear', new Date('2026-10-20T12:00:00Z')).edits[0]!.isNew, false)
   })
 
+  it('let the next week’s Edit lead on its day, and last week’s stop being new', () => {
+    const { edits, next } = editsFor('womenswear', new Date('2026-10-14T12:00:00Z'))
+    assert.equal(edits[0]!.id, 'fall-weddings-2026')
+    assert.equal(edits[0]!.isNew, true)
+    assert.equal(edits[0]!.looks.length, 20)
+    assert.equal(edits.find((edit) => edit.id === 'halloween-2026')!.isNew, false)
+    assert.equal(next?.at, '2026-10-20')
+
+    // Before its day it doesn't show, and it's the drop announced next.
+    const before = editsFor('womenswear', new Date('2026-10-12T12:00:00Z'))
+    assert.equal(before.edits.some((edit) => edit.id === 'fall-weddings-2026'), false)
+    assert.equal(before.next?.name, 'The Fall Wedding Guest Edit')
+  })
+
   it('drop a new Edit at least every week, as the app promises', () => {
     const dates = [...EDITS.map((edit) => edit.droppedAt), ...UPCOMING_EDITS.map((edit) => edit.at)].sort()
     for (let index = 1; index < dates.length; index++) {

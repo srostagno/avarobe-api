@@ -47,6 +47,7 @@ export const UPCOMING_EDITS: { name: string; emoji: string; at: string }[] = [
 
 const HALLOWEEN = 'Halloween 2026'
 const FALL = 'Fall 2026'
+const WEDDINGS = 'Fall Weddings 2026'
 const GRETA = 'ads/2026-10-halloween-wow/src/stills'
 
 const halloween: EditLook[] = [
@@ -628,6 +629,296 @@ const fall: EditLook[] = [
   },
 ]
 
+// The Fall Wedding Guest Edit (Oct 13): every dress code and venue of an
+// American fall wedding. Never white or ivory on a guest.
+const weddings: EditLook[] = [
+  {
+    id: 'wed-velvet-column', presentation: 'womenswear', name: 'Velvet Column Gown', era: WEDDINGS, mood: 'Black tie', person: 'imani',
+    scene: 'a grand hotel ballroom wedding reception with crystal chandeliers and candlelit round tables',
+    description: 'Emerald velvet to the floor and gold everything: black tie, done right.',
+    items: [
+      { slot: 'dress', name: 'Velvet column gown', color: 'Emerald', colorHex: '#0B5D45', material: 'Velvet', fit: 'Floor length, square neck, long sleeves, straight column' },
+      { slot: 'accessory', name: 'Drop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Statement' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'bag', name: 'Box clutch', color: 'Gold', colorHex: '#C8A24A', material: 'Metal', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-burgundy-bias', presentation: 'womenswear', name: 'Burgundy Bias Gown', era: WEDDINGS, mood: 'Black tie optional', person: 'ava',
+    scene: 'an evening wedding reception in a historic mansion lit by candles, guests in formal wear behind',
+    description: 'Bias-cut burgundy satin with a faux-fur stole for the walk outside.',
+    items: [
+      { slot: 'dress', name: 'Bias-cut satin gown', color: 'Burgundy', colorHex: '#6E1F2E', material: 'Satin', fit: 'Floor length, cowl neck, thin straps' },
+      { slot: 'outerwear', name: 'Faux-fur stole', color: 'Chocolate', colorHex: '#4A3328', material: 'Faux fur', fit: 'Draped over the shoulders' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Burgundy', colorHex: '#6E1F2E', material: 'Satin', fit: 'High heel' },
+      { slot: 'accessory', name: 'Pearl drop earrings', color: 'Pearl', colorHex: '#E9E1D3', material: 'Pearl and gold', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-navy-one-shoulder', presentation: 'womenswear', name: 'One-Shoulder Cocktail', era: WEDDINGS, mood: 'Cocktail attire', person: 'sofia',
+    scene: 'a city rooftop wedding reception at dusk with string lights and the skyline behind',
+    description: 'A navy one-shoulder midi with gold sandals: polished, easy to dance in.',
+    items: [
+      { slot: 'dress', name: 'One-shoulder dress', color: 'Navy', colorHex: '#1F2A44', material: 'Crepe', fit: 'Midi, fitted waist, softly flared skirt' },
+      { slot: 'shoes', name: 'Block-heel sandals', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'Mid heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Gold', colorHex: '#C8A24A', material: 'Metallic leather', fit: 'Small' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Medium' },
+    ],
+  },
+  {
+    id: 'wed-plum-chiffon', presentation: 'womenswear', name: 'Vineyard Chiffon', era: WEDDINGS, mood: 'Vineyard wedding', person: 'mei',
+    scene: 'a vineyard wedding at golden hour, vine rows and a long candlelit dinner table behind',
+    description: 'Plum chiffon with flutter sleeves, light enough for the walk between the vines.',
+    items: [
+      { slot: 'dress', name: 'Chiffon midi dress', color: 'Plum', colorHex: '#5E3A5A', material: 'Silk chiffon', fit: 'V-neck, flutter sleeves, tiered midi skirt' },
+      { slot: 'shoes', name: 'Block-heel sandals', color: 'Nude', colorHex: '#C9A58A', material: 'Leather', fit: 'Low heel' },
+      { slot: 'bag', name: 'Suede clutch', color: 'Taupe', colorHex: '#8C7A6B', material: 'Suede', fit: 'Small' },
+      { slot: 'accessory', name: 'Cuff bracelet', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Slim' },
+    ],
+  },
+  {
+    id: 'wed-sage-pleats', presentation: 'womenswear', name: 'Sage Garden Pleats', era: WEDDINGS, mood: 'Garden wedding', person: 'helen',
+    scene: 'an afternoon garden wedding on a lawn with autumn trees and rows of wooden chairs',
+    description: 'Long-sleeved sage pleats and taupe slingbacks: elegant, and warm enough outdoors.',
+    items: [
+      { slot: 'dress', name: 'Pleated midi dress', color: 'Sage', colorHex: '#8A9A7B', material: 'Crepe', fit: 'High neck, long sleeves, belted waist, pleated midi skirt' },
+      { slot: 'shoes', name: 'Slingback pumps', color: 'Taupe', colorHex: '#8C7A6B', material: 'Leather', fit: 'Low heel' },
+      { slot: 'bag', name: 'Structured clutch', color: 'Taupe', colorHex: '#8C7A6B', material: 'Leather', fit: 'Small' },
+      { slot: 'accessory', name: 'Pearl studs', color: 'Pearl', colorHex: '#E9E1D3', material: 'Pearl', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-mountain-slip', presentation: 'womenswear', name: 'Mountain Wedding Layers', era: WEDDINGS, mood: 'Mountain wedding', person: 'nora',
+    scene: 'an outdoor mountain wedding at sunset with pine trees and a wooden lodge behind',
+    description: 'Forest-green satin, a camel coat on the shoulders and suede boots for the cold.',
+    items: [
+      { slot: 'dress', name: 'Satin slip dress', color: 'Forest green', colorHex: '#1F3B2D', material: 'Satin', fit: 'Midi, bias cut' },
+      { slot: 'outerwear', name: 'Wrap coat', color: 'Camel', colorHex: '#C19A6B', material: 'Wool', fit: 'Long, draped over the shoulders' },
+      { slot: 'shoes', name: 'Heeled boots', color: 'Cognac', colorHex: '#8B5A2B', material: 'Suede', fit: 'Knee high, block heel' },
+      { slot: 'accessory', name: 'Pendant necklace', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Fine chain' },
+    ],
+  },
+  {
+    id: 'wed-city-hall-suit', presentation: 'womenswear', name: 'City Hall Suit', era: WEDDINGS, mood: 'City hall wedding', person: 'ava',
+    scene: 'the stone steps of a grand city hall building on a crisp fall day, a small wedding party nearby',
+    description: 'A chocolate suit over blush silk: the sharpest guest at a courthouse wedding.',
+    items: [
+      { slot: 'suit', name: 'Tailored suit', color: 'Chocolate brown', colorHex: '#4A3328', material: 'Wool crepe', fit: 'Single-breasted blazer, high-waisted wide-leg trousers' },
+      { slot: 'top', name: 'Silk camisole', color: 'Blush', colorHex: '#D9A9A0', material: 'Silk', fit: 'Cowl neck' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Nude', colorHex: '#C9A58A', material: 'Leather', fit: 'Mid heel' },
+      { slot: 'bag', name: 'Top-handle bag', color: 'Blush', colorHex: '#D9A9A0', material: 'Leather', fit: 'Mini' },
+    ],
+  },
+  {
+    id: 'wed-black-jumpsuit', presentation: 'womenswear', name: 'Evening Jumpsuit', era: WEDDINGS, mood: 'Evening wedding', person: 'mei',
+    scene: 'a modern art-gallery wedding reception at night with white walls, candles and guests',
+    description: 'A halter jumpsuit with big gold earrings: evening-ready, no gown needed.',
+    items: [
+      { slot: 'dress', name: 'Halter jumpsuit', color: 'Black', colorHex: '#151515', material: 'Crepe', fit: 'Halter neck, belted waist, wide legs to the floor' },
+      { slot: 'accessory', name: 'Statement earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Sculptural' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Gold', colorHex: '#C8A24A', material: 'Metallic leather', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-teal-velvet-wrap', presentation: 'womenswear', name: 'Teal Velvet Wrap', era: WEDDINGS, mood: 'Semi-formal', person: 'sofia',
+    scene: 'a candlelit restaurant wedding dinner with long tables and autumn flowers',
+    description: 'A deep teal velvet wrap that flatters every curve, with gold at the ears.',
+    items: [
+      { slot: 'dress', name: 'Velvet wrap dress', color: 'Deep teal', colorHex: '#1F5560', material: 'Velvet', fit: 'Midi, long sleeves, wrap waist, V-neck' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'Mid heel' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Medium' },
+    ],
+  },
+  {
+    id: 'wed-copper-sequins', presentation: 'womenswear', name: 'Copper Sequins', era: WEDDINGS, mood: 'Black tie optional', person: 'imani',
+    scene: 'a lavish evening wedding reception with a dance floor, warm lights and guests dancing behind',
+    description: 'A copper sequin slip that catches every light on the dance floor.',
+    items: [
+      { slot: 'dress', name: 'Sequin slip dress', color: 'Copper', colorHex: '#B5652F', material: 'Sequins', fit: 'Midi, cowl neck, thin straps' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Bronze', colorHex: '#8C5A33', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'bag', name: 'Satin clutch', color: 'Black', colorHex: '#151515', material: 'Satin', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-mauve-flutter', presentation: 'womenswear', name: 'Lakeside Mauve', era: WEDDINGS, mood: 'Lakeside wedding', person: 'sofia',
+    scene: 'a lakeside wedding ceremony with colorful fall trees reflected in the water',
+    description: 'A mauve wrap with flutter sleeves: soft, romantic and made for photos.',
+    items: [
+      { slot: 'dress', name: 'Flutter-sleeve wrap dress', color: 'Mauve', colorHex: '#9A6A7A', material: 'Crepe', fit: 'Midi, V-neck, flutter sleeves, wrap waist' },
+      { slot: 'shoes', name: 'Block-heel sandals', color: 'Nude', colorHex: '#C9A58A', material: 'Leather', fit: 'Low heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Nude', colorHex: '#C9A58A', material: 'Leather', fit: 'Small' },
+      { slot: 'accessory', name: 'Drop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-marigold-cowl', presentation: 'womenswear', name: 'Marigold Cowl', era: WEDDINGS, mood: 'Cocktail attire', person: 'imani',
+    scene: 'a garden-party wedding reception at golden hour with string lights and autumn trees',
+    description: 'Marigold satin with chocolate suede: the warmest color in the room.',
+    items: [
+      { slot: 'dress', name: 'Satin cowl-neck dress', color: 'Marigold', colorHex: '#D9A13B', material: 'Satin', fit: 'Midi, bias cut, thin straps' },
+      { slot: 'shoes', name: 'Strappy heels', color: 'Chocolate', colorHex: '#4A3328', material: 'Suede', fit: 'Mid heel' },
+      { slot: 'bag', name: 'Suede clutch', color: 'Chocolate', colorHex: '#4A3328', material: 'Suede', fit: 'Small' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Medium' },
+    ],
+  },
+  {
+    id: 'wed-terracotta-set', presentation: 'womenswear', name: 'Terracotta Two-Piece', era: WEDDINGS, mood: 'Rustic wedding', person: 'nora',
+    scene: 'a rustic farm wedding with hay bales, string lights and autumn trees at sunset',
+    description: 'A matching terracotta satin set: a halter top and a bias midi skirt.',
+    items: [
+      { slot: 'top', name: 'Satin halter top', color: 'Terracotta', colorHex: '#B5603A', material: 'Satin', fit: 'Cropped just above the waist' },
+      { slot: 'bottom', name: 'Satin midi skirt', color: 'Terracotta', colorHex: '#B5603A', material: 'Satin', fit: 'High waist, bias cut, midi' },
+      { slot: 'shoes', name: 'Block-heel sandals', color: 'Cognac', colorHex: '#8B5A2B', material: 'Leather', fit: 'Mid heel' },
+      { slot: 'bag', name: 'Suede clutch', color: 'Cognac', colorHex: '#8B5A2B', material: 'Suede', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-dusty-rose-lace', presentation: 'womenswear', name: 'Dusty Rose Lace', era: WEDDINGS, mood: 'Church wedding', person: 'helen',
+    scene: 'outside an old stone church after a fall wedding ceremony, autumn leaves on the path',
+    description: 'Long-sleeved dusty rose lace: graceful for a church ceremony and the dinner after.',
+    items: [
+      { slot: 'dress', name: 'Lace midi dress', color: 'Dusty rose', colorHex: '#C08A86', material: 'Lace over a satin lining', fit: 'Fitted bodice, long sleeves, midi' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Nude', colorHex: '#C9A58A', material: 'Leather', fit: 'Low heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Taupe', colorHex: '#8C7A6B', material: 'Leather', fit: 'Small' },
+      { slot: 'accessory', name: 'Pearl earrings', color: 'Pearl', colorHex: '#E9E1D3', material: 'Pearl', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-slate-cape', presentation: 'womenswear', name: 'Slate Cape Gown', era: WEDDINGS, mood: 'Formal', person: 'helen',
+    scene: 'a country-club wedding reception with tall windows, fall flowers and soft evening light',
+    description: 'A slate-blue cape gown: covered arms, a floor-length line and real presence.',
+    items: [
+      { slot: 'dress', name: 'Cape-sleeve gown', color: 'Slate blue', colorHex: '#5A6E8C', material: 'Crepe', fit: 'Floor length, cape sleeves, fitted waist' },
+      { slot: 'accessory', name: 'Crystal drop earrings', color: 'Silver', colorHex: '#C0C0C0', material: 'Crystal and metal', fit: 'Drop' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Silver', colorHex: '#BFC1C2', material: 'Metallic leather', fit: 'Low heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Silver', colorHex: '#BFC1C2', material: 'Metallic leather', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-sapphire-halter', presentation: 'womenswear', name: 'Sapphire Halter', era: WEDDINGS, mood: 'Black tie', person: 'nora',
+    scene: 'a museum-hall wedding reception at night with stone columns, candles and guests in black tie',
+    description: 'Sapphire satin with an open back: the gown people turn around for.',
+    items: [
+      { slot: 'dress', name: 'Satin halter gown', color: 'Sapphire', colorHex: '#1F4E9C', material: 'Satin', fit: 'Floor length, halter neck, open back' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Silver', colorHex: '#BFC1C2', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'accessory', name: 'Crystal studs', color: 'Silver', colorHex: '#C0C0C0', material: 'Crystal', fit: 'Small' },
+      { slot: 'bag', name: 'Clutch', color: 'Silver', colorHex: '#BFC1C2', material: 'Metallic leather', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-gold-pleats', presentation: 'womenswear', name: 'Gold Pleats', era: WEDDINGS, mood: 'Evening wedding', person: 'mei',
+    scene: 'a city loft wedding reception with exposed brick, candles and string lights',
+    description: 'A gold pleated skirt under a fine black turtleneck: chic, warm and unexpected.',
+    items: [
+      { slot: 'top', name: 'Fine-knit turtleneck', color: 'Black', colorHex: '#151515', material: 'Merino', fit: 'Fitted, tucked in' },
+      { slot: 'bottom', name: 'Pleated midi skirt', color: 'Gold', colorHex: '#C9A44C', material: 'Metallic lamé', fit: 'High waist, sunray pleats, midi' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Black', colorHex: '#151515', material: 'Suede', fit: 'High heel' },
+      { slot: 'bag', name: 'Clutch', color: 'Black', colorHex: '#151515', material: 'Satin', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-velvet-tux', presentation: 'womenswear', name: 'Velvet Tuxedo', era: WEDDINGS, mood: 'Black tie optional', person: 'ava',
+    scene: 'a jazz-club wedding after-party with warm lights, a small stage and guests',
+    description: 'A black velvet tuxedo with satin lapels and a lace camisole: no gown, all glamour.',
+    items: [
+      { slot: 'suit', name: 'Velvet tuxedo', color: 'Black', colorHex: '#121212', material: 'Velvet with satin lapels', fit: 'Fitted blazer, slim straight trousers' },
+      { slot: 'top', name: 'Lace camisole', color: 'Black', colorHex: '#151515', material: 'Lace', fit: 'Fitted' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'accessory', name: 'Drop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Long' },
+    ],
+  },
+  {
+    id: 'wed-barn-chic', presentation: 'womenswear', name: 'Barn Chic', era: WEDDINGS, mood: 'Barn wedding', person: 'imani',
+    scene: 'a red barn wedding at sunset with hay bales, string lights and guests behind',
+    description: 'Burnt-orange tiers, a tan suede jacket and western boots: country, dressed up.',
+    items: [
+      { slot: 'dress', name: 'Tiered midi dress', color: 'Burnt orange', colorHex: '#B65A2B', material: 'Crinkle chiffon', fit: 'Puff sleeves, tiered midi skirt' },
+      { slot: 'outerwear', name: 'Cropped suede jacket', color: 'Tan', colorHex: '#B08860', material: 'Suede', fit: 'Cropped, worn open' },
+      { slot: 'shoes', name: 'Western boots', color: 'Cognac', colorHex: '#8B5A2B', material: 'Leather', fit: 'Mid calf, low heel' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Medium' },
+    ],
+  },
+  {
+    id: 'wed-chocolate-satin', presentation: 'womenswear', name: 'Chocolate Satin Gown', era: WEDDINGS, mood: 'Winery wedding', person: 'sofia',
+    scene: 'a winery wedding reception at night with candlelit oak barrels and long tables',
+    description: 'Draped chocolate satin and gold: this fall’s color, at its most formal.',
+    items: [
+      { slot: 'dress', name: 'Draped satin gown', color: 'Chocolate', colorHex: '#4A2E25', material: 'Satin', fit: 'Floor length, one shoulder, draped waist' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'accessory', name: 'Cuff bracelet', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Wide' },
+      { slot: 'bag', name: 'Clutch', color: 'Gold', colorHex: '#C8A24A', material: 'Metallic leather', fit: 'Small' },
+    ],
+  },
+  // Menswear.
+  {
+    id: 'wedm-black-tie', presentation: 'menswear', name: 'Classic Tuxedo', era: WEDDINGS, mood: 'Black tie', person: 'marcus',
+    scene: 'a grand hotel ballroom wedding reception with crystal chandeliers and candlelit round tables',
+    description: 'A black peak-lapel tuxedo, a pleated shirt and a silk bow tie.',
+    items: [
+      { slot: 'suit', name: 'Tuxedo', color: 'Black', colorHex: '#121212', material: 'Wool with satin lapels', fit: 'Slim, peak lapels' },
+      { slot: 'top', name: 'Tuxedo shirt', color: 'White', colorHex: '#F4F2EC', material: 'Cotton', fit: 'Pleated bib, turndown collar' },
+      { slot: 'accessory', name: 'Bow tie', color: 'Black', colorHex: '#151515', material: 'Silk', fit: 'Self-tied' },
+      { slot: 'shoes', name: 'Oxfords', color: 'Black', colorHex: '#151515', material: 'Patent leather', fit: 'Classic' },
+    ],
+  },
+  {
+    id: 'wedm-velvet-jacket', presentation: 'menswear', name: 'Velvet Dinner Jacket', era: WEDDINGS, mood: 'Black tie optional', person: 'diego',
+    scene: 'an evening wedding reception in a historic mansion lit by candles, guests in formal wear behind',
+    description: 'A midnight velvet dinner jacket with black trousers and velvet loafers.',
+    items: [
+      { slot: 'outerwear', name: 'Velvet dinner jacket', color: 'Midnight navy', colorHex: '#1A2340', material: 'Velvet', fit: 'Shawl lapel, single button' },
+      { slot: 'bottom', name: 'Tuxedo trousers', color: 'Black', colorHex: '#121212', material: 'Wool', fit: 'Slim, satin side stripe' },
+      { slot: 'top', name: 'Dress shirt', color: 'White', colorHex: '#F4F2EC', material: 'Cotton', fit: 'Slim' },
+      { slot: 'accessory', name: 'Bow tie', color: 'Black', colorHex: '#151515', material: 'Silk', fit: 'Self-tied' },
+      { slot: 'shoes', name: 'Velvet loafers', color: 'Black', colorHex: '#151515', material: 'Velvet', fit: 'Slip-on' },
+    ],
+  },
+  {
+    id: 'wedm-charcoal-cocktail', presentation: 'menswear', name: 'Charcoal and Burgundy', era: WEDDINGS, mood: 'Cocktail attire', person: 'kenji',
+    scene: 'a city rooftop wedding reception at dusk with string lights and the skyline behind',
+    description: 'A charcoal suit, a pale blue shirt and a burgundy silk tie.',
+    items: [
+      { slot: 'suit', name: 'Two-piece suit', color: 'Charcoal', colorHex: '#3A3D42', material: 'Wool', fit: 'Slim, notch lapels' },
+      { slot: 'top', name: 'Dress shirt', color: 'Pale blue', colorHex: '#BFD3E6', material: 'Cotton', fit: 'Spread collar' },
+      { slot: 'accessory', name: 'Silk tie', color: 'Burgundy', colorHex: '#6E1F2E', material: 'Silk', fit: 'Solid' },
+      { slot: 'shoes', name: 'Oxfords', color: 'Black', colorHex: '#151515', material: 'Leather', fit: 'Cap toe' },
+    ],
+  },
+  {
+    id: 'wedm-tweed-barn', presentation: 'menswear', name: 'Tweed Barn Wedding', era: WEDDINGS, mood: 'Barn wedding', person: 'liam',
+    scene: 'a red barn wedding at sunset with hay bales, string lights and guests behind',
+    description: 'A brown tweed three-piece with a forest-green knit tie and brogues.',
+    items: [
+      { slot: 'suit', name: 'Tweed three-piece suit', color: 'Brown', colorHex: '#6B4E36', material: 'Wool tweed', fit: 'Jacket, vest and trousers, regular fit' },
+      { slot: 'top', name: 'Oxford shirt', color: 'Pale blue', colorHex: '#BFD3E6', material: 'Cotton', fit: 'Button-down collar' },
+      { slot: 'accessory', name: 'Knit tie', color: 'Forest green', colorHex: '#1F3B2D', material: 'Wool', fit: 'Square end' },
+      { slot: 'shoes', name: 'Brogues', color: 'Brown', colorHex: '#6B4A2E', material: 'Leather', fit: 'Classic' },
+    ],
+  },
+  {
+    id: 'wedm-vineyard-navy', presentation: 'menswear', name: 'Vineyard Navy', era: WEDDINGS, mood: 'Vineyard wedding', person: 'arjun',
+    scene: 'a vineyard wedding at golden hour, vine rows and a long candlelit dinner table behind',
+    description: 'An unstructured navy suit, an open collar and suede loafers: relaxed, never sloppy.',
+    items: [
+      { slot: 'suit', name: 'Unstructured suit', color: 'Navy', colorHex: '#1F2A44', material: 'Wool and linen', fit: 'Soft shoulders, slim trousers' },
+      { slot: 'top', name: 'Dress shirt', color: 'White', colorHex: '#F4F2EC', material: 'Cotton', fit: 'Open collar, no tie' },
+      { slot: 'accessory', name: 'Pocket square', color: 'Rust', colorHex: '#A4472A', material: 'Silk', fit: 'Folded' },
+      { slot: 'shoes', name: 'Suede loafers', color: 'Brown', colorHex: '#6B4A2E', material: 'Suede', fit: 'Penny loafer' },
+    ],
+  },
+  {
+    id: 'wedm-olive-mountain', presentation: 'menswear', name: 'Mountain Wedding Suit', era: WEDDINGS, mood: 'Mountain wedding', person: 'erik',
+    scene: 'an outdoor mountain wedding at sunset with pine trees and a wooden lodge behind',
+    description: 'An olive suit over an oatmeal turtleneck, with suede Chelsea boots.',
+    items: [
+      { slot: 'suit', name: 'Wool suit', color: 'Olive', colorHex: '#5B5B3A', material: 'Wool flannel', fit: 'Slim' },
+      { slot: 'top', name: 'Fine-knit turtleneck', color: 'Oatmeal', colorHex: '#D8CBB5', material: 'Merino', fit: 'Fitted' },
+      { slot: 'shoes', name: 'Chelsea boots', color: 'Dark brown', colorHex: '#4A3328', material: 'Suede', fit: 'Slim' },
+    ],
+  },
+]
+
 export const EDITS: Edit[] = [
   {
     id: 'halloween-2026',
@@ -644,5 +935,13 @@ export const EDITS: Edit[] = [
     tagline: 'An American fall: pumpkin patches, game day, leaf peeping and Friendsgiving.',
     droppedAt: '2026-10-06',
     looks: fall,
+  },
+  {
+    id: 'fall-weddings-2026',
+    name: 'The Fall Wedding Guest Edit',
+    emoji: '💐',
+    tagline: 'Barn, vineyard or black tie: what to wear to every fall wedding, never in white.',
+    droppedAt: '2026-10-13',
+    looks: weddings,
   },
 ]
