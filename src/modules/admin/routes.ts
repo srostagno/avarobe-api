@@ -13,6 +13,7 @@ import { adminUserIds, isAdmin } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
 import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
+import { addDays, emailActivity, pacificDay, pacificStart } from './email-activity.js'
 import { hairReport } from './hair-report.js'
 
 const avatarsSchema = z.object({
@@ -67,6 +68,8 @@ async function buyerIds(app: FastifyInstance) {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const emailsSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.')
+const emailActivitySchema = z.object({ from: DAY.optional(), to: DAY.optional() })
 const hairSchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 const whySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 
@@ -469,6 +472,36 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       request.log.warn({ err: error instanceof Error ? error.message : String(error) }, 'Stripe checkouts not listed')
       return reply.code(502).send({ message: 'Stripe did not answer. Try again in a moment.' })
     }
+  })
+
+  // Emails sent per Pacific day and per kind between two days, both
+  // included; the last 7 days by default (email-activity.ts).
+  app.get('/emails/activity', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(emailActivitySchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const to = parsed.data.to ?? pacificDay(new Date())
+    const from = parsed.data.from ?? addDays(to, -6)
+
+    if (from > to || addDays(from, 366) < to) {
+      return reply.code(400).send({ message: 'Pick a start on or before the end, at most a year apart.' })
+    }
+
+    const sends = await app.collections.emailSends
+      .find(
+        { sentAt: { $gte: pacificStart(from), $lt: pacificStart(addDays(to, 1)) }, userId: { $nin: await adminUserIds(app) } },
+        { projection: { kind: 1, sentAt: 1, opens: 1, firstOpenAt: 1, clicks: 1 } },
+      )
+      .toArray()
+
+    return emailActivity(sends, from, to, EMAIL_ORDER)
   })
 
   app.get('/emails', { preHandler: authenticate }, async (request, reply) => {
