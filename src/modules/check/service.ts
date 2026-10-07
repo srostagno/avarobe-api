@@ -7,11 +7,23 @@ import { toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { PaywallError, billingState, loadBillingUser } from '../billing/entitlements.js'
+import { readTaste, toStylistTaste } from '../taste/service.js'
 
-import { CHECK_SCHEMA, type CheckReading, buildCheckInstructions, buildCheckRenderPrompt } from './prompts.js'
+import {
+  CHECK_SCHEMA,
+  DEEP_CHECK_SCHEMA,
+  type CheckReading,
+  type DeepCheckReading,
+  buildCheckInstructions,
+  buildCheckOnAvatarPrompt,
+  buildCheckRenderPrompt,
+  buildDeepCheckInstructions,
+} from './prompts.js'
 
 // How many checks each plan includes: one to try it, five with the Color
 // Report, and Pro (or the admins' free access) as many as the daily cap.
+// The full read (every angle, and the piece on their avatar) is Pro's;
+// everyone's first check gets it too, so they see what it is.
 const FREE_CHECKS = 1
 const REPORT_CHECKS = 5
 export const DAILY_CHECKS = 10
@@ -19,9 +31,9 @@ export const DAILY_CHECKS = 10
 // The daily cap: not an offer, just "come back tomorrow".
 export class CheckLimitError extends Error {}
 
-// Whether they can run one more check now; throws the offer that unlocks
-// more when they can't.
-export async function assertCheckAllowed(app: FastifyInstance, userId: ObjectId) {
+// Whether they can run one more check now, and whether it gets the full
+// read; throws the offer that unlocks more when they can't.
+export async function assertCheckAllowed(app: FastifyInstance, userId: ObjectId): Promise<{ deep: boolean }> {
   const user = await loadBillingUser(app, userId)
   const state = user ? billingState(user) : null
   const counted = { userId, status: { $ne: 'failed' as const } }
@@ -32,22 +44,27 @@ export async function assertCheckAllowed(app: FastifyInstance, userId: ObjectId)
   }
 
   if (state?.proActive) {
-    return
+    return { deep: true }
   }
 
-  const used = await app.collections.colorChecks.countDocuments(counted)
+  const [used, deepUsed] = await Promise.all([
+    app.collections.colorChecks.countDocuments(counted),
+    app.collections.colorChecks.countDocuments({ ...counted, deep: true }),
+  ])
+  // Their one free full read, whenever they first check something.
+  const deep = deepUsed === 0
 
   if (state?.colorReport && used < REPORT_CHECKS) {
-    return
+    return { deep }
   }
 
   if (!state?.colorReport && used < FREE_CHECKS) {
-    return
+    return { deep }
   }
 
   throw state?.colorReport
-    ? new PaywallError('needs_pro', 'More color checks come with Avarobe Pro.')
-    : new PaywallError('needs_color_report', 'More color checks come with your Color Advisor.')
+    ? new PaywallError('needs_pro', 'The full read on every piece, and more checks, come with Avarobe Pro.')
+    : new PaywallError('needs_color_report', 'More checks come with your Color Advisor, and the full read on every piece with Pro.')
 }
 
 // Reads the garment against their colors, then draws that color next to
@@ -66,16 +83,30 @@ export async function runCheck(app: FastifyInstance, checkId: ObjectId) {
 
   try {
     const garment = await storage.read(check.garmentKey)
-    const reading = await createStructuredResponse<CheckReading>({
-      instructions: buildCheckInstructions(avatar.colorAnalysis),
-      content: [
-        { type: 'input_text', text: 'Read this garment against my colors.' },
-        { type: 'input_image', image_url: toDataUrl(garment, 'image/jpeg'), detail: 'high' },
-      ],
-      schemaName: 'color_check',
-      schema: CHECK_SCHEMA,
-      reasoningEffort: 'low',
-    })
+    const content = [
+      { type: 'input_text' as const, text: check.deep ? 'Should I buy this? Read it against me.' : 'Read this garment against my colors.' },
+      { type: 'input_image' as const, image_url: toDataUrl(garment, 'image/jpeg'), detail: 'high' as const },
+    ]
+    const reading: CheckReading | DeepCheckReading = check.deep
+      ? await createStructuredResponse<DeepCheckReading>({
+          instructions: buildDeepCheckInstructions({
+            analysis: avatar.colorAnalysis,
+            body: avatar.body,
+            styleProfile: avatar.styleProfile?.data ?? null,
+            taste: toStylistTaste(await readTaste(app, check.userId)),
+          }),
+          content,
+          schemaName: 'garment_check',
+          schema: DEEP_CHECK_SCHEMA,
+          reasoningEffort: 'medium',
+        })
+      : await createStructuredResponse<CheckReading>({
+          instructions: buildCheckInstructions(avatar.colorAnalysis),
+          content,
+          schemaName: 'color_check',
+          schema: CHECK_SCHEMA,
+          reasoningEffort: 'low',
+        })
 
     await app.collections.colorChecks.updateOne({ _id: checkId }, { $set: { reading, updatedAt: new Date() } })
 
@@ -84,18 +115,33 @@ export async function runCheck(app: FastifyInstance, checkId: ObjectId) {
       return
     }
 
-    const png = await generateImageFromReferences({
-      images: [{ data: await storage.read(avatar.selfieKey), filename: 'selfie.jpg', contentType: 'image/jpeg' }],
-      prompt: buildCheckRenderPrompt(reading.color),
-      size: '1024x1024',
-    })
+    // The full read with an avatar: them wearing it, head to toe. Otherwise
+    // the color on their face, from the selfie.
+    const deepReading = check.deep ? (reading as DeepCheckReading) : null
+    const avatarKey = deepReading && avatar.body ? avatar.avatarKey : null
+    const onAvatar = Boolean(deepReading && avatarKey)
+    const png = deepReading && avatarKey
+      ? await generateImageFromReferences({
+          images: [
+            { data: await storage.read(avatarKey), filename: 'avatar.webp', contentType: 'image/webp' },
+            { data: await storage.read(avatar.selfieKey), filename: 'face.jpg', contentType: 'image/jpeg' },
+            { data: garment, filename: 'garment.jpg', contentType: 'image/jpeg' },
+          ],
+          prompt: buildCheckOnAvatarPrompt(deepReading),
+          size: '1024x1536',
+        })
+      : await generateImageFromReferences({
+          images: [{ data: await storage.read(avatar.selfieKey), filename: 'selfie.jpg', contentType: 'image/jpeg' }],
+          prompt: buildCheckRenderPrompt(reading.color),
+          size: '1024x1024',
+        })
     const imageKey = `users/${check.userId.toString()}/check-${checkId.toString()}-${Date.now()}.webp`
 
     await storage.put(imageKey, await toStoredWebp(png), 'image/webp')
 
     const saved = await app.collections.colorChecks.updateOne(
       { _id: checkId },
-      { $set: { status: 'ready', imageKey, updatedAt: new Date() } },
+      { $set: { status: 'ready', imageKey, imageKind: onAvatar ? 'avatar' : 'drape', updatedAt: new Date() } },
     )
 
     if (saved.matchedCount === 0) {
@@ -120,6 +166,8 @@ export async function serializeCheck(check: ColorCheckDocument) {
     error: check.error,
     garmentUrl: await signedUrlOrNull(check.garmentKey),
     imageUrl: await signedUrlOrNull(check.imageKey),
+    imageKind: check.imageKind ?? (check.imageKey ? 'drape' : null),
+    deep: Boolean(check.deep),
     reading: check.reading,
     createdAt: check.createdAt.toISOString(),
   }

@@ -11,8 +11,9 @@ import { CheckLimitError, assertCheckAllowed, serializeCheck, startCheck } from 
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
-// "Does this color suit me?": a garment photo in, a verdict against their
-// colors and that color on their face out (modules/check/service.ts).
+// "Will it suit me?": a garment photo in; a verdict against their colors
+// and that color on their face out, or (the full read) why it works or not
+// from every angle and them wearing it (modules/check/service.ts).
 const checkRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
@@ -55,8 +56,10 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'We need your colors first: send a selfie.' })
       }
 
+      let deep = false
+
       try {
-        await assertCheckAllowed(app, userId)
+        ;({ deep } = await assertCheckAllowed(app, userId))
       } catch (error) {
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -91,6 +94,8 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
         error: null,
         garmentKey,
         imageKey: null,
+        deep,
+        imageKind: null,
         reading: null,
         createdAt: now,
         updatedAt: now,
@@ -98,7 +103,7 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
 
       await app.collections.colorChecks.insertOne(check)
       startCheck(app, checkId)
-      void trackServerEvent(app, { name: 'color_check_started', userId })
+      void trackServerEvent(app, { name: 'color_check_started', userId, props: { deep } })
 
       return reply.code(202).send({ check: await serializeCheck(check) })
     },

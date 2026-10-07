@@ -895,14 +895,30 @@ export type ColorCheckDocument = {
   error: string | null
   // What they uploaded: never shown to anyone else or shared.
   garmentKey: string
-  // Their face with the garment's color: shareable.
+  // Their face with the garment's color, or (the full read, with an avatar)
+  // them wearing it head to toe: shareable.
   imageKey: string | null
+  // The full read: why it works or not from every angle (Pro, and everyone's
+  // first check). Older checks lack these.
+  deep?: boolean
+  imageKind?: 'drape' | 'avatar' | null
   reading: {
     garment: string
     color: { name: string; hex: string }
     verdict: 'wear' | 'away' | 'avoid' | 'unclear'
     reason: string
     alternatives: { name: string; hex: string }[]
+    deep?: {
+      overall: 'yes' | 'depends' | 'no'
+      headline: string
+      summary: string
+      angles: { key: 'color' | 'cut' | 'style' | 'versatility' | 'occasions'; verdict: 'good' | 'mixed' | 'poor'; note: string }[]
+      whyYes: string[]
+      whyNot: string[]
+      makeItWork: string[]
+      wearWith: { name: string; hex: string }[]
+      complete: string[]
+    }
   } | null
   createdAt: Date
   updatedAt: Date
