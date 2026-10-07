@@ -118,7 +118,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       void reportRegistration(app, { metadata, eventId: data.eventId, method })
     }
 
-    void recordRegisteredClick(app, data.attribution?.fbc).catch((error: unknown) =>
+    void recordRegisteredClick(app, data.attribution?.fbc, userId).catch((error: unknown) =>
       request.log.warn({ err: error }, 'Registered click not recorded'),
     )
   }

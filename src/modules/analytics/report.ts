@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { Filter } from 'mongodb'
+import { type Filter, ObjectId } from 'mongodb'
 
 import type { AnalyticsChannel, AnalyticsEventDocument, UserLocation } from '../../types/mongo.js'
 import { adminUserIds } from '../billing/entitlements.js'
@@ -121,6 +121,32 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
 
     if (!touch.has(person) && row.channel) {
       touch.set(person, { channel: row.channel, campaign: row.campaign, content: row.content })
+    }
+  }
+
+  // Accounts whose sign-up came from a Meta ad click the browser had lost
+  // (users.acquisition.recovered): every browser of theirs counts as Meta.
+  const visitorsOfUser = new Map<string, Set<string>>()
+
+  for (const row of rows) {
+    if (row.userId) {
+      const id = row.userId.toString()
+      const visitors = visitorsOfUser.get(id) ?? new Set([`u:${id}`])
+      visitors.add(personOf(row))
+      visitorsOfUser.set(id, visitors)
+    }
+  }
+
+  const recovered = await app.collections.users
+    .find(
+      { _id: { $in: [...visitorsOfUser.keys()].map((id) => new ObjectId(id)) }, 'acquisition.recovered': 'meta_click' },
+      { projection: { acquisition: 1 } },
+    )
+    .toArray()
+
+  for (const user of recovered) {
+    for (const person of visitorsOfUser.get(user._id.toString()) ?? []) {
+      touch.set(person, { channel: 'meta', campaign: user.acquisition?.campaign ?? null, content: user.acquisition?.content ?? null })
     }
   }
 

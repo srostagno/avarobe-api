@@ -88,6 +88,11 @@ export type Acquisition = {
   gbraid?: string | null
   wbraid?: string | null
   fbclid?: string | null
+  // Set when the browser lost the ad's parameters but kept Meta's click
+  // cookie (_fbc) to sign-up: the channel became Meta, and `recoveredFrom` is
+  // what the browser had reported (events/service.ts).
+  recovered?: 'meta_click'
+  recoveredFrom?: AnalyticsChannel | null
 }
 
 export type AnalyticsChannel = 'meta' | 'google' | 'email' | 'organic' | 'social' | 'referral' | 'direct'
