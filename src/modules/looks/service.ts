@@ -180,7 +180,10 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
   )
 
   if (look) {
-    await releaseGenerations(app, look.userId, 'look', 1)
+    // A cross-sell email's gift look took none of today's allowance.
+    if (!look.gift) {
+      await releaseGenerations(app, look.userId, 'look', 1)
+    }
 
     if (look.creditSpent) {
       await refundCredits(app, look.userId, 1)

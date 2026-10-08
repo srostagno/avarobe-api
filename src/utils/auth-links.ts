@@ -76,29 +76,49 @@ export async function createLink(
   intent?: 'passkey',
   landing?: { next?: string; ads?: LinkAdIds },
 ) {
+  const [url] = await createLinks(app, user, purpose, [landing?.next], { intent, ads: landing?.ads })
+  return url!
+}
+
+// Several links in one email, one per button, each landing somewhere else.
+// They share one nonce: separate createLink calls would void each other, so
+// only the last button would work. Whichever is used first signs them in
+// and voids the rest, like any used link.
+export async function createLinks(
+  app: FastifyInstance,
+  user: UserDocument,
+  purpose: LinkPurpose,
+  nexts: (string | undefined)[],
+  options: { intent?: 'passkey'; ads?: LinkAdIds } = {},
+) {
   const config = LINKS[purpose]
   const nonce = generateSecureToken(24)
+  const { intent, ads } = options
 
   await app.collections.users.updateOne(
     { _id: user._id },
     { $set: { [config.nonceField]: hashToken(nonce), [config.sentAtField]: new Date() } },
   )
 
-  const token = await app.jwt.sign(
-    {
-      typ: purpose,
-      sub: user._id.toString(),
-      em: user.email,
-      nn: nonce,
-      ...(intent ? { it: intent } : {}),
-      ...(landing?.next ? { nx: safeNextPath(landing.next) } : {}),
-      ...(landing?.ads && Object.keys(landing.ads).length > 0 ? { ad: landing.ads } : {}),
-    },
-    { expiresIn: config.ttl() },
-  )
+  return Promise.all(
+    nexts.map(async (next) => {
+      const token = await app.jwt.sign(
+        {
+          typ: purpose,
+          sub: user._id.toString(),
+          em: user.email,
+          nn: nonce,
+          ...(intent ? { it: intent } : {}),
+          ...(next ? { nx: safeNextPath(next) } : {}),
+          ...(ads && Object.keys(ads).length > 0 ? { ad: ads } : {}),
+        },
+        { expiresIn: config.ttl() },
+      )
 
-  // In their language, so the page that opens is too.
-  return `${appUrl(user.locale, config.path)}?token=${encodeURIComponent(token)}`
+      // In their language, so the page that opens is too.
+      return `${appUrl(user.locale, config.path)}?token=${encodeURIComponent(token)}`
+    }),
+  )
 }
 
 // Checks signature, expiry and purpose without using up the link.

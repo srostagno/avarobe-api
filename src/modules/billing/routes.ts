@@ -662,7 +662,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       { _id: userId },
       {
         $set: { acquisition: { visitorId: null, term: null, ...ARRIVALS[parsed.data.arrival] }, updatedAt: new Date() },
-        $unset: { lifecycleEmails: '', lifecycleEmailLastAt: '' },
+        $unset: { lifecycleEmails: '', lifecycleEmailLastAt: '', editEmails: '' },
       },
     )
     const updated = await simulate(userId, 'free')

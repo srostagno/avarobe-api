@@ -4,7 +4,8 @@ import { describe, it } from 'node:test'
 import { ObjectId } from 'mongodb'
 
 import { env } from '../../../config/env.js'
-import { emailImageUrl, emailImageUser, unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
+import { hmacSign } from '../../../utils/tokens.js'
+import { emailImageTarget, emailImageUrl, emailImageUser, unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
   avatarNudgeEmail,
@@ -209,18 +210,48 @@ describe('price drop email', () => {
 })
 
 describe('email photo links', () => {
-  it('work for two weeks, and only for the account they were signed for', () => {
-    const id = new ObjectId()
-    const now = new Date('2026-10-02T12:00:00Z')
-    const link = new URL(emailImageUrl(id, now))
-    const file = link.pathname.split('/').pop() ?? ''
-    const expires = link.searchParams.get('e') ?? ''
-    const signature = link.searchParams.get('s') ?? ''
+  const now = new Date('2026-10-02T12:00:00Z')
+  const parts = (url: string) => {
+    const link = new URL(url)
+    const [uid = '', file = ''] = link.pathname.split('/').slice(-2).map(decodeURIComponent)
+    return { uid, file, expires: link.searchParams.get('e') ?? '', signature: link.searchParams.get('s') ?? '' }
+  }
 
-    assert.equal(emailImageUser(file, expires, signature, now)?.toString(), id.toString())
-    assert.equal(emailImageUser(file, expires, signature, new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000)), null)
-    assert.equal(emailImageUser(`${new ObjectId().toString()}.jpg`, expires, signature, now), null)
-    assert.equal(emailImageUser(file, String(Number(expires) + 60), signature, now), null)
+  it('work for two weeks, and only for the account and picture they were signed for', () => {
+    const id = new ObjectId()
+    const link = parts(emailImageUrl(id, now, 'xsell_style'))
+    const target = emailImageTarget(link.uid, link.file, link.expires, link.signature, now)
+
+    assert.equal(target?.userId.toString(), id.toString())
+    assert.equal(target?.slot, 'xsell_style')
+    assert.equal(emailImageTarget(link.uid, link.file, link.expires, link.signature, new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000)), null)
+    assert.equal(emailImageTarget(new ObjectId().toString(), link.file, link.expires, link.signature, now), null)
+    assert.equal(emailImageTarget(link.uid, 'xsell_hair.jpg', link.expires, link.signature, now), null)
+    assert.equal(emailImageTarget(link.uid, link.file, String(Number(link.expires) + 60), link.signature, now), null)
+  })
+
+  it('name the drape photo by default, an Edit’s picture or one of their looks', () => {
+    const id = new ObjectId()
+    const drape = parts(emailImageUrl(id, now))
+    assert.equal(drape.file, 'drape.jpg')
+    const edit = emailImageUrl(id, now, 'edit:fall-weddings-2026')
+    assert.ok(edit.includes('/edit%3Afall-weddings-2026.jpg?'))
+    const signed = parts(edit)
+    assert.equal(emailImageTarget(signed.uid, signed.file, signed.expires, signed.signature, now)?.slot, 'edit:fall-weddings-2026')
+    const look = parts(emailImageUrl(id, now, `look-${new ObjectId().toString()}`))
+    assert.ok(emailImageTarget(look.uid, look.file, look.expires, look.signature, now))
+    // Nothing else, even signed.
+    const expires = String(Math.floor(now.getTime() / 1000) + 60)
+    const other = hmacSign(env.JWT_ACCESS_SECRET, `email-image:${id.toString()}:avatar:${expires}`)
+    assert.equal(emailImageTarget(id.toString(), 'avatar.jpg', expires, other, now), null)
+  })
+
+  it('keep the links sent before (their drape photo) working', () => {
+    const id = new ObjectId()
+    const expires = Math.floor(now.getTime() / 1000) + 60
+    const signature = hmacSign(env.JWT_ACCESS_SECRET, `email-image:${id.toString()}:${expires}`)
+    assert.equal(emailImageUser(`${id.toString()}.jpg`, String(expires), signature, now)?.toString(), id.toString())
+    assert.equal(emailImageUser(`${new ObjectId().toString()}.jpg`, String(expires), signature, now), null)
   })
 })
 

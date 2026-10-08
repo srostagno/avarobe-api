@@ -27,6 +27,9 @@ const PRODUCT_NAMES: Record<string, string> = {
 // Names that read as plural: "Your three advisors are…".
 const PLURAL_PRODUCTS = new Set(['look_pack', 'reports_bundle', 'advisors_bundle'])
 
+// An Edit's name inside a sentence: "We tried the Fall Edit on you".
+const theEdit = (name: string) => name.replace(/^The /, 'the ')
+
 export const enEmails = {
   // <html lang>.
   lang: 'en',
@@ -440,6 +443,20 @@ export const enEmails = {
     pairTail: (price: string, regular: string, ends: string) => `${price} instead of ${regular} for you, until ${ends}.`,
     onceTail: (price: string) => `${price}, once.`,
     getMy: (name: string, price: string) => `Get my ${name} · ${price}`,
+    // A gift look in their #1 color (lifecycle/assets.ts): the brief the
+    // stylist gets. It shows with the look in their Looks.
+    gift: {
+      occasion: 'A day out',
+      notes: (color: string, hex: string) => `Build the whole outfit around ${color} (${hex}): make it the main piece.`,
+    },
+    // Pro, and each new Edit.
+    proFeatures: (looks: number) => [
+      'A new Edit every week, every look tried on you in one tap',
+      `${looks} looks a month for anything on your calendar, shown on you`,
+      'Try on any outfit from a photo, on your own avatar',
+      'All three advisors while you’re on Pro: your colors, your shapes and every haircut',
+    ],
+    proDetail: 'A new Edit every week, tried on you.',
 
     style: {
       subject: 'You know your colors. Now see your shapes.',
@@ -452,6 +469,14 @@ export const enEmails = {
       palette: 'My palette',
       mirror: 'The color mirror',
       check: 'Does this color suit me?',
+      // Their gift look leads (lifecycle/assets.ts).
+      giftSubject: (color: string) => `We styled a look around your #1 color: ${color}`,
+      giftPreheader: (tail: string) => `It’s waiting in your Looks, on you. Next: the cuts that flatter you. ${tail}`,
+      giftEyebrow: 'A look for you',
+      giftIntro:
+        'It’s a gift, and it’s already in your Looks: a complete outfit for a day out, built around the color that lights up your face. Your Color Advisor found that color. The Style Advisor does the same for your shape: it reads your proportions and tries silhouettes and necklines on your own avatar, so you see what flatters you and why.',
+      giftLink: 'Open my gift look',
+      giftAlt: (color: string) => `You, in a look built around ${color}`,
     },
     color: {
       subjectAfterStyle: 'You know your shapes. Now find your colors.',
@@ -461,6 +486,14 @@ export const enEmails = {
       introAfterStyle:
         'Your Style Advisor shows the shapes that flatter you. The Color Advisor finds the colors that light up your face, from one selfie, and shows every one of them on you.',
       intro: 'The Color Advisor finds your colors from one selfie: everything a color analyst would tell you, shown on your own face.',
+      // Their drape photo leads, best side blurred.
+      photoSubject: 'Your best side is still blurred',
+      photoPreheader: (tail: string) =>
+        `It’s your own photo, in the colors read from your selfie. The Color Advisor shows all of them on you. ${tail}`,
+      photoHeading: 'Your best side is blurred until you open your Color Advisor.',
+      photoIntro:
+        'That’s your own photo, in colors read from your selfie. The blurred part is you in your best colors, the ones that light up your face. The Color Advisor shows every one of them on you: your #1, 30+ more, your neutrals and the ones to keep away from your face.',
+      photoAlt: 'Your photo: your best colors, blurred until you open your Color Advisor, next to the color that drains you',
     },
     lastCall: {
       subject: (name: string, price: string, weekday: string) => `Your ${name} at ${price} ends ${weekday}`,
@@ -480,6 +513,41 @@ export const enEmails = {
       intro:
         'Your hair frames your face as much as anything you wear. The Hair & Grooming Advisor reads your face shape and hair type from a selfie and shows the cuts and hair colors that suit you, on you.',
       detail: 'Every cut picked for you, on your own photo.',
+      // Their ideal cut leads, on them.
+      cutSubject: 'Your ideal cut, on you',
+      cutPreheader: (price: string) =>
+        `We put the cut that suits your face best on your photo. Five more are waiting, with what to tell your stylist. ${price}, once.`,
+      cutHeading: (cut: string) => `Your ideal cut: ${cut}.`,
+      cutIntro:
+        'We read your face shape and hair type from your selfie and put the cut that suits you best on your own photo. It’s yours, free, in your studio.',
+      cutMore:
+        'The Hair & Grooming Advisor shows the other five cuts picked for you, each one on you, the brief for your stylist in salon words, and the hair colors that light up your face (or, for menswear, the beard styles that suit your jaw).',
+      cutAlt: (cut: string) => `You with your ideal cut: ${cut}`,
+    },
+    pro: {
+      subjectPhoto: (edit: string) => `We tried ${theEdit(edit)} on you`,
+      subject: 'A new collection every week, tried on you',
+      preheader: (price: string, looks: number) =>
+        `Avarobe Pro: a new Edit every week on your avatar, ${looks} looks a month and try-ons. ${price} a month, cancel anytime.`,
+      eyebrow: 'Avarobe Pro',
+      headingPhoto: (edit: string) => `We tried ${theEdit(edit)} on you.`,
+      heading: 'A new collection every week, tried on you.',
+      introPhoto: (edit: string) =>
+        `That’s the first look of ${theEdit(edit)}, this week’s collection, on you. With Avarobe Pro you can try on every look in it, and in every Edit after it, in one tap.`,
+      intro: (edit: string | null) =>
+        edit
+          ? `Every week there’s a new Edit to try on. This week it’s ${theEdit(edit)}. With Avarobe Pro, every look in it shows up on your own avatar in one tap.`
+          : 'Every week there’s a new Edit to try on, from fall weddings to the holidays. With Avarobe Pro, every look in it shows up on your own avatar in one tap.',
+      button: (price: string) => `Get Avarobe Pro · ${price}/mo`,
+      alt: (edit: string) => `You, in a look from ${theEdit(edit)}`,
+    },
+    edit: {
+      subjectPhoto: (edit: string) => `${edit} just dropped, and here it is on you`,
+      subject: (edit: string) => `${edit} just dropped`,
+      eyebrow: 'New this week',
+      introPhoto:
+        'That’s its first look, tried on your avatar. With Avarobe Pro you can try on every look in it, and a new Edit every week after it.',
+      intro: 'With Avarobe Pro, every look in it shows up on your own avatar in one tap, and a new Edit drops every week.',
     },
     magazine: {
       subject: (name: string) => (name ? `${name}, you on the cover` : 'You, on the cover'),
@@ -491,15 +559,36 @@ export const enEmails = {
       colorsCaption: 'Every look in your issue is planned in your colors.',
       detail: 'One issue, about five minutes after you pick your moments.',
       button: (price: string) => `Make my magazine · ${price}`,
+      // Their cover leads (lifecycle/assets.ts).
+      coverSubject: (name: string) => (name ? `${name}, on the cover` : 'You, on the cover'),
+      coverPreheader: (price: string) =>
+        `We made your cover. Your Personal Magazine is the whole issue: ten looks on you, on location. ${price}, once.`,
+      coverHeading: 'Your cover is ready. The issue is yours to make.',
+      coverIntro:
+        'We made this cover from your photo. Your Personal Magazine is the whole issue: pick the moments of your season (brunch, a big day at work, a wedding, a trip), and we plan a look for each one and shoot it on you, on location. Then we write it up: a letter from your stylist and why every look works.',
+      // On the cover, under the photo.
+      issue: (season: string | null, month: string) => (season ? `The ${season} Issue · ${month}` : `Your issue · ${month}`),
+      coverAlt: 'A magazine cover of you, with your name as the masthead',
     },
     event: {
-      subject: 'What are you wearing to your next event?',
-      preheader: (price: string) => `Three complete looks for its dress code, on you, with every piece in stores. ${price} an event.`,
-      heading: 'Never wonder what to wear to it again.',
+      subject: 'Something coming up?',
+      preheader: (price: string) =>
+        `Pick the event: three complete looks for its dress code, on you, with every piece in stores. ${price} an event.`,
+      heading: 'Something coming up?',
+      // With their latest look as the picture.
+      introPhoto: (upcoming: string) =>
+        `That’s your latest look, on you. ${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, on you, with every piece findable in stores and how to finish the look.`,
       intro: (upcoming: string) =>
-        `${upcoming} Tell us the event, the dress code and your budget: you get three complete outfits shown on you, every piece findable in stores, and how to finish the look.`,
+        `${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, shown on you, with every piece findable in stores and how to finish the look.`,
+      // One button each; `occasion` fills in the Event Stylist's form.
+      occasions: [
+        { label: 'Wedding', occasion: 'A wedding' },
+        { label: 'Work event', occasion: 'A work event' },
+        { label: 'Date', occasion: 'A date' },
+      ],
+      pick: 'Each one opens the Event Stylist, already signed in, with your event filled in.',
       detail: 'Three complete looks for one event, on you.',
-      button: (price: string) => `Style my event · ${price}`,
+      lookAlt: 'You, in your latest look',
     },
     guide: {
       subject: '120 outfit formulas that always work',
@@ -513,6 +602,11 @@ export const enEmails = {
       detail: 'A PDF, yours to keep.',
       delivery: 'One-time payment. Instant download, and we email it to you too.',
       button: (price: string) => `Get the book · ${price}`,
+      // Color Advisor owners: their palette beside the book.
+      paletteHeading: '120 outfit formulas, and here’s your palette to use with them.',
+      paletteCaption: 'Your colors. Every formula in the book works with them.',
+      // The book is in English: said where the email isn't.
+      language: '',
     },
   },
 

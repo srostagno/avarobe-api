@@ -67,6 +67,12 @@ const envSchema = z.object({
   // Postal address for the footer of promotional emails (CAN-SPAM). The
   // upgrade offer and its reminders only go out once it is set.
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
+  // Cross-sell emails lead with a picture made for each buyer, from her own
+  // avatar (lifecycle/assets.ts). 'off' sends every one with its stock
+  // picture. At most this many new pictures start per run (every 10
+  // minutes), so a backlog can't run up the image bill.
+  XSELL_PERSONAL_IMAGES: z.enum(['on', 'off', 'true', 'false']).optional(),
+  XSELL_IMAGE_STARTS_PER_RUN: z.coerce.number().int().min(0).max(50).default(4),
   VERIFY_EMAIL_TTL: z.string().default('24h'),
   PASSWORD_RESET_TTL: z.string().default('1h'),
   // Sign-in links: from an in-app browser (Instagram, Facebook) to the phone's
@@ -205,6 +211,7 @@ export const env = {
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
+  XSELL_PERSONAL_IMAGES: ['on', 'true'].includes(raw.XSELL_PERSONAL_IMAGES ?? 'on'),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
     .map((email) => email.trim().toLowerCase())
     .filter((email) => email.length > 0),

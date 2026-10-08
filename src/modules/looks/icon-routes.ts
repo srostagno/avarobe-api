@@ -25,7 +25,7 @@ const tryOnSchema = z.object({
 
 // The try-on reference ships with the API. Resolved from this module so it
 // works both from src (tsx) and from dist.
-function iconImageUrl(look: IconLook) {
+export function iconImageUrl(look: Pick<IconLook, 'id'>) {
   return new URL(`../../../assets/icon-looks/${look.id}.jpg`, import.meta.url)
 }
 

@@ -413,6 +413,17 @@ export const esEmails: EmailCopy = {
     pairTail: (price: string, regular: string, ends: string) => `${price} en lugar de ${regular} para ti, hasta el ${ends}.`,
     onceTail: (price: string) => `${price}, una sola vez.`,
     getMy: (name: string, price: string) => `Quiero mi ${name} · ${price}`,
+    gift: {
+      occasion: 'Un día de paseo',
+      notes: (color: string, hex: string) => `Arma todo el outfit alrededor de ${color} (${hex}): que sea la prenda principal.`,
+    },
+    proFeatures: (looks: number) => [
+      'Un Edit nuevo cada semana, con cada look probado en ti con un solo toque',
+      `${looks} looks al mes para todo lo que tengas en tu agenda, en ti`,
+      'Pruébate cualquier outfit a partir de una foto, en tu propio avatar',
+      'Los tres asesores mientras tengas Pro: tus colores, tus formas y todos los cortes de cabello',
+    ],
+    proDetail: 'Un Edit nuevo cada semana, probado en ti.',
 
     style: {
       subject: 'Ya conoces tus colores. Ahora mira tus formas.',
@@ -425,6 +436,13 @@ export const esEmails: EmailCopy = {
       palette: 'Mi paleta',
       mirror: 'El espejo de color',
       check: '¿Me queda este color?',
+      giftSubject: (color: string) => `Armamos un look alrededor de tu color #1: ${color}`,
+      giftPreheader: (tail: string) => `Ya está en tus looks, en ti. Lo siguiente: los cortes que te favorecen. ${tail}`,
+      giftEyebrow: 'Un look para ti',
+      giftIntro:
+        'Es un regalo y ya está en tus looks: un outfit completo para un día de paseo, armado alrededor del color que ilumina tu cara. Tu Asesor de Color encontró ese color. El Asesor de Estilo hace lo mismo con tu cuerpo: lee tus proporciones y prueba siluetas y escotes en tu propio avatar, para que veas qué te favorece y por qué.',
+      giftLink: 'Abrir mi look de regalo',
+      giftAlt: (color: string) => `Tú, con un look armado alrededor de ${color}`,
     },
     color: {
       subjectAfterStyle: 'Ya conoces tus formas. Ahora descubre tus colores.',
@@ -434,6 +452,13 @@ export const esEmails: EmailCopy = {
       introAfterStyle:
         'Tu Asesor de Estilo te muestra las formas que te favorecen. El Asesor de Color descubre los colores que iluminan tu cara, con una selfie, y te muestra cada uno en ti.',
       intro: 'El Asesor de Color descubre tus colores con una selfie: todo lo que te diría un análisis de color profesional, en tu propia cara.',
+      photoSubject: 'Tu mejor lado sigue difuminado',
+      photoPreheader: (tail: string) =>
+        `Es tu propia foto, con los colores que leímos de tu selfie. El Asesor de Color te los muestra todos en ti. ${tail}`,
+      photoHeading: 'Tu mejor lado está difuminado hasta que abras tu Asesor de Color.',
+      photoIntro:
+        'Esa es tu propia foto, con colores que leímos de tu selfie. La parte difuminada eres tú con tus mejores colores, los que iluminan tu cara. El Asesor de Color te muestra cada uno en ti: tu #1, más de 30 colores, tus neutros y los que conviene alejar de tu cara.',
+      photoAlt: 'Tu foto: tus mejores colores, difuminados hasta que abras tu Asesor de Color, junto al color que te apaga',
     },
     lastCall: {
       subject: (name: string, price: string, weekday: string) => `Tu ${name} a ${price}, solo hasta el ${weekday}`,
@@ -454,6 +479,40 @@ export const esEmails: EmailCopy = {
       intro:
         'Tu cabello enmarca tu cara tanto como cualquier cosa que te pongas. El Asesor de Cabello y Barba lee la forma de tu cara y tu tipo de cabello con una selfie y te muestra los cortes y colores de cabello que te favorecen, en ti.',
       detail: 'Cada corte elegido para ti, en tu propia foto.',
+      cutSubject: 'Tu corte ideal, en ti',
+      cutPreheader: (price: string) =>
+        `Pusimos en tu foto el corte que mejor le va a tu cara. Te esperan cinco más, con lo que le tienes que decir a tu estilista. ${price}, una sola vez.`,
+      cutHeading: (cut: string) => `Tu corte ideal: ${cut}.`,
+      cutIntro:
+        'Leímos la forma de tu cara y tu tipo de cabello con tu selfie y pusimos en tu propia foto el corte que mejor te queda. Es tuyo, gratis, en tu estudio.',
+      cutMore:
+        'El Asesor de Cabello y Barba te muestra los otros cinco cortes elegidos para ti, cada uno en ti, las indicaciones para tu estilista en palabras de salón y los colores de cabello que iluminan tu cara (o, en moda masculina, los estilos de barba que van con tu mandíbula).',
+      cutAlt: (cut: string) => `Tú con tu corte ideal: ${cut}`,
+    },
+    pro: {
+      subjectPhoto: (edit: string) => `Te probamos el ${edit}`,
+      subject: 'Una colección nueva cada semana, probada en ti',
+      preheader: (price: string, looks: number) =>
+        `Avarobe Pro: un Edit nuevo cada semana en tu avatar, ${looks} looks al mes y pruebas de outfits desde fotos. ${price} al mes, cancela cuando quieras.`,
+      eyebrow: 'Avarobe Pro',
+      headingPhoto: (edit: string) => `Te probamos el ${edit}.`,
+      heading: 'Una colección nueva cada semana, probada en ti.',
+      introPhoto: (edit: string) =>
+        `Ese es el primer look del ${edit}, la colección de esta semana, en ti. Con Avarobe Pro te pruebas cada uno de sus looks, y los de cada Edit que venga después, con un solo toque.`,
+      intro: (edit: string | null) =>
+        edit
+          ? `Cada semana hay un Edit nuevo para probarte. Esta semana es el ${edit}. Con Avarobe Pro, cada uno de sus looks aparece en tu propio avatar con un solo toque.`
+          : 'Cada semana hay un Edit nuevo para probarte, de las bodas a las fiestas de fin de año. Con Avarobe Pro, cada look aparece en tu propio avatar con un solo toque.',
+      button: (price: string) => `Quiero Avarobe Pro · ${price}/mes`,
+      alt: (edit: string) => `Tú, con un look del ${edit}`,
+    },
+    edit: {
+      subjectPhoto: (edit: string) => `Acaba de llegar el ${edit}, y así se te ve`,
+      subject: (edit: string) => `Acaba de llegar el ${edit}`,
+      eyebrow: 'Nuevo esta semana',
+      introPhoto:
+        'Ese es su primer look, probado en tu avatar. Con Avarobe Pro te pruebas cada uno de sus looks, y un Edit nuevo cada semana después.',
+      intro: 'Con Avarobe Pro, cada uno de sus looks aparece en tu propio avatar con un solo toque, y cada semana llega un Edit nuevo.',
     },
     magazine: {
       subject: (name: string) => (name ? `${name}, tú en la portada` : 'Tú, en la portada'),
@@ -465,15 +524,32 @@ export const esEmails: EmailCopy = {
       colorsCaption: 'Cada look de tu edición se planea en tus colores.',
       detail: 'Una edición, unos cinco minutos después de elegir tus momentos.',
       button: (price: string) => `Crear mi revista · ${price}`,
+      coverSubject: (name: string) => (name ? `${name}, en la portada` : 'Tú, en la portada'),
+      coverPreheader: (price: string) =>
+        `Hicimos tu portada. Tu revista personal es la edición completa: diez looks en ti, en locación. ${price}, una sola vez.`,
+      coverHeading: 'Tu portada está lista. La edición es tuya para crearla.',
+      coverIntro:
+        'Hicimos esta portada con tu foto. Tu revista personal es la edición completa: elige los momentos de tu temporada (un brunch, un gran día en el trabajo, una boda, un viaje) y planeamos un look para cada uno y te lo fotografiamos en locación. Luego lo escribimos: una carta de tu estilista y por qué funciona cada look.',
+      issue: (season: string | null, month: string) => (season ? `Edición ${season} · ${month}` : `Tu edición · ${month}`),
+      coverAlt: 'Una portada de revista contigo, con tu nombre como título',
     },
     event: {
-      subject: '¿Qué te vas a poner para tu próximo evento?',
-      preheader: (price: string) => `Tres looks completos para su código de vestimenta, en ti, con cada prenda en tiendas. ${price} por evento.`,
-      heading: 'No vuelvas a dudar qué ponerte.',
+      subject: '¿Tienes algún evento pronto?',
+      preheader: (price: string) =>
+        `Elige el evento: tres looks completos para su código de vestimenta, en ti, con cada prenda en tiendas. ${price} por evento.`,
+      heading: '¿Tienes algún evento pronto?',
+      introPhoto: (upcoming: string) =>
+        `Ese es tu look más reciente, en ti. ${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con cada prenda disponible en tiendas y cómo completar el look.`,
       intro: (upcoming: string) =>
-        `${upcoming} Cuéntanos el evento, el código de vestimenta y tu presupuesto: recibes tres outfits completos en ti, con cada prenda disponible en tiendas, y cómo completar el look.`,
+        `${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con cada prenda disponible en tiendas y cómo completar el look.`,
+      occasions: [
+        { label: 'Boda', occasion: 'Una boda' },
+        { label: 'Evento de trabajo', occasion: 'Un evento de trabajo' },
+        { label: 'Cita', occasion: 'Una cita' },
+      ],
+      pick: 'Cada uno abre el Estilista de Eventos con tu sesión ya iniciada y tu evento escrito.',
       detail: 'Tres looks completos para un evento, en ti.',
-      button: (price: string) => `Armar los looks de mi evento · ${price}`,
+      lookAlt: 'Tú, con tu look más reciente',
     },
     guide: {
       subject: '120 fórmulas de outfits que siempre funcionan',
@@ -487,6 +563,9 @@ export const esEmails: EmailCopy = {
       detail: 'Un PDF, tuyo para siempre.',
       delivery: 'Pago único. Descarga inmediata, y también te lo enviamos por correo.',
       button: (price: string) => `Quiero el libro · ${price}`,
+      paletteHeading: '120 fórmulas de outfits, y aquí está tu paleta para usarlas.',
+      paletteCaption: 'Tus colores. Cada fórmula del libro funciona con ellos.',
+      language: 'El libro está en inglés.',
     },
   },
 

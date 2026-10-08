@@ -140,6 +140,29 @@ function button(label: string, url: string): Block {
   }
 }
 
+// A second, quieter link under the main button's story.
+function textLink(label: string, url: string): Block {
+  return {
+    html: `<p style="margin:0 0 22px 0;font-family:${SANS};font-size:15px;line-height:22px;font-weight:600;"><a href="${esc(url)}" style="color:${COLOR.accent};text-decoration:underline;">${esc(label)}&nbsp;&rarr;</a></p>`,
+    text: `${label}: ${url}`,
+  }
+}
+
+// Big choices, one per line, full width: tap the one that fits.
+function choices(items: { label: string; url: string }[]): Block {
+  const rows = items
+    .map(
+      (item) =>
+        `<tr><td style="padding:0 0 10px 0;"><a href="${esc(item.url)}" style="display:block;padding:17px 22px;border:2px solid ${COLOR.ink};border-radius:16px;background:#ffffff;font-family:${SANS};font-size:17px;line-height:22px;font-weight:600;color:${COLOR.ink};text-decoration:none;">${esc(item.label)}&nbsp;&rarr;</a></td></tr>`,
+    )
+    .join('')
+
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 12px 0;">${rows}</table>`,
+    text: items.map((item) => `${item.label}: ${item.url}`).join('\n'),
+  }
+}
+
 // A video's poster, linked to the page that plays it (mail can't play video):
 // a play badge on the picture and a line under it.
 function videoLink(c: EmailCopy, poster: string, label: string, url: string): Block {
@@ -1041,6 +1064,21 @@ export type CrossSellContent = {
   // Their best colors; empty unless they own the Color Advisor.
   colors: ColorSwatch[]
   now: Date
+  // Their own picture for this email (lifecycle/assets.ts) once it's ready:
+  // a gift look, their drape photo, their ideal cut, an Edit look on them,
+  // their latest look, a magazine cover. The stock picture without it, with
+  // words to match.
+  heroUrl?: string | null
+  // xsell_style: the gift look (a link that signs them in) and the color
+  // it's built around.
+  gift?: { url: string; color: string } | null
+  // xsell_hair: their ideal cut, on them in the picture.
+  cut?: string | null
+  // xsell_pro, xsell_edit: the Edit, in their language.
+  edit?: { id: string; name: string; tagline: string } | null
+  // xsell_event: a link per occasion (crossSell.event.occasions), signing
+  // them in to the Event Stylist with it filled in.
+  occasionUrls?: string[]
 }
 
 // The pair price ends during this day in the US (Pacific: the earliest
@@ -1083,19 +1121,33 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
       ? priceBox(c.common.priceOnce(price), xs.pairPrice(money(input.regular!), owned, endDay(input.until!)), c.common.onceNote)
       : priceBox(c.common.priceOnce(price), xs.forYou, c.common.onceNote)
   const base = { recipient: input, promotional: true }
+  // Their own picture, when the send has it.
+  const photo = input.heroUrl ?? null
+  const hero = (alt: string) => ({ src: photo!, alt })
+  // Pro, for the Pro and new-Edit emails: what it gives, monthly, then its
+  // checkout over the Edits.
+  const proBlocks = () => [
+    checklist(xs.proFeatures(env.PRO_MONTHLY_CREDITS)),
+    priceBox(c.common.perMonth(price), xs.proDetail, c.common.renewalNote),
+    button(xs.pro.button(price), input.url),
+    small(c.common.buyNote),
+  ]
 
   switch (input.kind) {
-    case 'xsell_style':
+    case 'xsell_style': {
+      const gift = photo && input.gift ? input.gift : null
+
       return layout({
         ...base,
-        subject: xs.style.subject,
-        preheader: xs.style.preheader(tail),
-        hero: { src: `${ASSETS}/style.jpg`, alt: c.hero.style },
+        subject: gift ? xs.style.giftSubject(gift.color) : xs.style.subject,
+        preheader: gift ? xs.style.giftPreheader(tail) : xs.style.preheader(tail),
+        hero: gift ? hero(xs.style.giftAlt(gift.color)) : { src: `${ASSETS}/style.jpg`, alt: c.hero.style },
         blocks: [
-          eyebrow(xs.style.eyebrow),
-          heading(xs.style.subject),
+          eyebrow(gift ? xs.style.giftEyebrow : xs.style.eyebrow),
+          heading(gift ? xs.style.giftSubject(gift.color) : xs.style.subject),
           greeting(c, input.firstName),
-          paragraph(xs.style.intro),
+          paragraph(gift ? xs.style.giftIntro : xs.style.intro),
+          ...(gift ? [textLink(xs.style.giftLink, gift.url)] : []),
           ...yourColors(xs.style.colorsCaption),
           video('style', 21, '/advisors/style'),
           checklist(xs.styleFeatures),
@@ -1111,18 +1163,19 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           signature(c),
         ],
       })
+    }
 
     case 'xsell_color':
       return layout({
         ...base,
-        subject: input.owns.style ? xs.color.subjectAfterStyle : xs.color.subject,
-        preheader: xs.color.preheader(tail),
-        hero: HERO.drape(c),
+        subject: photo ? xs.color.photoSubject : input.owns.style ? xs.color.subjectAfterStyle : xs.color.subject,
+        preheader: photo ? xs.color.photoPreheader(tail) : xs.color.preheader(tail),
+        hero: photo ? hero(xs.color.photoAlt) : HERO.drape(c),
         blocks: [
           eyebrow(c.names.colorAdvisor),
-          heading(input.owns.style ? xs.color.subjectAfterStyle : xs.color.heading),
+          heading(photo ? xs.color.photoHeading : input.owns.style ? xs.color.subjectAfterStyle : xs.color.heading),
           greeting(c, input.firstName),
-          paragraph(input.owns.style ? xs.color.introAfterStyle : xs.color.intro),
+          paragraph(photo ? xs.color.photoIntro : input.owns.style ? xs.color.introAfterStyle : xs.color.intro),
           video('color', 24, '/advisors/color'),
           checklist(c.offer.colorAdvisorFeatures),
           pair
@@ -1159,17 +1212,21 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
       })
     }
 
-    case 'xsell_hair':
+    case 'xsell_hair': {
+      const cut = photo && input.cut ? input.cut : null
+
       return layout({
         ...base,
-        subject: xs.hair.subject,
-        preheader: xs.hair.preheader(price),
-        hero: { src: `${ASSETS}/hair.jpg`, alt: c.hero.hair },
+        subject: cut ? xs.hair.cutSubject : xs.hair.subject,
+        preheader: cut ? xs.hair.cutPreheader(price) : xs.hair.preheader(price),
+        hero: cut ? hero(xs.hair.cutAlt(cut)) : { src: `${ASSETS}/hair.jpg`, alt: c.hero.hair },
         blocks: [
           eyebrow(c.names.hairAdvisor),
-          heading(xs.hair.heading),
+          heading(cut ? xs.hair.cutHeading(cut) : xs.hair.heading),
           greeting(c, input.firstName),
-          paragraph(season ? xs.hair.introSeason(season) : xs.hair.intro),
+          ...(cut
+            ? [paragraph(xs.hair.cutIntro), paragraph(xs.hair.cutMore)]
+            : [paragraph(season ? xs.hair.introSeason(season) : xs.hair.intro)]),
           video('hair', 21, '/advisors/hair'),
           checklist(xs.hairFeatures),
           priceBox(c.common.priceOnce(price), xs.hair.detail, c.common.onceNote),
@@ -1178,18 +1235,64 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           signature(c),
         ],
       })
+    }
+
+    case 'xsell_pro': {
+      const edit = input.edit?.name ?? null
+      const tried = photo && edit ? edit : null
+
+      return layout({
+        ...base,
+        subject: tried ? xs.pro.subjectPhoto(tried) : xs.pro.subject,
+        preheader: xs.pro.preheader(price, env.PRO_MONTHLY_CREDITS),
+        hero: tried ? hero(xs.pro.alt(tried)) : HERO.occasions(c),
+        blocks: [
+          eyebrow(xs.pro.eyebrow),
+          heading(tried ? xs.pro.headingPhoto(tried) : xs.pro.heading),
+          greeting(c, input.firstName),
+          paragraph(tried ? xs.pro.introPhoto(tried) : xs.pro.intro(edit)),
+          ...proBlocks(),
+          signature(c),
+        ],
+      })
+    }
+
+    case 'xsell_edit': {
+      const edit = input.edit
+
+      // No Edit to name: Pro's own email.
+      if (!edit) {
+        return crossSellEmail({ ...input, kind: 'xsell_pro' })
+      }
+
+      return layout({
+        ...base,
+        subject: photo ? xs.edit.subjectPhoto(edit.name) : xs.edit.subject(edit.name),
+        preheader: xs.pro.preheader(price, env.PRO_MONTHLY_CREDITS),
+        hero: photo ? hero(xs.pro.alt(edit.name)) : HERO.occasions(c),
+        blocks: [
+          eyebrow(xs.edit.eyebrow),
+          heading(photo ? xs.edit.subjectPhoto(edit.name) : xs.edit.subject(edit.name)),
+          greeting(c, input.firstName),
+          paragraph(edit.tagline),
+          paragraph(photo ? xs.edit.introPhoto : xs.edit.intro),
+          ...proBlocks(),
+          signature(c),
+        ],
+      })
+    }
 
     case 'xsell_magazine':
       return layout({
         ...base,
-        subject: xs.magazine.subject(input.firstName.trim()),
-        preheader: xs.magazine.preheader(price),
-        hero: { src: 'https://www.avarobe.com/demo/magazine/email-hero.jpg', alt: c.hero.magazine },
+        subject: photo ? xs.magazine.coverSubject(input.firstName.trim()) : xs.magazine.subject(input.firstName.trim()),
+        preheader: photo ? xs.magazine.coverPreheader(price) : xs.magazine.preheader(price),
+        hero: photo ? hero(xs.magazine.coverAlt) : { src: 'https://www.avarobe.com/demo/magazine/email-hero.jpg', alt: c.hero.magazine },
         blocks: [
           eyebrow(c.names.magazine),
-          heading(xs.magazine.heading),
+          heading(photo ? xs.magazine.coverHeading : xs.magazine.heading),
           greeting(c, input.firstName),
-          paragraph(xs.magazine.intro),
+          paragraph(photo ? xs.magazine.coverIntro : xs.magazine.intro),
           ...yourColors(xs.magazine.colorsCaption),
           video('magazine', 19, '/advisors/magazine'),
           checklist(xs.magazineFeatures),
@@ -1200,27 +1303,38 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
         ],
       })
 
-    case 'xsell_event':
+    case 'xsell_event': {
+      // Each occasion opens the Event Stylist with it filled in, signed in
+      // when the send made the links.
+      const occasions = xs.event.occasions.map((item, index) => ({
+        label: item.label,
+        url: input.occasionUrls?.[index] ?? x.link('/studio/events', input.kind, { occasion: item.occasion }),
+      }))
+
       return layout({
         ...base,
         subject: xs.event.subject,
         preheader: xs.event.preheader(price),
-        hero: HERO.occasions(c),
+        hero: photo ? hero(xs.event.lookAlt) : HERO.occasions(c),
         blocks: [
           eyebrow(c.names.eventStylist),
           heading(xs.event.heading),
           greeting(c, input.firstName),
-          paragraph(xs.event.intro(upcomingEvents(c, input.now))),
+          paragraph(photo ? xs.event.introPhoto(upcomingEvents(c, input.now)) : xs.event.intro(upcomingEvents(c, input.now))),
+          choices(occasions),
+          small(xs.event.pick),
+          priceBox(c.common.perEvent(price), xs.event.detail, c.common.oneTime),
           video('event', 17, '/advisors/event'),
           checklist(xs.eventFeatures),
-          priceBox(c.common.perEvent(price), xs.event.detail, c.common.oneTime),
-          button(xs.event.button(price), input.url),
-          small(c.common.buyNote),
           signature(c),
         ],
       })
+    }
 
-    case 'xsell_guide':
+    case 'xsell_guide': {
+      // Color Advisor owners: their palette, to use with the formulas.
+      const swatches = season && input.colors.length > 0 ? palette(c, season, input.colors, xs.guide.paletteCaption) : null
+
       return layout({
         ...base,
         subject: xs.guide.subject,
@@ -1228,14 +1342,17 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
         hero: { src: 'https://www.avarobe.com/guide/cover-email.jpg', alt: c.hero.book },
         blocks: [
           eyebrow(c.names.book),
-          heading(xs.guide.heading),
+          heading(swatches ? xs.guide.paletteHeading : xs.guide.heading),
           greeting(c, input.firstName),
           paragraph(season ? xs.guide.introSeason(season) : xs.guide.intro),
+          ...(swatches ? [swatches] : []),
           video('guide', 15, '/guide'),
           priceBox(price, xs.guide.detail, xs.guide.delivery),
           button(xs.guide.button(price), input.url),
+          ...(xs.guide.language ? [small(xs.guide.language)] : []),
           signature(c),
         ],
       })
+    }
   }
 }

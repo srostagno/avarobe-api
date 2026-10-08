@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { CROSS_SELL_RULES, addonEnding, pickCrossSell, type CrossSellState } from '../cross-sell.js'
+import { CROSS_SELL_RULES, addonEnding, editDue, latestEdit, pickCrossSell, type CrossSellState } from '../cross-sell.js'
 import { LIFECYCLE_RULES } from '../schedule.js'
 
 const HOUR = 60 * 60 * 1000
@@ -10,47 +10,78 @@ const now = new Date('2026-10-04T18:00:00Z')
 const ago = (ms: number) => new Date(now.getTime() - ms)
 const inFuture = (ms: number) => new Date(now.getTime() + ms)
 
+const NOTHING = { color: false, style: false, hair: false, magazine: false, event: false, guide: false, pro: false }
+
 // A Color Advisor buyer from yesterday, nothing sent yet.
 function state(overrides: Partial<CrossSellState> = {}): CrossSellState {
   return {
     lastPurchaseAt: ago(DAY),
-    owns: { color: true, style: false, hair: false, magazine: false, event: false, guide: false },
+    owns: { ...NOTHING, color: true },
     addonUntil: { color: null, style: inFuture(13 * DAY) },
     sent: {},
     lastSentAt: null,
     promotionsAllowed: true,
+    edits: [],
+    editEmails: [],
     ...overrides,
   }
 }
 
+// What a buyer gets on a given day: `sent` as days ago, the purchase too.
+function on(purchaseDaysAgo: number, sent: Partial<Record<keyof CrossSellState['sent'], number>>, overrides: Partial<CrossSellState> = {}) {
+  const dates = Object.fromEntries(Object.entries(sent).map(([kind, days]) => [kind, ago(days * DAY)]))
+  const latest = Object.values(sent).length > 0 ? ago(Math.min(...Object.values(sent)) * DAY) : null
+  return pickCrossSell(
+    state({ lastPurchaseAt: ago(purchaseDaysAgo * DAY), sent: dates, lastSentAt: latest, addonUntil: { color: null, style: null }, ...overrides }),
+    now,
+  )
+}
+
 describe('pickCrossSell', () => {
   it('waits most of a day after the purchase, then offers the other report first', () => {
-    assert.equal(pickCrossSell(state({ lastPurchaseAt: ago(2 * HOUR) }), now), null)
-    assert.equal(pickCrossSell(state(), now), 'xsell_style')
+    assert.equal(pickCrossSell(state({ lastPurchaseAt: ago(19 * HOUR) }), now), null)
+    assert.equal(pickCrossSell(state({ lastPurchaseAt: ago(20 * HOUR) }), now), 'xsell_style')
+    // Bought the Style Advisor first: the Color Advisor, as soon.
+    assert.equal(pickCrossSell(state({ lastPurchaseAt: ago(20 * HOUR), owns: { ...NOTHING, style: true } }), now), 'xsell_color')
   })
 
-  it('never offers what they own, and offers the Color Advisor to buyers without it', () => {
-    const both = state({ owns: { color: true, style: true, hair: false, magazine: false, event: false, guide: false } })
-    assert.equal(pickCrossSell(both, now), 'xsell_hair')
-    const styleOnly = state({ owns: { color: false, style: true, hair: false, magazine: false, event: false, guide: false } })
-    assert.equal(pickCrossSell(styleOnly, now), 'xsell_color')
-    // Pro (or everything bought): the products Pro doesn't include.
-    const pro = state({ owns: { color: true, style: true, hair: true, magazine: false, event: true, guide: false } })
-    assert.equal(pickCrossSell(pro, now), 'xsell_magazine')
-    const everything = state({ owns: { color: true, style: true, hair: true, magazine: true, event: true, guide: true } })
-    assert.equal(pickCrossSell(everything, now), null)
+  it('goes down the steps, each its own gap after the one before', () => {
+    // Style, then hair 2 days later.
+    assert.equal(on(3, { xsell_style: 1.9 }), null)
+    assert.equal(on(3, { xsell_style: 2 }), 'xsell_hair')
+    // Hair, then Pro 7 days later.
+    assert.equal(on(10, { xsell_style: 9, xsell_hair: 6.9 }), null)
+    assert.equal(on(10, { xsell_style: 9, xsell_hair: 7 }), 'xsell_pro')
+    // Pro, then the Event Stylist 4 days later.
+    assert.equal(on(14, { xsell_style: 13, xsell_hair: 11, xsell_pro: 3.9 }), null)
+    assert.equal(on(14, { xsell_style: 13, xsell_hair: 11, xsell_pro: 4 }), 'xsell_event')
+    // Then the magazine 7 days later, and the book 9 days after that.
+    assert.equal(on(25, { xsell_style: 24, xsell_hair: 22, xsell_pro: 15, xsell_event: 6.9 }), null)
+    assert.equal(on(25, { xsell_style: 24, xsell_hair: 22, xsell_pro: 15, xsell_event: 7 }), 'xsell_magazine')
+    const all = { xsell_style: 33, xsell_hair: 31, xsell_pro: 24, xsell_event: 20, xsell_magazine: 9 }
+    assert.equal(on(34, { ...all, xsell_magazine: 8.9 }), null)
+    assert.equal(on(34, all), 'xsell_guide')
+    assert.equal(on(44, { ...all, xsell_guide: 1 }), null)
   })
 
-  it('goes down the list one email at a time, spaced, and more slowly after three', () => {
-    const afterStyle = state({ sent: { xsell_style: ago(2 * DAY) }, lastSentAt: ago(2 * DAY), lastPurchaseAt: ago(3 * DAY) })
-    assert.equal(pickCrossSell(afterStyle, now), null)
-    assert.equal(pickCrossSell({ ...afterStyle, sent: { xsell_style: ago(5 * DAY) }, lastSentAt: ago(5 * DAY) }, now), 'xsell_hair')
+  it('skips what they own, and the next step waits its own gap', () => {
+    // Owns Hair & Grooming: Pro next, a week after the Style Advisor's email.
+    const ownsHair = { owns: { ...NOTHING, color: true, hair: true } }
+    assert.equal(on(3, { xsell_style: 2 }, ownsHair), null)
+    assert.equal(on(8, { xsell_style: 7 }, ownsHair), 'xsell_pro')
+    // Pro (it includes the advisors and events): the magazine first, a week
+    // after their purchase, and no Pro email.
+    const pro = { owns: { color: true, style: true, hair: true, magazine: false, event: true, guide: false, pro: true } }
+    assert.equal(on(6, {}, pro), null)
+    assert.equal(on(7, {}, pro), 'xsell_magazine')
+    const everything = { owns: { color: true, style: true, hair: true, magazine: true, event: true, guide: true, pro: true } }
+    assert.equal(on(7, {}, everything), null)
+  })
 
-    const three = { xsell_style: ago(12 * DAY), xsell_hair: ago(9 * DAY), xsell_magazine: ago(5 * DAY) }
-    const later = state({ sent: three, lastSentAt: ago(5 * DAY), lastPurchaseAt: ago(13 * DAY), addonUntil: { color: null, style: null } })
-    assert.equal(pickCrossSell(later, now), null)
-    const older = { xsell_style: ago(14 * DAY), xsell_hair: ago(12 * DAY), xsell_magazine: ago(11 * DAY) }
-    assert.equal(pickCrossSell({ ...later, sent: older, lastSentAt: ago(11 * DAY) }, now), 'xsell_event')
+  it('starts the wait over after any purchase', () => {
+    // Bought something a day after the style email: hair two days after that.
+    assert.equal(on(1, { xsell_style: 2 }), null)
+    assert.equal(on(2, { xsell_style: 3 }), 'xsell_hair')
   })
 
   it('keeps the gap with every other email, a rescue included', () => {
@@ -58,7 +89,7 @@ describe('pickCrossSell', () => {
     assert.equal(pickCrossSell(state({ lastSentAt: ago(LIFECYCLE_RULES.gap + HOUR) }), now), 'xsell_style')
   })
 
-  it('reminds once before the pair price ends, even inside the spacing', () => {
+  it('reminds once before the pair price ends, even inside the gap', () => {
     const offered = state({
       lastPurchaseAt: ago(13 * DAY),
       sent: { xsell_style: ago(12 * DAY), xsell_hair: ago(2 * DAY) },
@@ -77,8 +108,55 @@ describe('pickCrossSell', () => {
     assert.equal(addonEnding({ ...offered, addonUntil: { color: null, style: inFuture(CROSS_SELL_RULES.lastCallBefore + HOUR) } }, now.getTime()), null)
   })
 
-  it('stops a while after the last purchase, and without the postal address', () => {
+  it('stops the steps a while after the last purchase, and everything without the postal address', () => {
     assert.equal(pickCrossSell(state({ lastPurchaseAt: ago(CROSS_SELL_RULES.horizon + DAY) }), now), null)
     assert.equal(pickCrossSell(state({ promotionsAllowed: false }), now), null)
+  })
+})
+
+describe('new-Edit emails', () => {
+  const edits = [
+    { id: 'halloween', droppedAt: ago(9 * DAY) },
+    { id: 'fall', droppedAt: ago(9 * DAY) },
+    { id: 'weddings', droppedAt: ago(2 * DAY) },
+    { id: 'costumes', droppedAt: inFuture(5 * DAY) },
+  ]
+  // Every step sent (or not wanted) by day 35 of their purchase.
+  const done = { xsell_style: 50, xsell_hair: 48, xsell_pro: 41, xsell_event: 37, xsell_magazine: 30, xsell_guide: 21 }
+
+  it('picks the newest Edit out this week that no email has shown them', () => {
+    assert.equal(editDue({ edits, editEmails: [] }, now.getTime()), 'weddings')
+    assert.equal(editDue({ edits, editEmails: ['weddings'] }, now.getTime()), null)
+    // Pro's email shows the newest one out, however old.
+    assert.equal(latestEdit(edits, now.getTime()), 'weddings')
+    assert.equal(latestEdit(edits.slice(0, 2), now.getTime()), 'halloween')
+    // Clothes over costumes for Pro, when there are any.
+    const costumes = [
+      { id: 'fall', droppedAt: ago(9 * DAY) },
+      { id: 'halloween', droppedAt: ago(3 * DAY), costume: true },
+    ]
+    assert.equal(latestEdit(costumes, now.getTime()), 'fall')
+    assert.equal(latestEdit(costumes.slice(1), now.getTime()), 'halloween')
+  })
+
+  it('comes after the steps, ten days after the last cross-sell, once per Edit, while they aren’t on Pro', () => {
+    assert.equal(on(51, done, { edits }), 'xsell_edit')
+    // A step still to go comes first (here, with its purchase recent enough).
+    assert.equal(on(40, { xsell_style: 39, xsell_hair: 37, xsell_pro: 30, xsell_event: 26, xsell_magazine: 19 }, { edits }), 'xsell_guide')
+    // Too soon after the last cross-sell.
+    assert.equal(on(51, { ...done, xsell_guide: 9.9 }, { edits }), null)
+    // Already shown that Edit (by this email or by Pro's), or no new one.
+    assert.equal(on(51, done, { edits, editEmails: ['weddings'] }), null)
+    assert.equal(on(51, done, { edits: edits.slice(0, 2) }), null)
+    // Pro has every Edit.
+    assert.equal(on(51, done, { edits, owns: { ...NOTHING, color: true, pro: true } }), null)
+  })
+
+  it('keeps coming for months after the last purchase, then stops', () => {
+    const lastEdit = { ...done, xsell_edit: 30 }
+    assert.equal(on(170, lastEdit, { edits }), 'xsell_edit')
+    assert.equal(on(CROSS_SELL_RULES.editHorizon / DAY + 1, lastEdit, { edits }), null)
+    // The last one sent counts for the gap too.
+    assert.equal(on(170, { ...done, xsell_edit: 9 }, { edits }), null)
   })
 })

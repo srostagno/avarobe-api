@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { ObjectId } from 'mongodb'
 import sharp from 'sharp'
 import { z } from 'zod'
@@ -6,7 +6,16 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { parseBody } from '../../utils/http.js'
 import { storage } from '../../utils/storage.js'
-import { clickTarget, emailImageUser, recordClick, recordOpen, recordUnsubscribe, userIdFromUnsubscribeToken } from './service.js'
+import {
+  clickTarget,
+  emailImageKey,
+  emailImageTarget,
+  emailImageUser,
+  recordClick,
+  recordOpen,
+  recordUnsubscribe,
+  userIdFromUnsubscribeToken,
+} from './service.js'
 
 const unsubscribeSchema = z.object({
   token: z.string().min(10).max(200),
@@ -29,7 +38,7 @@ const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBR
 // The public side of the onboarding emails: the unsubscribe link (the token
 // is the account id signed with the server secret; account and security
 // emails are not affected), the open pixel, the click redirect and the
-// signed photo of the price-drop email.
+// signed photos of them the emails show.
 const lifecycleRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     '/unsubscribe',
@@ -84,28 +93,46 @@ const lifecycleRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // Their drape photo, best side blurred, for the price-drop email. JPEG,
-  // which every email client shows.
+  // A stored picture as JPEG, which every email client shows; the generic
+  // picture when it's gone.
+  async function sendEmailImage(request: FastifyRequest, reply: FastifyReply, key: string | null) {
+    if (!key) {
+      return reply.redirect(FALLBACK_IMAGE, 302)
+    }
+
+    try {
+      const jpeg = await sharp(await storage.read(key)).jpeg({ quality: 84, mozjpeg: true }).toBuffer()
+      return reply.header('Content-Type', 'image/jpeg').header('Cache-Control', 'private, max-age=86400').send(jpeg)
+    } catch (error) {
+      request.log.warn({ err: error }, 'Email image not served')
+      return reply.redirect(FALLBACK_IMAGE, 302)
+    }
+  }
+
+  // A picture of them in an email (service.ts emailImageUrl): their drape
+  // photo with the best side blurred, a cross-sell's own picture, or one of
+  // their looks.
+  app.get<{ Params: { uid: string; file: string } }>(
+    '/i/:uid/:file',
+    { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(imageSchema, request.query)
+      const target = parsed.ok ? emailImageTarget(request.params.uid, request.params.file, parsed.data.e, parsed.data.s) : null
+
+      return sendEmailImage(request, reply, target ? await emailImageKey(app, target.userId, target.slot) : null)
+    },
+  )
+
+  // Links from before there were several pictures: their drape photo, for
+  // the price-drop and colors offer emails already sent.
   app.get<{ Params: { file: string } }>(
     '/i/:file',
     { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const parsed = parseBody(imageSchema, request.query)
       const userId = parsed.ok ? emailImageUser(request.params.file, parsed.data.e, parsed.data.s) : null
-      const avatar = userId ? await app.collections.avatars.findOne({ userId }, { projection: { drapePreview: 1 } }) : null
-      const key = avatar?.drapePreview?.lockedKey
 
-      if (!key) {
-        return reply.redirect(FALLBACK_IMAGE, 302)
-      }
-
-      try {
-        const jpeg = await sharp(await storage.read(key)).jpeg({ quality: 84, mozjpeg: true }).toBuffer()
-        return reply.header('Content-Type', 'image/jpeg').header('Cache-Control', 'private, max-age=86400').send(jpeg)
-      } catch (error) {
-        request.log.warn({ err: error }, 'Email image not served')
-        return reply.redirect(FALLBACK_IMAGE, 302)
-      }
+      return sendEmailImage(request, reply, userId ? await emailImageKey(app, userId, 'drape') : null)
     },
   )
 

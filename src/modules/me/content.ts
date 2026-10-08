@@ -8,11 +8,13 @@ import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
 
 // Everything someone made in the app: their photos, avatar, colors and
-// reports, looks, haircuts, taste notes and collections, files included.
-// Their account, sign-in and purchases stay. Used when they delete the
-// account, and when an admin starts over as a brand-new user.
+// reports, looks, haircuts, taste notes and collections, and the pictures
+// made for their emails, files included. Their account, sign-in and
+// purchases stay. Used when they delete the account, and when an admin
+// starts over as a brand-new user.
 export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) {
-  const [avatar, looks, checks] = await Promise.all([
+  const [user, avatar, looks, checks] = await Promise.all([
+    app.collections.users.findOne({ _id: userId }, { projection: { xsellAssets: 1 } }),
     app.collections.avatars.findOne({ userId }),
     app.collections.looks
       .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1, pieces: 1, teaser: 1 } })
@@ -33,6 +35,9 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
         ...(avatar?.versions ?? []).flatMap((version) => [version.key, version.hair?.refKey]),
         ...looks.flatMap(lookStorageKeys),
         ...checks.flatMap(checkStorageKeys),
+        // Cross-sell pictures (lifecycle/assets.ts): most are a look's or a
+        // haircut's, the magazine cover is its own file.
+        ...Object.values(user?.xsellAssets ?? {}).map((asset) => asset?.key),
       ].filter((key): key is string => Boolean(key)),
     ),
   ]
@@ -49,6 +54,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.surveyAnswers.deleteMany({ userId }),
     app.collections.colorChecks.deleteMany({ userId }),
     app.collections.styleEvents.deleteMany({ userId }),
+    app.collections.users.updateOne({ _id: userId }, { $unset: { xsellAssets: '' } }),
   ])
 
   return { files: keys.length }

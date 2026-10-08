@@ -60,6 +60,11 @@ export function longDate(date: Date, locale: Locale | null | undefined, timeZone
   return date.toLocaleDateString(INTL_LOCALE[lang], { weekday: 'long', month: 'long', day: 'numeric', timeZone })
 }
 
+// "October 2026", "outubro de 2026", "octubre de 2026".
+export function monthYear(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
+  return date.toLocaleDateString(INTL_LOCALE[locale ?? 'en'], { month: 'long', year: 'numeric', timeZone })
+}
+
 // "Monday", "segunda-feira", "lunes".
 export function weekdayName(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
   return date.toLocaleDateString(INTL_LOCALE[locale ?? 'en'], { weekday: 'long', timeZone })

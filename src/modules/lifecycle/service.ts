@@ -2,13 +2,28 @@ import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, PurchaseProduct, UserDocument } from '../../types/mongo.js'
+import { emailCopy } from '../../i18n/emails.js'
+import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
+import { withLocale } from '../../utils/request-locale.js'
+import { localHour } from '../../utils/timezones.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
+import { presentationOf } from '../avatar/body.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
-import { CROSS_SELL_RULES, addonEnding, pickCrossSell, type CrossSellKind, type CrossSellState } from './cross-sell.js'
+import { EDITS } from '../looks/edits.js'
+import { looksFor } from '../looks/icon-routes.js'
+import { assetSlot, editOfIcon, editText, hasGenerator, startAsset } from './assets.js'
+import {
+  CROSS_SELL_RULES,
+  addonEnding,
+  editDue,
+  latestEdit,
+  pickCrossSell,
+  type CrossSellKind,
+  type CrossSellState,
+} from './cross-sell.js'
 import { LIFECYCLE_RULES, lastLifecycleEmailAt, pickLifecycleEmail, tooSoonAfter, type LifecycleState } from './schedule.js'
 import {
   appLink,
@@ -28,7 +43,7 @@ import {
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
-import { createLink } from '../../utils/auth-links.js'
+import { createLink, createLinks } from '../../utils/auth-links.js'
 import { focusOf } from '../../utils/serializers.js'
 
 const RUN_EVERY_MS = 10 * 60 * 1000
@@ -52,8 +67,11 @@ const PRICE_DROP = {
   gap: 18 * 60 * 60 * 1000,
   hours: { from: 10, to: 20 },
 }
-// How long the photo in that email keeps loading.
+// How long the photos in the emails keep loading.
 const EMAIL_IMAGE_TTL_MS = 14 * 24 * 60 * 60 * 1000
+// A cross-sell picture still being made after this long counts as failed:
+// its email goes out with the stock picture, so none waits forever.
+const ASSET_STALE_MS = 25 * 60 * 1000
 
 // ---------------------------------------------------------------- unsubscribe
 
@@ -213,8 +231,9 @@ export function lifecycleContentFor(
   priceDrop?: { heroUrl: string | null; url: string },
   // The colors offer's photo (null for none) and its one-tap checkout link.
   offer?: { heroUrl: string | null; url: string },
-  // A cross-sell's one-tap checkout link, and which pair price ends soon.
-  crossSell?: { url: string; side: 'style' | 'color' | null },
+  // A cross-sell's one-tap checkout link, which pair price ends soon, and
+  // what it shows of them (CrossSellPersonal).
+  crossSell?: CrossSellLink,
   now = new Date(),
 ): EmailContent {
   // In their language, with the prices where they pay (billing/pricing.ts).
@@ -276,6 +295,8 @@ export function lifecycleContentFor(
     case 'xsell_magazine':
     case 'xsell_event':
     case 'xsell_guide':
+    case 'xsell_pro':
+    case 'xsell_edit':
       return crossSellEmail({ ...recipient, ...crossSellContentFor(kind, user, avatar, crossSell, now) })
   }
 }
@@ -334,22 +355,44 @@ export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Dat
       return once('event_pass')
     case 'xsell_guide':
       return once('outfit_guide')
+    case 'xsell_pro':
+    case 'xsell_edit':
+      return once('pro_monthly')
   }
+}
+
+// Where a cross-sell's button lands in the studio: its checkout (?buy=),
+// over the Edits (on the one the email showed) for Pro.
+function crossSellTarget(kind: CrossSellKind, product: PurchaseProduct, editId: string | null = null) {
+  const params: Record<string, string> = { buy: product, from: `email_${kind}` }
+
+  return product.startsWith('pro_')
+    ? { path: '/studio/try-on', params: editId ? { edit: editId, ...params } : params }
+    : { path: '/studio', params }
 }
 
 // The book sells on its own page; the rest open their checkout in the
 // studio (?buy=), signed in when the email carries a sign-in link.
-function crossSellPage(kind: CrossSellKind, product: string, locale?: Locale) {
-  return product === 'outfit_guide'
-    ? appLink('/guide', kind, {}, locale)
-    : appLink('/studio', kind, { buy: product, from: `email_${kind}` }, locale)
+function crossSellPage(kind: CrossSellKind, product: PurchaseProduct, locale?: Locale, editId: string | null = null) {
+  if (product === 'outfit_guide') {
+    return appLink('/guide', kind, {}, locale)
+  }
+
+  const target = crossSellTarget(kind, product, editId)
+  return appLink(target.path, kind, target.params, locale)
 }
+
+// What a cross-sell shows of them (sendCrossSell works it out): their own
+// picture once it's ready, with what's in it, and the extra links.
+export type CrossSellPersonal = Pick<CrossSellContent, 'heroUrl' | 'gift' | 'cut' | 'edit' | 'occasionUrls'>
+
+export type CrossSellLink = { url: string; side: 'style' | 'color' | null } & CrossSellPersonal
 
 export function crossSellContentFor(
   kind: CrossSellKind,
   user: UserDocument,
   avatar: AvatarFacts | undefined,
-  link?: { url: string; side: 'style' | 'color' | null },
+  link?: CrossSellLink,
   now = new Date(),
 ): CrossSellContent {
   const offer = crossSellOffer(kind, user, now, link?.side ?? null)
@@ -364,11 +407,16 @@ export function crossSellContentFor(
     until: offer.until,
     side: offer.side,
     owns: { color: billing.colorReport, style: billing.styleReport },
-    url: link?.url ?? crossSellPage(kind, offer.product, user.locale),
+    url: link?.url ?? crossSellPage(kind, offer.product, user.locale, link?.edit?.id ?? null),
     season: analysis?.season ?? null,
     // They paid for their colors, so the email can show them.
     colors: billing.colorReport ? (analysis?.bestColors ?? []).slice(0, 4) : [],
     now,
+    heroUrl: link?.heroUrl ?? null,
+    gift: link?.gift ?? null,
+    cut: link?.cut ?? null,
+    edit: link?.edit ?? null,
+    occasionUrls: link?.occasionUrls ?? [],
   }
 }
 
@@ -782,22 +830,42 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
 
 // ---------------------------------------------------------------- price drop
 
-// Their drape photo in an email: the locked copy (best side blurred), served
-// by the API through a link signed for this account that stops working
-// after two weeks. Email clients fetch images without signing in.
-const imageSignature = (userId: string, expires: number) =>
-  hmacSign(env.JWT_ACCESS_SECRET, `email-image:${userId}:${expires}`)
+// Their own pictures in an email, served by the API through a link signed
+// for this account and picture that stops working after two weeks (email
+// clients fetch images without signing in). A slot names the picture:
+// 'drape' is their drape photo's locked copy (best side blurred); a
+// cross-sell kind or 'edit:<id>' is that email's picture (users.xsellAssets);
+// 'look-<id>' is one of their looks.
+const imageSignature = (subject: string, expires: number) =>
+  hmacSign(env.JWT_ACCESS_SECRET, `email-image:${subject}:${expires}`)
 
-export function emailImageUrl(userId: ObjectId, now = new Date()) {
+const SLOT_PATTERN = /^(?:drape|xsell_[a-z_]{2,30}|edit:[a-z0-9-]{1,60}|look-[0-9a-f]{24})$/
+
+export function emailImageUrl(userId: ObjectId, now = new Date(), slot = 'drape') {
   const id = userId.toString()
   const expires = Math.floor((now.getTime() + EMAIL_IMAGE_TTL_MS) / 1000)
-  const url = new URL(`/api/v1/email/i/${id}.jpg`, `${env.API_PUBLIC_URL}/`)
+  const url = new URL(`/api/v1/email/i/${id}/${encodeURIComponent(slot)}.jpg`, `${env.API_PUBLIC_URL}/`)
   url.searchParams.set('e', String(expires))
-  url.searchParams.set('s', imageSignature(id, expires))
+  url.searchParams.set('s', imageSignature(`${id}:${slot}`, expires))
   return url.toString()
 }
 
-// The account whose photo a signed image link shows, while it's valid.
+// The account and picture a signed image link shows, while it's valid.
+export function emailImageTarget(id: string, file: string, expires: string, signature: string, now = new Date()) {
+  const slot = file.replace(/\.jpg$/, '')
+  const seconds = Number(expires)
+
+  if (!ObjectId.isValid(id) || !SLOT_PATTERN.test(slot) || !Number.isFinite(seconds) || seconds * 1000 < now.getTime()) {
+    return null
+  }
+
+  return hmacVerify(env.JWT_ACCESS_SECRET, `email-image:${id}:${slot}:${seconds}`, signature)
+    ? { userId: new ObjectId(id), slot }
+    : null
+}
+
+// Links from before slots (/email/i/<uid>.jpg, until Oct 2026): their drape
+// photo. Emails already sent keep loading it.
 export function emailImageUser(file: string, expires: string, signature: string, now = new Date()) {
   const id = file.replace(/\.jpg$/, '')
   const seconds = Number(expires)
@@ -807,6 +875,26 @@ export function emailImageUser(file: string, expires: string, signature: string,
   }
 
   return hmacVerify(env.JWT_ACCESS_SECRET, `email-image:${id}:${seconds}`, signature) ? new ObjectId(id) : null
+}
+
+// The stored file behind a slot, while it's there.
+export async function emailImageKey(app: FastifyInstance, userId: ObjectId, slot: string): Promise<string | null> {
+  if (slot === 'drape') {
+    const avatar = await app.collections.avatars.findOne({ userId }, { projection: { drapePreview: 1 } })
+    return avatar?.drapePreview?.lockedKey ?? null
+  }
+
+  if (slot.startsWith('look-')) {
+    const look = await app.collections.looks.findOne(
+      { _id: new ObjectId(slot.slice('look-'.length)), userId, status: 'ready' },
+      { projection: { imageKey: 1 } },
+    )
+    return look?.imageKey ?? null
+  }
+
+  const user = await app.collections.users.findOne({ _id: userId }, { projection: { [`xsellAssets.${slot}`]: 1 } })
+  const asset = user?.xsellAssets?.[slot]
+  return asset?.status === 'ready' ? asset.key : null
 }
 
 const newYorkHour = (now: Date) =>
@@ -922,24 +1010,36 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
 
 // ---------------------------------------------------------------- cross-sell sending
 
-// Every run in US daytime: buyers whose latest purchase is recent get the
-// next product they don't have, when one is due (lifecycle/cross-sell.ts).
-// Promotional, so never to anyone who opted out or before the postal
-// address is set.
-export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
-  const hour = newYorkHour(now)
+// The Edits a buyer can try on (with looks for how they dress), for the
+// Pro and new-Edit emails.
+function tryableEdits(avatar: Pick<AvatarDocument, 'body' | 'presentation'> | null): CrossSellState['edits'] {
+  const presentation = avatar ? presentationOf(avatar) : null
 
-  if (!env.EMAIL_POSTAL_ADDRESS || hour < CROSS_SELL_RULES.sendHours.from || hour >= CROSS_SELL_RULES.sendHours.to) {
+  return EDITS.filter((edit) => looksFor(edit.looks, presentation).length > 0).map((edit) => ({
+    id: edit.id,
+    droppedAt: new Date(`${edit.droppedAt}T00:00:00Z`),
+    costume: edit.looks.every((look) => look.mood === 'Costume party'),
+  }))
+}
+
+// Every run: buyers whose latest purchase is recent get the next thing they
+// don't have, when one is due (lifecycle/cross-sell.ts). Its picture is
+// made first, whatever the hour (lifecycle/assets.ts); the email goes out in
+// their daytime once the picture is ready, failed or late. Promotional, so
+// never to anyone who opted out or before the postal address is set.
+export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
+  if (!env.EMAIL_POSTAL_ADDRESS) {
     return 0
   }
 
   const buyers = await app.collections.purchases
     .aggregate<{ _id: ObjectId; lastAt: Date }>([
-      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.horizon) }, refundedAt: null } },
+      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.editHorizon) }, refundedAt: null } },
       { $group: { _id: '$userId', lastAt: { $max: '$createdAt' } } },
     ])
     .toArray()
   let sent = 0
+  let started = 0
 
   for (const buyer of buyers) {
     const user = await app.collections.users.findOne({ _id: buyer._id, emailTipsOptOutAt: null })
@@ -949,10 +1049,11 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
     }
 
     const billing = billingState(user, now.getTime())
-    const [products, magazine, guide] = await Promise.all([
+    const [products, magazine, guide, avatar] = await Promise.all([
       app.collections.purchases.distinct('product', { userId: user._id }),
       app.collections.magazines.findOne({ userId: user._id }, { projection: { _id: 1 } }),
       app.collections.guideOrders.findOne({ $or: [{ userId: user._id }, { email: user.email.toLowerCase() }] }, { projection: { _id: 1 } }),
+      app.collections.avatars.findOne({ userId: user._id }),
     ])
     const state: CrossSellState = {
       lastPurchaseAt: buyer.lastAt,
@@ -961,17 +1062,51 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
         style: billing.styleReport,
         hair: billing.hairAdvisor,
         magazine: billing.magazineCredits > 0 || Boolean(magazine) || products.includes('magazine'),
-        event: billing.eventCredits > 0 || products.includes('event_pass'),
+        // Pro styles an event with its looks.
+        event: billing.proActive || billing.eventCredits > 0 || products.includes('event_pass'),
         guide: Boolean(guide) || products.includes('outfit_guide'),
+        pro: billing.proLive,
       },
       addonUntil: { color: billing.colorAddonUntil, style: billing.styleAddonUntil },
       sent: user.lifecycleEmails ?? {},
       lastSentAt: lastLifecycleEmailAt(user),
       promotionsAllowed: true,
+      edits: tryableEdits(avatar),
+      editEmails: user.editEmails ?? [],
     }
     const kind = pickCrossSell(state, now)
 
-    if (kind && (await sendCrossSell(app, user, kind, kind === 'xsell_addon_last_call' ? addonEnding(state, now.getTime()) : null, now))) {
+    if (!kind) {
+      continue
+    }
+
+    // Pro shows the newest Edit; the new-Edit email, the one it's about.
+    const at = now.getTime()
+    const editId = kind === 'xsell_edit' ? editDue(state, at) : kind === 'xsell_pro' ? latestEdit(state.edits, at) : null
+    const asset = env.XSELL_PERSONAL_IMAGES ? user.xsellAssets?.[assetSlot(kind, editId)] : undefined
+
+    // Its picture first. Past the run's cap, it starts on a later run.
+    if (env.XSELL_PERSONAL_IMAGES && !asset && hasGenerator(kind)) {
+      if (started < env.XSELL_IMAGE_STARTS_PER_RUN && (await startAsset(app, user, kind, editId, now))) {
+        started += 1
+      }
+
+      continue
+    }
+
+    if (asset?.status === 'processing' && at - asset.startedAt.getTime() < ASSET_STALE_MS) {
+      continue
+    }
+
+    const hour = localHour(user.location, now)
+
+    if (hour < CROSS_SELL_RULES.sendHours.from || hour >= CROSS_SELL_RULES.sendHours.to) {
+      continue
+    }
+
+    const side = kind === 'xsell_addon_last_call' ? addonEnding(state, at) : null
+
+    if (await sendCrossSell(app, user, kind, { side, editId, avatar, asset }, now)) {
       sent += 1
     }
   }
@@ -979,18 +1114,127 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
   return sent
 }
 
-async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, side: 'style' | 'color' | null, now: Date) {
+type CrossSellContext = {
+  side: 'style' | 'color' | null
+  // The Edit the Pro or new-Edit email is about.
+  editId: string | null
+  avatar: AvatarDocument | null
+  // Its picture (users.xsellAssets), when pictures are on.
+  asset: EmailAsset | undefined
+}
+
+type Personal = {
+  heroUrl: string | null
+  // xsell_style: the gift look and the color it's built around.
+  giftLook: { id: string; color: string } | null
+  cut: string | null
+  edit: { id: string; name: string; tagline: string } | null
+}
+
+// What a cross-sell shows of them: its picture once it's ready (the stock
+// one otherwise) and what's in it. Only reads; links come after the claim.
+async function crossSellPersonal(
+  app: FastifyInstance,
+  user: UserDocument,
+  kind: CrossSellKind,
+  context: CrossSellContext,
+  now: Date,
+): Promise<Personal> {
+  const none: Personal = { heroUrl: null, giftLook: null, cut: null, edit: null }
+  const { asset, avatar } = context
+  const ready = asset?.status === 'ready' && asset.key ? asset : null
+  const refId = ready?.ref && ObjectId.isValid(ready.ref) ? new ObjectId(ready.ref) : null
+  const picture = (slot: string) => emailImageUrl(user._id, now, slot)
+  const slot = assetSlot(kind, context.editId)
+  const readyLook = (id: ObjectId | null) =>
+    id ? app.collections.looks.findOne({ _id: id, userId: user._id, status: 'ready' }, { projection: { iconId: 1 } }) : null
+
+  switch (kind) {
+    case 'xsell_style': {
+      const color = avatar?.colorAnalysis?.bestColors[0]
+      const look = color ? await readyLook(refId) : null
+      return look && color ? { ...none, heroUrl: picture(slot), giftLook: { id: look._id.toString(), color: color.name } } : none
+    }
+
+    case 'xsell_color':
+      // Their drape photo, best side blurred: made with their colors.
+      return env.XSELL_PERSONAL_IMAGES && avatar?.drapePreview?.status === 'ready' && avatar.drapePreview.lockedKey
+        ? { ...none, heroUrl: picture('drape') }
+        : none
+
+    case 'xsell_hair': {
+      const hairstyle = refId
+        ? await app.collections.hairstyles.findOne({ _id: refId, userId: user._id, status: 'ready' }, { projection: { name: 1 } })
+        : null
+      return hairstyle ? { ...none, heroUrl: picture(slot), cut: hairstyle.name } : none
+    }
+
+    case 'xsell_pro':
+    case 'xsell_edit': {
+      // The Edit their try-on came from (a newer one may have dropped since),
+      // else the one it was for.
+      const look = await readyLook(refId)
+      const edit = editOfIcon(look?.iconId) ?? EDITS.find((item) => item.id === context.editId) ?? null
+      return { ...none, heroUrl: look ? picture(slot) : null, edit: edit ? withLocale(user.locale ?? 'en', () => editText(edit)) : null }
+    }
+
+    case 'xsell_event': {
+      // Their latest look, nothing to make.
+      const look = env.XSELL_PERSONAL_IMAGES
+        ? await app.collections.looks.findOne(
+            { userId: user._id, status: 'ready', imageKey: { $ne: null } },
+            { sort: { readyAt: -1 }, projection: { _id: 1 } },
+          )
+        : null
+      return look ? { ...none, heroUrl: picture(`look-${look._id.toString()}`) } : none
+    }
+
+    case 'xsell_magazine':
+      return ready ? { ...none, heroUrl: picture(slot) } : none
+
+    default:
+      return none
+  }
+}
+
+// Sign-in links for one email's buttons (they share one nonce), tagged so
+// the clicks are counted (trackContent).
+async function signInLinks(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, nexts: string[]) {
+  const links = await createLinks(app, user, 'sign_in', nexts)
+
+  return links.map((link) => {
+    const url = new URL(link)
+    url.searchParams.set('utm_source', 'email')
+    url.searchParams.set('utm_medium', 'lifecycle')
+    url.searchParams.set('utm_campaign', kind)
+    return url.toString()
+  })
+}
+
+const studioPath = (path: string, params: Record<string, string>) => `${path}?${new URLSearchParams(params).toString()}`
+
+async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, context: CrossSellContext, now: Date) {
   const field = `lifecycleEmails.${kind}`
+  const personal = await crossSellPersonal(app, user, kind, context, now)
+  // The Edit it shows reaches them once (users.editEmails).
+  const edit = kind === 'xsell_pro' || kind === 'xsell_edit' ? (personal.edit?.id ?? null) : null
+  const recurring = kind === 'xsell_edit'
+
+  if (recurring && !edit) {
+    return false
+  }
+
   // Claimed only if no other email went out within the gap meanwhile (the
-  // other loops run at the same time).
+  // other loops run at the same time). Each goes out once; the new-Edit
+  // email, once per Edit.
   const claimed = await app.collections.users.updateOne(
     {
       _id: user._id,
-      [field]: { $exists: false },
+      ...(recurring ? { editEmails: { $ne: edit! } } : { [field]: { $exists: false } }),
       emailTipsOptOutAt: null,
       $or: [{ lifecycleEmailLastAt: null }, { lifecycleEmailLastAt: { $lt: new Date(now.getTime() - LIFECYCLE_RULES.gap) } }],
     },
-    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+    { $set: { [field]: now, lifecycleEmailLastAt: now }, ...(edit ? { $addToSet: { editEmails: edit } } : {}) },
   )
 
   if (claimed.modifiedCount === 0) {
@@ -1000,21 +1244,44 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
   const sendId = new ObjectId()
 
   try {
-    const offer = crossSellOffer(kind, user, now, side)
-    // Signed in from the email, straight to that checkout, in their own
-    // browser (where Apple Pay works). The book needs no account.
-    let url = crossSellPage(kind, offer.product, user.locale)
+    const offer = crossSellOffer(kind, user, now, context.side)
+    // Signed in from the email, in their own browser (where Apple Pay
+    // works): straight to that checkout, to the gift look, or to the Event
+    // Stylist with the event they picked. The book needs no account.
+    let url = crossSellPage(kind, offer.product, user.locale, edit)
+    let gift: CrossSellPersonal['gift'] = null
+    let occasionUrls: string[] = []
 
-    if (offer.product !== 'outfit_guide') {
-      const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=${offer.product}&from=email_${kind}` }))
-      signIn.searchParams.set('utm_source', 'email')
-      signIn.searchParams.set('utm_medium', 'lifecycle')
-      signIn.searchParams.set('utm_campaign', kind)
-      url = signIn.toString()
+    if (kind === 'xsell_event') {
+      occasionUrls = await signInLinks(
+        app,
+        user,
+        kind,
+        emailCopy(user.locale).crossSell.event.occasions.map((item) => studioPath('/studio/events', { occasion: item.occasion })),
+      )
+    } else if (offer.product !== 'outfit_guide') {
+      const target = crossSellTarget(kind, offer.product, edit)
+      const giftLook = personal.giftLook
+      const [checkout, look] = await signInLinks(app, user, kind, [
+        studioPath(target.path, target.params),
+        ...(giftLook ? [`/studio/looks/${giftLook.id}`] : []),
+      ])
+      url = checkout!
+      gift = giftLook && look ? { url: look, color: giftLook.color } : null
     }
 
-    const avatar = (await app.collections.avatars.findOne({ userId: user._id })) ?? undefined
-    const content = lifecycleContentFor(kind, user, avatar, { count: 0, lastAt: null }, sendId, undefined, undefined, undefined, { url, side }, now)
+    const content = lifecycleContentFor(
+      kind,
+      user,
+      context.avatar ?? undefined,
+      { count: 0, lastAt: null },
+      sendId,
+      undefined,
+      undefined,
+      undefined,
+      { url, side: context.side, heroUrl: personal.heroUrl, gift, cut: personal.cut, edit: personal.edit, occasionUrls },
+      now,
+    )
 
     await app.collections.emailSends.insertOne({
       _id: sendId,
@@ -1031,17 +1298,42 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
       to: { email: user.email, name: user.firstName },
       content: trackContent(content, sendId),
     })
-    app.log.info({ userId: user._id.toString(), kind, product: offer.product, delivered }, 'Cross-sell email')
+    app.log.info(
+      { userId: user._id.toString(), kind, product: offer.product, photo: Boolean(personal.heroUrl), edit, delivered },
+      'Cross-sell email',
+    )
     return delivered
   } catch (error) {
     app.log.error({ err: error, userId: user._id.toString(), kind }, 'Cross-sell email failed; will retry')
+    // Back as it was: the new-Edit email's previous date, and the Edit off
+    // the list unless it was already there.
+    const previous = recurring ? user.lifecycleEmails?.[kind] : undefined
+    const set: Record<string, Date> = {}
+    const unset: Record<string, ''> = {}
+
+    if (previous) {
+      set[field] = previous
+    } else {
+      unset[field] = ''
+    }
+
+    if (user.lifecycleEmailLastAt) {
+      set.lifecycleEmailLastAt = user.lifecycleEmailLastAt
+    } else {
+      unset.lifecycleEmailLastAt = ''
+    }
+
+    const pull = edit && !(user.editEmails ?? []).includes(edit) ? edit : null
+
     await Promise.all([
       app.collections.emailSends.deleteOne({ _id: sendId }),
       app.collections.users.updateOne(
         { _id: user._id },
-        user.lifecycleEmailLastAt
-          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
-          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+        {
+          ...(Object.keys(set).length > 0 ? { $set: set } : {}),
+          ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+          ...(pull ? { $pull: { editEmails: pull } } : {}),
+        },
       ),
     ])
     return false

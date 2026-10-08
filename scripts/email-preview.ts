@@ -11,6 +11,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { REGION_CURRENCY, regionalAmount, type PricingRegion } from '../src/modules/billing/pricing.js'
+import { editText } from '../src/modules/lifecycle/assets.js'
+import { EDITS } from '../src/modules/looks/edits.js'
 import {
   avatarNudgeEmail,
   crossSellEmail,
@@ -38,6 +40,7 @@ import {
   verificationEmail,
 } from '../src/utils/email.js'
 import type { Locale } from '../src/utils/locale.js'
+import { withLocale } from '../src/utils/request-locale.js'
 
 const OUT = path.join(process.cwd(), '.email-previews')
 const colors = [
@@ -93,7 +96,8 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
       heroUrl: process.env.PREVIEW_PHOTO_URL ?? null,
       url: `${link}&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop`,
     }),
-    // Buyers: the next product they don't have (lifecycle/cross-sell.ts).
+    // Buyers: the next product they don't have (lifecycle/cross-sell.ts),
+    // with their own picture (-photo) and with the stock one.
     ...crossSellPreviews(recipient, region),
     // Purchase deliveries.
     guide: outfitGuideEmail({ email: recipient.email, firstName: 'Nora', downloadUrl: 'https://api.avarobe.com/api/v1/guide/download/preview', locale }),
@@ -110,7 +114,21 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
   }
 }
 
-function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region: PricingRegion) {
+// Public pictures of Avarobe's fictional demo people stand in for a buyer's
+// own (lifecycle/assets.ts makes the real ones from their avatar).
+const SAMPLE = {
+  look: 'https://www.avarobe.com/demo/people/nora-look.webp',
+  drape: 'https://www.avarobe.com/demo/colors/lucia.webp',
+  cut: 'https://www.avarobe.com/demo/report/hair.webp',
+  edit: 'https://www.avarobe.com/icon-looks/wed-velvet-column.webp',
+  event: 'https://www.avarobe.com/demo/people/julie-look.webp',
+  cover: 'https://www.avarobe.com/demo/magazine/nora-cover.jpg',
+}
+
+function crossSellPreviews(
+  recipient: { firstName: string; email: string; unsubscribeUrl: string; locale: Locale; region: PricingRegion },
+  region: PricingRegion,
+) {
   const now = new Date()
   const until = new Date(now.getTime() + 9 * 24 * 60 * 60 * 1000)
   const url = 'https://www.avarobe.com/continue?token=preview'
@@ -125,9 +143,24 @@ function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region
     owns: { color: true, style: false },
     currency: REGION_CURRENCY[region],
   }
+  // The newest Edit, named in the reader's language.
+  const newest = [...EDITS].sort((a, b) => b.droppedAt.localeCompare(a.droppedAt))[0]!
+  const edit = withLocale(recipient.locale, () => editText(newest))
+  const gift = { url: `${url}&look=1`, color: colors[1]!.name }
+  const occasionUrls = [1, 2, 3].map((index) => `${url}&occasion=${index}`)
+  const pro = { ...owner, price: price('pro_monthly'), regular: null, until: null, edit }
 
   return {
     'xsell-style-pair-price': crossSellEmail({ ...owner, kind: 'xsell_style', price: price('style_addon'), regular: price('style_report'), until }),
+    'xsell-style-pair-price-photo': crossSellEmail({
+      ...owner,
+      kind: 'xsell_style',
+      price: price('style_addon'),
+      regular: price('style_report'),
+      until,
+      heroUrl: SAMPLE.look,
+      gift,
+    }),
     'xsell-style': crossSellEmail({ ...owner, kind: 'xsell_style', price: price('style_report'), regular: null, until: null }),
     'xsell-color': crossSellEmail({
       ...owner,
@@ -138,6 +171,16 @@ function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region
       colors: [],
       owns: { color: false, style: true },
     }),
+    'xsell-color-photo': crossSellEmail({
+      ...owner,
+      kind: 'xsell_color',
+      price: price('color_report'),
+      regular: null,
+      until: null,
+      colors: [],
+      owns: { color: false, style: true },
+      heroUrl: SAMPLE.drape,
+    }),
     'xsell-last-call': crossSellEmail({
       ...owner,
       kind: 'xsell_addon_last_call',
@@ -147,8 +190,36 @@ function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region
       side: 'style',
     }),
     'xsell-hair': crossSellEmail({ ...owner, kind: 'xsell_hair', price: price('hair_advisor'), regular: null, until: null }),
+    'xsell-hair-photo': crossSellEmail({
+      ...owner,
+      kind: 'xsell_hair',
+      price: price('hair_advisor'),
+      regular: null,
+      until: null,
+      heroUrl: SAMPLE.cut,
+      cut: 'Long layers with curtain bangs',
+    }),
+    'xsell-pro': crossSellEmail({ ...pro, kind: 'xsell_pro' }),
+    'xsell-pro-photo': crossSellEmail({ ...pro, kind: 'xsell_pro', heroUrl: SAMPLE.edit }),
+    'xsell-event': crossSellEmail({ ...owner, kind: 'xsell_event', price: price('event_pass'), regular: null, until: null, occasionUrls }),
+    'xsell-event-photo': crossSellEmail({
+      ...owner,
+      kind: 'xsell_event',
+      price: price('event_pass'),
+      regular: null,
+      until: null,
+      occasionUrls,
+      heroUrl: SAMPLE.event,
+    }),
     'xsell-magazine': crossSellEmail({ ...owner, kind: 'xsell_magazine', price: price('magazine'), regular: null, until: null }),
-    'xsell-event': crossSellEmail({ ...owner, kind: 'xsell_event', price: price('event_pass'), regular: null, until: null }),
+    'xsell-magazine-photo': crossSellEmail({
+      ...owner,
+      kind: 'xsell_magazine',
+      price: price('magazine'),
+      regular: null,
+      until: null,
+      heroUrl: SAMPLE.cover,
+    }),
     'xsell-guide': crossSellEmail({
       ...owner,
       kind: 'xsell_guide',
@@ -157,6 +228,19 @@ function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region
       until: null,
       url: 'https://www.avarobe.com/guide',
     }),
+    // Someone without the Color Advisor: no palette.
+    'xsell-guide-no-colors': crossSellEmail({
+      ...owner,
+      kind: 'xsell_guide',
+      price: price('outfit_guide'),
+      regular: null,
+      until: null,
+      url: 'https://www.avarobe.com/guide',
+      colors: [],
+      owns: { color: false, style: true },
+    }),
+    'xsell-edit': crossSellEmail({ ...pro, kind: 'xsell_edit' }),
+    'xsell-edit-photo': crossSellEmail({ ...pro, kind: 'xsell_edit', heroUrl: SAMPLE.edit }),
   }
 }
 

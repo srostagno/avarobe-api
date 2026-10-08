@@ -61,6 +61,12 @@ export type UserDocument = {
   // latest, so they stay spaced out.
   lifecycleEmails?: Partial<Record<LifecycleEmailKind, Date>>
   lifecycleEmailLastAt?: Date | null
+  // The Edits a cross-sell email showed her (xsell_pro, xsell_edit), by id,
+  // so each new Edit reaches her once.
+  editEmails?: string[]
+  // The picture made for each cross-sell email (lifecycle/assets.ts), by
+  // kind, or `edit:<editId>` for xsell_edit. Files under users/<uid>/.
+  xsellAssets?: Partial<Record<string, EmailAsset>>
   // Opted out of tips and reminders (unsubscribe link or account settings).
   // Account and security emails still go out.
   emailTipsOptOutAt?: Date | null
@@ -79,6 +85,18 @@ export type UserDocument = {
   // The language they use Avarobe in (utils/locale.ts): AI text, emails and
   // links are made in it. Missing means English (accounts from before).
   locale?: Locale
+}
+
+// A cross-sell email's own picture of her: a gift look, her ideal cut, an
+// Edit tried on her, a magazine cover. `ref` is what it shows (a look or
+// hairstyle id). One that failed, or is still processing after a while,
+// sends the email with its stock picture instead; it's never retried.
+export type EmailAsset = {
+  status: GenerationStatus
+  key: string | null
+  ref: string | null
+  startedAt: Date
+  readyAt?: Date
 }
 
 // 'edge': the web host's reading of the sign-up request (analytics/geo.ts).
@@ -159,6 +177,9 @@ export type LifecycleEmailKind =
   | 'xsell_magazine'
   | 'xsell_event'
   | 'xsell_guide'
+  // Pro: once; then each new Edit, tried on them, while they aren't on Pro.
+  | 'xsell_pro'
+  | 'xsell_edit'
   // Bought the Color Advisor and never opened the report: once, an hour on.
   | 'report_unopened'
 
@@ -493,6 +514,9 @@ export type HairstyleDocument = {
   // they asked for, with Pro) or their free hairstyle.
   creditSpent: boolean
   freeRun: boolean
+  // Rendered for a cross-sell email (lifecycle/assets.ts): it took no daily
+  // allowance, so a failure gives none back.
+  gift?: 'email'
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
@@ -743,6 +767,9 @@ export type LookDocument = {
   iconId?: string | null
   // One of the looks the Event Stylist made for an event (StyleEventDocument).
   eventId?: ObjectId | null
+  // Made for them for a cross-sell email (lifecycle/assets.ts), free: no
+  // credit and no daily allowance taken.
+  gift?: 'email'
   // 'locked': a look the stylist designed past the person's last credit,
   // shown with its pieces but not drawn until they unlock it.
   status: GenerationStatus | 'locked'

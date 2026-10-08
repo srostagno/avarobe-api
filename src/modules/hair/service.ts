@@ -286,7 +286,10 @@ export async function markHairstyleFailed(app: FastifyInstance, hairstyleId: Obj
     return
   }
 
-  await releaseGenerations(app, hairstyle.userId, 'hair', 1)
+  // A cross-sell email's gift cut took none of today's allowance.
+  if (!hairstyle.gift) {
+    await releaseGenerations(app, hairstyle.userId, 'hair', 1)
+  }
 
   if (hairstyle.creditSpent) {
     const claimed = await app.collections.hairstyles.updateOne({ _id: hairstyleId, creditSpent: true }, { $set: { creditSpent: false } })
