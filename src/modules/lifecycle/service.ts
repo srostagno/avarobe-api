@@ -797,7 +797,7 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
 
   const buyers = await app.collections.purchases
     .aggregate<{ _id: ObjectId; lastAt: Date }>([
-      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.horizon) } } },
+      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.horizon) }, refundedAt: null } },
       { $group: { _id: '$userId', lastAt: { $max: '$createdAt' } } },
     ])
     .toArray()

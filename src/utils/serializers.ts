@@ -22,7 +22,9 @@ export function focusOf(user: Pick<UserDocument, 'acquisition'>): 'colors' | nul
 export function serializeUser(user: UserDocument) {
   return {
     id: user._id.toString(),
-    email: user.email,
+    // A guest (trying before an account) has no email of its own yet.
+    email: user.guest ? '' : user.email,
+    guest: Boolean(user.guest),
     firstName: user.firstName,
     focus: focusOf(user),
     hasPassword: Boolean(user.passwordHash),

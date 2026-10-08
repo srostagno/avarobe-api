@@ -426,6 +426,17 @@ export async function retrieveSession(sessionId: string) {
   return stripe().checkout.sessions.retrieve(sessionId)
 }
 
+// Gives a payment back in full (the 7-day guarantee). The idempotency key
+// makes a retried request refund it once.
+export async function refundPayment(paymentIntentId: string, metadata: Record<string, string>) {
+  const refund = await stripe().refunds.create(
+    { payment_intent: paymentIntentId, reason: 'requested_by_customer', metadata: { ...metadata, app: APP } },
+    { idempotencyKey: `avarobe_refund_${paymentIntentId}` },
+  )
+
+  return refund.id
+}
+
 export function verifyWebhook(payload: string, signature: string) {
   if (!env.STRIPE_WEBHOOK_SECRET) {
     throw new BillingNotConfiguredError('The Stripe webhook secret is not set.')

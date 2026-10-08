@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify'
 
 import { env } from '../config/env.js'
+import { isGuestEmail } from './guests.js'
 
 const MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 
@@ -14,6 +15,10 @@ function isConfigured() {
 // EMAIL_DEV_ALLOWLIST, so tests with made-up addresses don't bounce and hurt
 // the sending domain; everyone else gets the link back in the response.
 function shouldDeliver(email: string) {
+  if (isGuestEmail(email)) {
+    return false
+  }
+
   if (env.NODE_ENV === 'production') {
     return true
   }
@@ -158,6 +163,33 @@ export function verificationEmail(input: { firstName: string; url: string; forPa
         ],
     cta: { label: 'Confirm my email', url: input.url },
     footer: "Didn't sign up for Avarobe? You can ignore this email.",
+  })
+}
+
+// Right after someone who tried Avarobe first saves it with their email (no
+// password): the link confirms the email and signs them back in.
+export function savedEmail(input: { firstName: string; url: string }) {
+  return layout({
+    subject: 'Your Avarobe colors are saved',
+    firstName: input.firstName,
+    paragraphs: [
+      'Your colors and everything you make in Avarobe are saved to this email. Confirm it with the button below.',
+      'There is no password to remember: whenever you want to come back, ask for a sign-in link on the Avarobe sign-in page and we email you one. The link below works once and expires in 24 hours.',
+    ],
+    cta: { label: 'Confirm my email', url: input.url },
+    footer: "Didn't use Avarobe? You can ignore this email.",
+  })
+}
+
+// Signing in without a password: a one-time link, asked for on the sign-in
+// page.
+export function signInLinkEmail(input: { firstName: string; url: string }) {
+  return layout({
+    subject: 'Your Avarobe sign-in link',
+    firstName: input.firstName,
+    paragraphs: ['Here is your link to sign in to Avarobe.', 'The link works once and expires in 3 days.'],
+    cta: { label: 'Sign in to Avarobe', url: input.url },
+    footer: "Didn't ask for this? You can ignore this email; nobody can sign in without the link.",
   })
 }
 

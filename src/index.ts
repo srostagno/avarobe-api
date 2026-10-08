@@ -1,5 +1,6 @@
 import { buildApp } from './app.js'
 import { env } from './config/env.js'
+import { startGuestCleanup } from './modules/auth/guests.js'
 import { startCreditRefills } from './modules/billing/stripe.js'
 import { startLifecycleEmails } from './modules/lifecycle/service.js'
 import { resumeTasteLearning } from './modules/taste/service.js'
@@ -16,6 +17,7 @@ async function main() {
     app.log.info(`avarobe-api listening on http://${env.HOST}:${env.PORT}`)
     startLifecycleEmails(app)
     startCreditRefills(app)
+    startGuestCleanup(app)
   } catch (error) {
     if (app) {
       app.log.error(error, 'Failed to start avarobe-api')

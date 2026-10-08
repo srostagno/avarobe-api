@@ -137,6 +137,10 @@ const envSchema = z.object({
   // FREE_CREDITS is what accounts from before that have without a stored
   // number. Plus avatar renders (create + one redo).
   SIGNUP_CREDITS: z.coerce.number().int().min(0).default(1),
+  // Trying before an account (guests): how long an unsaved guest is kept,
+  // and how many can start in a day (each selfie costs an AI read).
+  GUEST_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(14),
+  GUEST_DAILY_LIMIT: z.coerce.number().int().min(0).default(2000),
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),
   // Hairstyles rendered free: the ideal cut from the hair read. The rest of

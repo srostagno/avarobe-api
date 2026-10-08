@@ -138,8 +138,9 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const now = new Date()
+    // A guest has no email to send tips to until they save with one.
     const user = await app.collections.users.findOneAndUpdate(
-      { _id: requireUserId(request) },
+      { _id: requireUserId(request), guest: { $ne: true } },
       { $set: { emailTipsOptOutAt: parsed.data.tips ? null : now, updatedAt: now } },
       { returnDocument: 'after' },
     )

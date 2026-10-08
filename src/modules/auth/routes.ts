@@ -17,7 +17,9 @@ import {
   deliverLinkEmail,
   passwordChangedEmail,
   passwordResetEmail,
+  savedEmail,
   sendNotice,
+  signInLinkEmail,
   verificationEmail,
 } from '../../utils/email.js'
 import { parseBody } from '../../utils/http.js'
@@ -32,9 +34,10 @@ import {
 import { serializeUser } from '../../utils/serializers.js'
 import { hashToken } from '../../utils/tokens.js'
 import { signupLocation } from '../analytics/geo.js'
-import { acquisitionSchema, toAcquisition, trackServerEvent } from '../analytics/service.js'
+import { acquisitionSchema, optionalUserId, toAcquisition, trackServerEvent } from '../analytics/service.js'
 import { attributionMetadata, reportRegistration } from '../billing/conversions.js'
 import { recordRegisteredClick } from '../events/service.js'
+import { GuestLimitError, claimGuest, createGuest } from './guests.js'
 
 const emailField = z.string().trim().toLowerCase().email().max(254)
 const passwordField = z.string().min(1).max(MAX_PASSWORD_LENGTH)
@@ -83,6 +86,13 @@ const changePasswordSchema = z.object({
 })
 
 const forgotSchema = z.object({ email: emailField })
+// Trying first (guests): only where they came from; then their email to save.
+const guestSchema = z.object({ acquisition: signupTracking.acquisition })
+const claimSchema = z.object({
+  email: emailField,
+  firstName: firstNameField,
+  ...signupTracking,
+})
 const tokenSchema = z.object({ token: tokenField })
 const resetSchema = z.object({ token: tokenField, newPassword: passwordField })
 // Another browser, signed in: where to land, and this browser's ad ids.
@@ -91,9 +101,15 @@ const handoffSchema = z.object({
   attribution: signupTracking.attribution,
 })
 
+const BOT_AGENT = /bot\b|crawl|spider|slurp|facebookexternalhit|headless/i
+
 const MAX_FAILED_LOGINS = 10
 const LOCKOUT_MS = 15 * 60 * 1000
 const ACCOUNT_EXISTS = { message: 'An account with this email already exists. Sign in instead.' }
+const EMAIL_TAKEN = {
+  code: 'email_taken',
+  message: 'You already have an Avarobe account with this email. Sign in to continue there.',
+}
 const EMAIL_FAILED = { message: 'We could not send the email. Please try again in a moment.' }
 const WAIT_FOR_EMAIL = { message: 'We just sent you an email. Wait a minute before asking for another.' }
 
@@ -107,7 +123,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   function reportSignup(
     request: FastifyRequest,
     data: { attribution?: { fbp?: string; fbc?: string; gaClientId?: string }; eventId?: string },
-    method: 'password' | 'passkey',
+    method: 'password' | 'passkey' | 'guest',
     userId: ObjectId,
   ) {
     const metadata = attributionMetadata(data.attribution, request)
@@ -145,6 +161,150 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     })
   }
 
+  // Who this browser is signed in as, even with an expired access token (the
+  // refresh cookie still says): signing up while trying as a guest saves the
+  // guest instead of starting an empty account.
+  async function sessionUserId(request: FastifyRequest) {
+    const fromAccess = await optionalUserId(request)
+
+    if (fromAccess) {
+      return fromAccess
+    }
+
+    const refreshToken = request.cookies[REFRESH_TOKEN_COOKIE]
+    const stored = refreshToken ? await app.collections.refreshTokens.findOne({ tokenHash: hashToken(refreshToken) }) : null
+
+    return stored && !stored.revokedAt && stored.expiresAt.getTime() > Date.now() ? stored.userId : null
+  }
+
+  async function signedInGuest(request: FastifyRequest) {
+    const userId = await sessionUserId(request)
+    const user = userId ? await app.collections.users.findOne({ _id: userId }, { projection: { guest: 1 } }) : null
+
+    return user?.guest ? user._id : null
+  }
+
+  // The link that confirms a saved guest's email and signs them back in.
+  async function sendSaved(log: FastifyBaseLogger, user: UserDocument) {
+    const url = await createLink(app, user, 'verify_email')
+
+    return deliverLinkEmail({ log, to: recipient(user), link: url, content: savedEmail({ firstName: user.firstName, url }) })
+  }
+
+  // Try first: a guest session, so the selfie and colors come before any
+  // form. Someone already signed in keeps their account.
+  app.post(
+    '/guest',
+    { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } },
+    async (request, reply) => {
+      const current = await sessionUserId(request)
+      const existing = current ? await app.collections.users.findOne({ _id: current }) : null
+
+      if (existing) {
+        return reply.send({ user: serializeUser(existing) })
+      }
+
+      // Crawlers that run scripts (and follow links, like Googlebot) would
+      // each start a guest account.
+      if (BOT_AGENT.test(request.headers['user-agent'] ?? '')) {
+        return reply.code(403).send({ message: 'Create a free account to continue.' })
+      }
+
+      const parsed = parseBody(guestSchema, request.body ?? {})
+      let user: UserDocument
+
+      try {
+        user = await createGuest(app, request, parsed.ok ? parsed.data.acquisition : undefined)
+      } catch (error) {
+        if (error instanceof GuestLimitError) {
+          return reply.code(429).send({ code: 'guest_limit', message: 'Create a free account to continue.' })
+        }
+
+        throw error
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+
+      return reply.code(201).send({ user: serializeUser(user) })
+    },
+  )
+
+  // A guest saves with their email (to buy, or to keep their colors): the
+  // same account, now theirs, with no password. The email confirms it and
+  // is how they sign back in. It counts as the sign-up (Meta, analytics).
+  app.post(
+    '/claim',
+    { preHandler: authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(claimSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a valid email address.' })
+      }
+
+      const result = await claimGuest(app, requireUserId(request), {
+        email: parsed.data.email,
+        firstName: parsed.data.firstName ?? '',
+        acquisition: toAcquisition(parsed.data.acquisition),
+      })
+
+      if (!result.ok) {
+        return result.reason === 'email_taken'
+          ? reply.code(409).send(EMAIL_TAKEN)
+          : reply.code(409).send({ code: 'not_guest', message: 'Your account is already saved.' })
+      }
+
+      const { user } = result
+
+      try {
+        await sendSaved(request.log, user)
+      } catch (error) {
+        request.log.error({ err: error, email: user.email }, 'Failed to send the saved email')
+      }
+
+      await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+      reportSignup(request, parsed.data, 'guest', user._id)
+
+      return reply.send({ user: serializeUser(user) })
+    },
+  )
+
+  // Signing in without a password (saved guests have none): a one-time link
+  // by email. Always answers the same way, so it can't be used to find
+  // accounts.
+  app.post(
+    '/link/email',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = parseBody(forgotSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: 'Enter a valid email address.' })
+      }
+
+      const user = await app.collections.users.findOne({ email: parsed.data.email })
+
+      if (!user || user.guest || linkSentRecently(user, 'sign_in')) {
+        return { ok: true }
+      }
+
+      try {
+        const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio' })
+        const result = await deliverLinkEmail({
+          log: request.log,
+          to: recipient(user),
+          link: url,
+          content: signInLinkEmail({ firstName: user.firstName, url }),
+        })
+
+        return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }
+      } catch (error) {
+        request.log.error({ err: error, email: user.email }, 'Failed to send the sign-in link')
+        return { ok: true }
+      }
+    },
+  )
+
   // Email + password. The account works right away and a verification email
   // goes out (passkeys need a verified email); if sending fails the person
   // can resend from the app. A stub left by an unfinished passkey sign-up can
@@ -169,6 +329,32 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const firstName = parsed.data.firstName ?? ''
       const passwordHash = await hashPassword(password)
       const now = new Date()
+      const guestId = await signedInGuest(request)
+
+      // Trying as a guest, then signing up: their colors come along.
+      if (guestId) {
+        const claimed = await claimGuest(app, guestId, {
+          email,
+          firstName,
+          passwordHash,
+          acquisition: toAcquisition(parsed.data.acquisition),
+        })
+
+        if (!claimed.ok) {
+          return reply.code(409).send(ACCOUNT_EXISTS)
+        }
+
+        const verification = await sendVerification(request.log, claimed.user, false).catch((error: unknown) => {
+          request.log.error({ err: error, email }, 'Failed to send verification email')
+          return { sent: false }
+        })
+
+        await issueAuthSession(app, reply, request, { id: claimed.user._id.toString(), email: claimed.user.email })
+        reportSignup(request, parsed.data, 'password', claimed.user._id)
+
+        return reply.code(201).send({ user: serializeUser(claimed.user), verification })
+      }
+
       const existing = await app.collections.users.findOne({ email })
       let userId: ObjectId
 

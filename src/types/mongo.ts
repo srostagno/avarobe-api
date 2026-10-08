@@ -67,6 +67,13 @@ export type UserDocument = {
   acquisition?: Acquisition | null
   // Where they signed up from: country and state, never the IP.
   location?: UserLocation | null
+  // Trying Avarobe before making an account (Oct 2026): a session with no
+  // email yet, so the selfie and colors come first. `email` holds a
+  // placeholder (utils/guests.ts) until they save with their own email,
+  // when `guest` goes and `claimedAt` is set. Guests get no tips emails and
+  // are deleted after GUEST_TTL_DAYS if they never save.
+  guest?: boolean
+  claimedAt?: Date | null
 }
 
 // 'edge': the web host's reading of the sign-up request (analytics/geo.ts).
@@ -202,6 +209,21 @@ export type PurchaseDocument = {
   currency: string
   credits: number
   createdAt: Date
+  // Money back: the 7-day guarantee asked for in the app, or a refund made in
+  // Stripe's dashboard. What the purchase unlocked is taken away.
+  refundedAt?: Date | null
+  refund?: PurchaseRefund | null
+}
+
+export type RefundReason = 'not_accurate' | 'not_expected' | 'technical' | 'mistake' | 'other'
+
+export type PurchaseRefund = {
+  source: 'app' | 'stripe'
+  // Asked in the app; refunds made in Stripe have none.
+  reason: RefundReason | null
+  note: string | null
+  amount: number
+  stripeRefundId: string | null
 }
 
 // A visit from a Meta ad, counted by us to see where clicks get lost:

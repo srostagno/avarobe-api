@@ -22,7 +22,7 @@ export async function whyReport(app: FastifyInstance, days: number) {
       .sort({ createdAt: -1 })
       .limit(5000)
       .toArray(),
-    app.collections.users.countDocuments({ createdAt: { $gte: since }, _id: { $nin: admins } }),
+    app.collections.users.countDocuments({ createdAt: { $gte: since }, _id: { $nin: admins }, guest: { $ne: true } }),
   ])
 
   const questions = (Object.keys(SURVEY_QUESTIONS) as SurveyQuestion[]).map((question) => {

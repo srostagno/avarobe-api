@@ -1,17 +1,18 @@
 import type { FastifyPluginAsync } from 'fastify'
-import type { ObjectId } from 'mongodb'
+import { ObjectId } from 'mongodb'
 import type Stripe from 'stripe'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
-import type { PurchaseProduct } from '../../types/mongo.js'
+import type { PurchaseProduct, RefundReason } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
+import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
@@ -71,6 +72,12 @@ const checkoutSchema = z.object({
 })
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
+
+const refundSchema = z.object({
+  purchaseId: z.string().regex(/^[a-f0-9]{24}$/),
+  reason: z.enum(REFUND_REASONS as [RefundReason, ...RefundReason[]]),
+  note: z.string().trim().max(500).optional(),
+})
 
 // Plan stages an admin can jump to, to see each offer without buying.
 const SIMULATED_STAGES = [
@@ -278,6 +285,12 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ message: 'Sign in again to continue.' })
       }
 
+      // A guest saves with their email first (the web asks before checkout),
+      // so the receipt, the purchase and their way back in all have one.
+      if (user.guest) {
+        return reply.code(409).send({ code: 'email_required', message: 'Add your email to continue.' })
+      }
+
       const state = billingState(user)
       const reason = ineligibility(parsed.data.product, state)
 
@@ -370,6 +383,45 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
+  // Their purchases, for the account page, with the 7-day refund where it
+  // still applies.
+  app.get('/purchases', { preHandler: authenticate }, async (request) => {
+    const userId = requireUserId(request)
+    return { purchases: await purchasesFor(app, userId) }
+  })
+
+  app.post(
+    '/refund',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const parsed = parseBody(refundSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      try {
+        await requestRefund(app, {
+          userId,
+          purchaseId: new ObjectId(parsed.data.purchaseId),
+          reason: parsed.data.reason,
+          note: parsed.data.note || null,
+        })
+      } catch (error) {
+        if (error instanceof RefundError) {
+          return reply.code(409).send({ message: error.message })
+        }
+
+        request.log.error({ err: errorMessage(error) }, 'Refund failed')
+        return reply.code(502).send({ message: 'The refund didn’t go through. Try again in a moment, or write to hello@avarobe.com.' })
+      }
+
+      const user = await app.collections.users.findOne({ _id: userId })
+      return { user: user ? serializeUser(user) : null, purchases: await purchasesFor(app, userId) }
+    },
+  )
+
   // Admins only: see the app as a customer (free Kit off), and wipe their own
   // test purchases to walk through the free flow again.
   app.post('/admin/preview', { preHandler: authenticate }, async (request, reply) => {
@@ -422,20 +474,21 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         'pro.periodEnd': { $gt: new Date() },
         'pro.subscriptionId': { $ne: SIMULATED_SUBSCRIPTION },
       })
-    const cohort = (
-      await app.collections.users
-        .find({ createdAt: { $gte: since }, _id: { $nin: adminIds } }, { projection: { _id: 1 } })
-        .toArray()
-    ).map((user) => user._id)
+    // Everyone who started in the period, guests (trying before an account)
+    // included; sign-ups are the ones with an account.
+    const started = await app.collections.users
+      .find({ createdAt: { $gte: since }, _id: { $nin: adminIds } }, { projection: { _id: 1, guest: 1 } })
+      .toArray()
+    const cohort = started.map((user) => user._id)
     const inCohort = { userId: { $in: cohort } }
     const [avatarReady, styled, triedOn, purchased, purchases, proMonthly, proAnnual, proTrials, arrivals] = await Promise.all([
       app.collections.avatars.countDocuments({ ...inCohort, readyAt: { $ne: null } }),
       app.collections.looks.distinct('userId', inCohort),
       app.collections.looks.distinct('userId', { ...inCohort, source: 'tryon' }),
-      app.collections.purchases.distinct('userId', inCohort),
+      app.collections.purchases.distinct('userId', { ...inCohort, refundedAt: null }),
       app.collections.purchases
         .aggregate<{ _id: string; count: number; revenue: number; buyers: unknown[] }>([
-          { $match: { createdAt: { $gte: since }, userId: { $nin: adminIds } } },
+          { $match: { createdAt: { $gte: since }, userId: { $nin: adminIds }, refundedAt: null } },
           { $group: { _id: '$product', count: { $sum: 1 }, revenue: { $sum: '$amountTotal' }, buyers: { $addToSet: '$userId' } } },
         ])
         .toArray(),
@@ -454,7 +507,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     return {
       days: parsed.data.days,
       cohort: {
-        signups: cohort.length,
+        started: cohort.length,
+        signups: started.filter((user) => !user.guest).length,
         avatarReady,
         styledLook: styled.length,
         triedOn: triedOn.length,
@@ -757,6 +811,9 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
         case 'customer.subscription.updated':
         case 'customer.subscription.deleted':
           await handleSubscriptionChange(app, event.data.object)
+          break
+        case 'charge.refunded':
+          await handleChargeRefunded(app, event.data.object)
           break
         default:
           break

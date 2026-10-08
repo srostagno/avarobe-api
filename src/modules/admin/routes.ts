@@ -11,6 +11,7 @@ import { CHANNELS } from '../analytics/service.js'
 import { analyticsReport } from '../analytics/report.js'
 import { adminUserIds, isAdmin } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
+import { refundsReport } from '../billing/refunds.js'
 import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
 import { addDays, emailActivity, pacificDay, pacificStart } from './email-activity.js'
@@ -30,7 +31,7 @@ const avatarsSchema = z.object({
 async function purchasesByUser(app: FastifyInstance, userIds: ObjectId[]) {
   const [purchases, guides] = await Promise.all([
     app.collections.purchases
-      .find({ userId: { $in: userIds }, amountTotal: { $gt: 0 } }, { projection: { userId: 1, product: 1, amountTotal: 1, createdAt: 1 } })
+      .find({ userId: { $in: userIds }, amountTotal: { $gt: 0 }, refundedAt: null }, { projection: { userId: 1, product: 1, amountTotal: 1, createdAt: 1 } })
       .toArray(),
     app.collections.guideOrders
       .find({ userId: { $in: userIds }, amount: { $gt: 0 } }, { projection: { userId: 1, amount: 1, createdAt: 1 } })
@@ -58,7 +59,7 @@ async function purchasesByUser(app: FastifyInstance, userIds: ObjectId[]) {
 // Everyone who ever paid for something (for the "buyers only" filter).
 async function buyerIds(app: FastifyInstance) {
   const [fromPurchases, fromGuides] = await Promise.all([
-    app.collections.purchases.distinct('userId', { amountTotal: { $gt: 0 } }),
+    app.collections.purchases.distinct('userId', { amountTotal: { $gt: 0 }, refundedAt: null }),
     app.collections.guideOrders.distinct('userId', { amount: { $gt: 0 }, userId: { $ne: null } }),
   ])
 
@@ -447,6 +448,21 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return hairReport(app, parsed.data.days)
+  })
+
+  // The 7-day guarantee: who asked for their money back, for what and why.
+  app.get('/refunds', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(whySchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return refundsReport(app, parsed.data.days)
   })
 
   // Checkouts as Stripe has them: opened, paid, abandoned (expired) or open.

@@ -15,8 +15,9 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export const FUNNEL = [
   { id: 'visited', label: 'Visited', names: ['page_view'] },
-  { id: 'signup_viewed', label: 'Opened sign-up', names: ['signup_viewed'] },
-  { id: 'signed_up', label: 'Signed up', names: ['signup_completed'] },
+  // Since Oct 2026 most start as guests (no form); the sign-up form still
+  // counts for those who use it.
+  { id: 'signup_viewed', label: 'Started (guest or sign-up)', names: ['guest_started', 'signup_viewed'] },
   // Colors first sends the selfie before the avatar: either counts.
   { id: 'avatar_started', label: 'Sent a selfie', names: ['avatar_started', 'colors_started'] },
   { id: 'colors_ready', label: 'Saw their colors', names: ['colors_ready', 'avatar_ready'] },
@@ -24,6 +25,8 @@ export const FUNNEL = [
   { id: 'look_requested', label: 'Asked for looks', names: ['look_requested'] },
   { id: 'looks_styled', label: 'Got looks', names: ['looks_styled'] },
   { id: 'offer_seen', label: 'Saw an offer', names: ['paywall_viewed', 'paywall_blocked'] },
+  // A guest gives their email when buying or saving; a sign-up at the start.
+  { id: 'signed_up', label: 'Gave their email', names: ['signup_completed'] },
   { id: 'checkout', label: 'Opened checkout', names: ['checkout_started', 'checkout_created'] },
   { id: 'paid', label: 'Paid', names: ['purchase_completed'] },
 ] as const
