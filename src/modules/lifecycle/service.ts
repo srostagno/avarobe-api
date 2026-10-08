@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, UserDocument } from '../../types/mongo.js'
+import type { AvatarDocument, ColorSwatch, LifecycleEmailKind, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
+import { appUrl, type Locale } from '../../utils/locale.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
-import { billingState, colorAddonCents, isAdmin, styleAddonCents } from '../billing/entitlements.js'
+import { billingState, isAdmin } from '../billing/entitlements.js'
+import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
 import { CROSS_SELL_RULES, addonEnding, pickCrossSell, type CrossSellKind, type CrossSellState } from './cross-sell.js'
 import { LIFECYCLE_RULES, lastLifecycleEmailAt, pickLifecycleEmail, tooSoonAfter, type LifecycleState } from './schedule.js'
 import {
@@ -75,9 +77,10 @@ export function userIdFromUnsubscribeToken(token: string) {
   return new ObjectId(id)
 }
 
-// `sendId` credits the unsubscribe to the email it came from.
-export function unsubscribeUrl(userId: ObjectId, sendId?: ObjectId) {
-  const url = new URL('/email/unsubscribe', `${env.APP_URL}/`)
+// `sendId` credits the unsubscribe to the email it came from; the page
+// opens in their language.
+export function unsubscribeUrl(userId: ObjectId, sendId?: ObjectId, locale?: Locale) {
+  const url = new URL(appUrl(locale, '/email/unsubscribe'))
   url.searchParams.set('t', unsubscribeToken(userId))
 
   if (sendId) {
@@ -213,7 +216,15 @@ export function lifecycleContentFor(
   crossSell?: { url: string; side: 'style' | 'color' | null },
   now = new Date(),
 ): EmailContent {
-  const recipient = { firstName: user.firstName, email: user.email, unsubscribeUrl: unsubscribeUrl(user._id, sendId) }
+  // In their language, with the prices where they pay (billing/pricing.ts).
+  const locale = user.locale ?? 'en'
+  const recipient = {
+    firstName: user.firstName,
+    email: user.email,
+    unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+    locale,
+    region: regionForCountry(user.location?.country),
+  }
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
   // Like the app, the emails show no best colors before they pay: the
   // season only (the palette card has no swatches then).
@@ -246,14 +257,14 @@ export function lifecycleContentFor(
     case 'trial_ending':
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
-      return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? `${env.APP_URL}/studio` })
+      return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? appUrl(locale, '/studio') })
     case 'price_drop':
       return priceDropEmail({
         ...recipient,
         season: analysis?.season ?? null,
         colors: freeColors,
         heroUrl: priceDrop?.heroUrl ?? null,
-        url: priceDrop?.url ?? appLink('/studio', 'price_drop', { upgrade: 'palette' }),
+        url: priceDrop?.url ?? appLink('/studio', 'price_drop', { upgrade: 'palette' }, locale),
       })
     case 'xsell_style':
     case 'xsell_color':
@@ -268,22 +279,40 @@ export function lifecycleContentFor(
 
 // ---------------------------------------------------------------- cross-sell
 
-type Offer = { product: string; price: number; regular: number | null; until: Date | null; side: 'style' | 'color' | null }
+type Offer = {
+  product: PurchaseProduct
+  price: number
+  regular: number | null
+  currency: string
+  until: Date | null
+  side: 'style' | 'color' | null
+}
 
 // What a cross-sell sells and for how much: the other report at the pair
-// price while it lasts (the same check checkout makes), the rest at theirs.
+// price while it lasts (the same check checkout makes), the rest at theirs,
+// in the prices and currency of where they pay (billing/pricing.ts, as
+// checkout prices it).
 export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Date, side: 'style' | 'color' | null = null): Offer {
   const billing = billingState(user, now.getTime())
+  const region = regionForCountry(user.location?.country)
+  const currency = REGION_CURRENCY[region]
   const live = (until: Date | null) => (until && until.getTime() > now.getTime() ? until : null)
   const report = (which: 'style' | 'color'): Omit<Offer, 'side'> => {
     const until = live(which === 'style' ? billing.styleAddonUntil : billing.colorAddonUntil)
-    const regular = which === 'style' ? env.PRICE_STYLE_REPORT_CENTS : env.PRICE_COLOR_REPORT_CENTS
+    const regular = regionalAmount(`${which}_report`, region)
 
     return until
-      ? { product: `${which}_addon`, price: which === 'style' ? styleAddonCents() : colorAddonCents(), regular, until }
-      : { product: `${which}_report`, price: regular, regular: null, until: null }
+      ? { product: `${which}_addon`, price: regionalAmount(`${which}_addon`, region), regular, currency, until }
+      : { product: `${which}_report`, price: regular, regular: null, currency, until: null }
   }
-  const once = (product: string, price: number): Offer => ({ product, price, regular: null, until: null, side: null })
+  const once = (product: PurchaseProduct): Offer => ({
+    product,
+    price: regionalAmount(product, region),
+    regular: null,
+    currency,
+    until: null,
+    side: null,
+  })
 
   switch (kind) {
     case 'xsell_style':
@@ -295,20 +324,22 @@ export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Dat
       return { ...report(which), side: which }
     }
     case 'xsell_hair':
-      return once('hair_advisor', env.PRICE_HAIR_ADVISOR_CENTS)
+      return once('hair_advisor')
     case 'xsell_magazine':
-      return once('magazine', env.PRICE_MAGAZINE_CENTS)
+      return once('magazine')
     case 'xsell_event':
-      return once('event_pass', env.PRICE_EVENT_CENTS)
+      return once('event_pass')
     case 'xsell_guide':
-      return once('outfit_guide', env.PRICE_OUTFIT_GUIDE_CENTS)
+      return once('outfit_guide')
   }
 }
 
 // The book sells on its own page; the rest open their checkout in the
 // studio (?buy=), signed in when the email carries a sign-in link.
-function crossSellPage(kind: CrossSellKind, product: string) {
-  return product === 'outfit_guide' ? appLink('/guide', kind) : appLink('/studio', kind, { buy: product, from: `email_${kind}` })
+function crossSellPage(kind: CrossSellKind, product: string, locale?: Locale) {
+  return product === 'outfit_guide'
+    ? appLink('/guide', kind, {}, locale)
+    : appLink('/studio', kind, { buy: product, from: `email_${kind}` }, locale)
 }
 
 export function crossSellContentFor(
@@ -326,10 +357,11 @@ export function crossSellContentFor(
     kind,
     price: offer.price,
     regular: offer.regular,
+    currency: offer.currency,
     until: offer.until,
     side: offer.side,
     owns: { color: billing.colorReport, style: billing.styleReport },
-    url: link?.url ?? crossSellPage(kind, offer.product),
+    url: link?.url ?? crossSellPage(kind, offer.product, user.locale),
     season: analysis?.season ?? null,
     // They paid for their colors, so the email can show them.
     colors: billing.colorReport ? (analysis?.bestColors ?? []).slice(0, 4) : [],
@@ -865,7 +897,7 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
     const offer = crossSellOffer(kind, user, now, side)
     // Signed in from the email, straight to that checkout, in their own
     // browser (where Apple Pay works). The book needs no account.
-    let url = crossSellPage(kind, offer.product)
+    let url = crossSellPage(kind, offer.product, user.locale)
 
     if (offer.product !== 'outfit_guide') {
       const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=${offer.product}&from=email_${kind}` }))

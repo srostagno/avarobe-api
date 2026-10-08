@@ -3,9 +3,14 @@ import { readFile } from 'node:fs/promises'
 import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
 
+import type { CatalogTable } from '../../i18n/catalog-types.js'
+import { esCatalog } from '../../i18n/catalog.es.js'
+import { ptBrCatalog } from '../../i18n/catalog.pt-BR.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { Presentation } from '../../types/mongo.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
+import type { Locale } from '../../utils/locale.js'
+import { currentLocale } from '../../utils/request-locale.js'
 import { EDITS } from './edits.js'
 import { ICON_LOOKS, type IconLook } from './icons.js'
 import { startTryOn } from './try-on.js'
@@ -46,11 +51,44 @@ export function looksFor<T extends Pick<IconLook, 'presentation'>>(looks: T[], p
     .filter((look): look is T => Boolean(look))
 }
 
+const CATALOG_TABLES: Record<Exclude<Locale, 'en'>, CatalogTable> = { 'pt-BR': ptBrCatalog, es: esCatalog }
+
+// The catalog's words in the request's language (i18n/catalog.*.ts); null in
+// English and outside a request.
+export function catalogTable(): CatalogTable | null {
+  const locale = currentLocale()
+  return locale && locale !== 'en' ? CATALOG_TABLES[locale] : null
+}
+
 // The web serves the display image from its public folder. Generator-only
-// fields (an Edit look's scene and source) stay here.
+// fields (an Edit look's scene and source) stay here. What people read comes
+// in their language; ids, slots, hex codes and the image stay as they are.
 export function serializeIconLook(look: IconLook) {
-  const { id, presentation, name, era, mood, description, person, items } = look
-  return { id, presentation, name, era, mood, description, person, items, image: `/icon-looks/${id}.webp` }
+  const { id, presentation, person } = look
+  const table = catalogTable()
+  const text = table?.looks[id]
+  const piece = (english: string) => table?.pieces[english] ?? english
+  const items = table
+    ? look.items.map((item) => ({
+        ...item,
+        name: piece(item.name),
+        color: piece(item.color),
+        material: piece(item.material),
+        fit: piece(item.fit),
+      }))
+    : look.items
+
+  return {
+    id,
+    presentation,
+    name: text?.name ?? look.name,
+    era: text?.era ?? look.era,
+    mood: text?.mood ?? look.mood,
+    description: text?.description ?? look.description,
+    person,
+    items,
+    image: `/icon-looks/${id}.webp`,
+  }
 }
 
 const iconLookRoutes: FastifyPluginAsync = async (app) => {

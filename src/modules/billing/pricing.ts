@@ -11,6 +11,12 @@ import { requestGeo } from '../analytics/geo.js'
 export type PricingRegion = 'us' | 'br' | 'mx' | 'latam'
 export type Currency = 'usd' | 'brl' | 'mxn'
 
+const REGIONS: readonly PricingRegion[] = ['us', 'br', 'mx', 'latam']
+
+export function isPricingRegion(value: unknown): value is PricingRegion {
+  return REGIONS.includes(value as PricingRegion)
+}
+
 const LATAM = new Set(['AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'GT', 'HN', 'NI', 'PA', 'PE', 'PY', 'SV', 'UY', 'VE'])
 
 export function regionForCountry(country: string | null | undefined): PricingRegion {

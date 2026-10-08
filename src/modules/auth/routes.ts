@@ -147,7 +147,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       log,
       to: recipient(user),
       link: url,
-      content: verificationEmail({ firstName: user.firstName, url, forPasskey }),
+      content: verificationEmail({ firstName: user.firstName, url, forPasskey, locale: user.locale }),
     })
   }
 
@@ -158,6 +158,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       content: passwordChangedEmail({
         firstName: user.firstName,
         resetUrl: appUrl(user.locale, '/login?mode=forgot'),
+        locale: user.locale,
       }),
     })
   }
@@ -189,7 +190,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   async function sendSaved(log: FastifyBaseLogger, user: UserDocument) {
     const url = await createLink(app, user, 'verify_email')
 
-    return deliverLinkEmail({ log, to: recipient(user), link: url, content: savedEmail({ firstName: user.firstName, url }) })
+    return deliverLinkEmail({ log, to: recipient(user), link: url, content: savedEmail({ firstName: user.firstName, url, locale: user.locale }) })
   }
 
   // Try first: a guest session, so the selfie and colors come before any
@@ -296,7 +297,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           log: request.log,
           to: recipient(user),
           link: url,
-          content: signInLinkEmail({ firstName: user.firstName, url }),
+          content: signInLinkEmail({ firstName: user.firstName, url, locale: user.locale }),
         })
 
         return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }
@@ -688,7 +689,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           log: request.log,
           to: recipient(user),
           link: url,
-          content: continueInBrowserEmail({ firstName: user.firstName, url }),
+          content: continueInBrowserEmail({ firstName: user.firstName, url, locale: user.locale }),
         })
         void trackServerEvent(app, { name: 'handoff_email_sent', userId: user._id, props: { next: safeNextPath(parsed.data.next) } })
 
@@ -769,7 +770,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           log: request.log,
           to: recipient(user),
           link: url,
-          content: passwordResetEmail({ firstName: user.firstName, url }),
+          content: passwordResetEmail({ firstName: user.firstName, url, locale: user.locale }),
         })
 
         return { ok: true, ...(result.devLink ? { devLink: result.devLink } : {}) }

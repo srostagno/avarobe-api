@@ -2,10 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import type { PurchaseDocument, PurchaseProduct, RefundReason, UserDocument } from '../../types/mongo.js'
+import { currentLocale } from '../../utils/request-locale.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { adminUserIds } from './entitlements.js'
 import { toUsdCents } from './pricing.js'
-import { PRODUCTS, refundPayment } from './stripe.js'
+import { PRODUCTS, productCopy, refundPayment } from './stripe.js'
 
 // The 7-day money-back guarantee on one-time purchases: asked for in the
 // account page (not on the offer), once per person, and paid back in full
@@ -57,6 +58,8 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId) {
     .limit(50)
     .toArray()
   const usedGuarantee = purchases.some((purchase) => purchase.refund?.source === 'app')
+  // Named in the language of the page asking.
+  const locale = currentLocale()
 
   return purchases.map((purchase) => {
     const until = usedGuarantee ? null : refundableUntil(purchase)
@@ -64,7 +67,7 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId) {
     return {
       id: purchase._id.toString(),
       product: purchase.product,
-      name: PRODUCTS[purchase.product as PurchaseProduct]?.name ?? purchase.product,
+      name: purchase.product in PRODUCTS ? productCopy(purchase.product as PurchaseProduct, locale).name : purchase.product,
       amount: purchase.amountTotal,
       currency: purchase.currency,
       createdAt: purchase.createdAt.toISOString(),

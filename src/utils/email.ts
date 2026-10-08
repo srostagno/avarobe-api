@@ -1,7 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify'
 
 import { env } from '../config/env.js'
+import { emailCopy } from '../i18n/emails.js'
 import { isGuestEmail } from './guests.js'
+import type { Locale } from './locale.js'
 
 const MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 
@@ -120,14 +122,19 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;')
 }
 
+// The account emails below, in the reader's language (users.locale; the
+// words are in i18n/emails.*.ts, under `auth`). English when missing.
 function layout(input: {
+  locale?: Locale
   subject: string
   firstName: string
   paragraphs: string[]
   cta?: { label: string; url: string }
   footer: string
 }): EmailContent {
-  const greeting = input.firstName ? `Hi ${escapeHtml(input.firstName)},` : 'Hi,'
+  const locale = input.locale ?? 'en'
+  const copy = emailCopy(locale).auth
+  const greeting = input.firstName ? copy.hi(escapeHtml(input.firstName)) : copy.hiAnonymous
   const body = input.paragraphs
     .map(
       (paragraph) =>
@@ -135,11 +142,12 @@ function layout(input: {
     )
     .join('')
   const button = input.cta
-    ? `<p style="margin:8px 0 24px 0;"><a href="${input.cta.url}" style="display:inline-block;background:#171412;color:#ffffff;text-decoration:none;padding:13px 24px;border-radius:999px;font-size:14px;font-weight:600;">${escapeHtml(input.cta.label)}</a></p><p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#6b645c;">Or paste this link into your browser:</p><p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;color:#171412;">${input.cta.url}</p>`
+    ? `<p style="margin:8px 0 24px 0;"><a href="${input.cta.url}" style="display:inline-block;background:#171412;color:#ffffff;text-decoration:none;padding:13px 24px;border-radius:999px;font-size:14px;font-weight:600;">${escapeHtml(input.cta.label)}</a></p><p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(copy.pasteLink)}</p><p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;color:#171412;">${input.cta.url}</p>`
     : ''
-  const html = `<!doctype html><html><body style="margin:0;padding:32px 16px;background:#f7f4ef;font-family:Helvetica,Arial,sans-serif;color:#171412;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e5ded3;border-radius:16px;"><tr><td style="padding:32px;"><p style="margin:0 0 24px 0;font-family:Georgia,serif;font-size:22px;font-style:italic;">avarobe</p><p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;">${greeting}</p>${body}${button}<p style="margin:0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(input.footer)}</p></td></tr></table></body></html>`
+  // English keeps its bare <html>; the other languages say theirs.
+  const html = `<!doctype html><html${locale === 'en' ? '' : ` lang="${locale}"`}><body style="margin:0;padding:32px 16px;background:#f7f4ef;font-family:Helvetica,Arial,sans-serif;color:#171412;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e5ded3;border-radius:16px;"><tr><td style="padding:32px;"><p style="margin:0 0 24px 0;font-family:Georgia,serif;font-size:22px;font-style:italic;">avarobe</p><p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;">${greeting}</p>${body}${button}<p style="margin:0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(input.footer)}</p></td></tr></table></body></html>`
   const text = [
-    input.firstName ? `Hi ${input.firstName},` : 'Hi,',
+    input.firstName ? copy.hi(input.firstName) : copy.hiAnonymous,
     ...input.paragraphs,
     ...(input.cta ? [`${input.cta.label}: ${input.cta.url}`] : []),
     input.footer,
@@ -148,86 +156,87 @@ function layout(input: {
   return { subject: input.subject, html, text }
 }
 
-export function verificationEmail(input: { firstName: string; url: string; forPasskey: boolean }) {
+export function verificationEmail(input: { firstName: string; url: string; forPasskey: boolean; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Confirm your email for Avarobe',
+    locale: input.locale,
+    subject: copy.verification.subject,
     firstName: input.firstName,
-    paragraphs: input.forPasskey
-      ? [
-          'Confirm this is your email to finish creating your Avarobe account. Right after, you will set up a passkey so you can sign in with Face ID, Touch ID or your device PIN.',
-          'The link works once and expires in 24 hours.',
-        ]
-      : [
-          'Confirm this is your email. It lets you add passkeys and recover your account if you forget your password.',
-          'The link works once and expires in 24 hours.',
-        ],
-    cta: { label: 'Confirm my email', url: input.url },
-    footer: "Didn't sign up for Avarobe? You can ignore this email.",
+    paragraphs: [input.forPasskey ? copy.verification.passkey : copy.verification.password, copy.linkOnce24h],
+    cta: { label: copy.confirmEmail, url: input.url },
+    footer: copy.verification.footer,
   })
 }
 
 // Right after someone who tried Avarobe first saves it with their email (no
 // password): the link confirms the email and signs them back in.
-export function savedEmail(input: { firstName: string; url: string }) {
+export function savedEmail(input: { firstName: string; url: string; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Your Avarobe colors are saved',
+    locale: input.locale,
+    subject: copy.saved.subject,
     firstName: input.firstName,
-    paragraphs: [
-      'Your colors and everything you make in Avarobe are saved to this email. Confirm it with the button below.',
-      'There is no password to remember: whenever you want to come back, ask for a sign-in link on the Avarobe sign-in page and we email you one. The link below works once and expires in 24 hours.',
-    ],
-    cta: { label: 'Confirm my email', url: input.url },
-    footer: "Didn't use Avarobe? You can ignore this email.",
+    paragraphs: copy.saved.paragraphs,
+    cta: { label: copy.confirmEmail, url: input.url },
+    footer: copy.saved.footer,
   })
 }
 
 // Signing in without a password: a one-time link, asked for on the sign-in
 // page.
-export function signInLinkEmail(input: { firstName: string; url: string }) {
+export function signInLinkEmail(input: { firstName: string; url: string; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Your Avarobe sign-in link',
+    locale: input.locale,
+    subject: copy.signIn.subject,
     firstName: input.firstName,
-    paragraphs: ['Here is your link to sign in to Avarobe.', 'The link works once and expires in 3 days.'],
-    cta: { label: 'Sign in to Avarobe', url: input.url },
-    footer: "Didn't ask for this? You can ignore this email; nobody can sign in without the link.",
+    paragraphs: [copy.signIn.intro, copy.linkOnce3d],
+    cta: { label: copy.signIn.button, url: input.url },
+    footer: copy.signIn.footer,
   })
 }
 
 // Asked for from Instagram's or Facebook's in-app browser: the mail app opens
 // the link in the phone's own browser, signed in.
-export function continueInBrowserEmail(input: { firstName: string; url: string }) {
+export function continueInBrowserEmail(input: { firstName: string; url: string; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Your link to open Avarobe in your browser',
+    locale: input.locale,
+    subject: copy.continueInBrowser.subject,
     firstName: input.firstName,
-    paragraphs: [
-      'Here is your link to open Avarobe in your phone’s own browser, already signed in. There you can pay with Apple Pay or a saved card.',
-      'The link works once and expires in 3 days.',
-    ],
-    cta: { label: 'Open Avarobe', url: input.url },
-    footer: "Didn't ask for this? You can ignore this email.",
+    paragraphs: [copy.continueInBrowser.intro, copy.linkOnce3d],
+    cta: { label: copy.continueInBrowser.button, url: input.url },
+    footer: copy.continueInBrowser.footer,
   })
 }
 
-export function passwordResetEmail(input: { firstName: string; url: string }) {
+export function passwordResetEmail(input: { firstName: string; url: string; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Reset your Avarobe password',
+    locale: input.locale,
+    subject: copy.passwordReset.subject,
     firstName: input.firstName,
-    paragraphs: [
-      'We got a request to reset the password for this email. Choose a new one with the button below.',
-      'The link works once and expires in 1 hour. Resetting signs you out everywhere and removes your passkeys, so you can add them again safely.',
-    ],
-    cta: { label: 'Choose a new password', url: input.url },
-    footer: "Didn't ask for this? Ignore this email and your password stays the same.",
+    paragraphs: copy.passwordReset.paragraphs,
+    cta: { label: copy.passwordReset.button, url: input.url },
+    footer: copy.passwordReset.footer,
   })
 }
 
-export function passwordChangedEmail(input: { firstName: string; resetUrl: string }) {
+export function passwordChangedEmail(input: { firstName: string; resetUrl: string; locale?: Locale }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'Your Avarobe password was changed',
+    locale: input.locale,
+    subject: copy.passwordChanged.subject,
     firstName: input.firstName,
-    paragraphs: ['The password for your Avarobe account was just changed.'],
-    cta: { label: "Wasn't me: reset my password", url: input.resetUrl },
-    footer: 'If this was you, there is nothing else to do.',
+    paragraphs: [copy.passwordChanged.intro],
+    cta: { label: copy.passwordChanged.button, url: input.resetUrl },
+    footer: copy.nothingElse,
   })
 }
 
@@ -235,15 +244,16 @@ export function passkeyAddedEmail(input: {
   firstName: string
   deviceName: string
   accountUrl: string
+  locale?: Locale
 }) {
+  const copy = emailCopy(input.locale).auth
+
   return layout({
-    subject: 'A passkey was added to your Avarobe account',
+    locale: input.locale,
+    subject: copy.passkeyAdded.subject,
     firstName: input.firstName,
-    paragraphs: [
-      `A passkey for "${input.deviceName}" can now sign in to your Avarobe account.`,
-      "If this wasn't you, remove it in your account settings and reset your password.",
-    ],
-    cta: { label: 'Review my passkeys', url: input.accountUrl },
-    footer: 'If this was you, there is nothing else to do.',
+    paragraphs: [copy.passkeyAdded.added(input.deviceName), copy.passkeyAdded.notYou],
+    cta: { label: copy.passkeyAdded.button, url: input.accountUrl },
+    footer: copy.nothingElse,
   })
 }

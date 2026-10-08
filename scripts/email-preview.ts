@@ -1,18 +1,22 @@
-// Renders every onboarding email with sample data, to check the design.
+// Renders every email with sample data, to check the design and the words,
+// in English and in the other languages (with that market's prices).
 //
-//   corepack pnpm email:preview                                -> .email-previews/*.html (+ .txt)
+//   corepack pnpm email:preview                                -> .email-previews/*.html (+ .txt), pt-BR/ and es/ beside
 //   corepack pnpm email:preview you@example.com                -> also sends them to that address
-//   corepack pnpm email:preview you@example.com upgrade-offer  -> sends only the ones named
+//   corepack pnpm email:preview you@example.com upgrade-offer pt-BR/upgrade-offer  -> sends only the ones named
 //
 // Sending goes through the normal path, so in development the address has
 // to be in EMAIL_DEV_ALLOWLIST.
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { REGION_CURRENCY, regionalAmount, type PricingRegion } from '../src/modules/billing/pricing.js'
 import {
   avatarNudgeEmail,
   crossSellEmail,
   looksNudgeEmail,
+  magazineReadyEmail,
+  outfitGuideEmail,
   priceDropEmail,
   trialEndingEmail,
   checkoutRescueEmail,
@@ -21,75 +25,147 @@ import {
   upgradeOfferEmail,
   upgradeReminderEmail,
   welcomeEmail,
+  type EmailContent,
 } from '../src/modules/lifecycle/templates.js'
-import { deliverEmail } from '../src/utils/email.js'
+import {
+  continueInBrowserEmail,
+  deliverEmail,
+  passkeyAddedEmail,
+  passwordChangedEmail,
+  passwordResetEmail,
+  savedEmail,
+  signInLinkEmail,
+  verificationEmail,
+} from '../src/utils/email.js'
+import type { Locale } from '../src/utils/locale.js'
 
 const OUT = path.join(process.cwd(), '.email-previews')
-const recipient = {
-  firstName: 'Nora',
-  email: 'nora@example.com',
-  unsubscribeUrl: 'https://www.avarobe.com/email/unsubscribe?t=preview',
-}
 const colors = [
   { name: 'Olive', hex: '#5B5A2C' },
   { name: 'Rust', hex: '#A0482A' },
   { name: 'Deep teal', hex: '#1F5C5B' },
 ]
 
-const emails = {
-  'welcome-new': welcomeEmail({ ...recipient, stage: 'new', season: null }),
-  'welcome-avatar': welcomeEmail({ ...recipient, stage: 'avatar', season: 'Warm Autumn' }),
-  'welcome-looks': welcomeEmail({ ...recipient, stage: 'looks', season: 'Warm Autumn' }),
-  'avatar-nudge': avatarNudgeEmail(recipient),
-  'welcome-colors': welcomeEmail({ ...recipient, stage: 'new', season: null, focus: 'colors' }),
-  'welcome-colors-read': welcomeEmail({ ...recipient, stage: 'new', season: 'Warm Autumn', focus: 'colors' }),
-  'avatar-nudge-colors': avatarNudgeEmail({ ...recipient, focus: 'colors' }),
-  'looks-nudge': looksNudgeEmail({ ...recipient, season: 'Warm Autumn', colors }),
-  'upgrade-offer': upgradeOfferEmail(recipient),
-  'upgrade-offer-colors': upgradeOfferEmail({ ...recipient, palette: { season: 'Warm Autumn', colors } }),
-  // Colors first, an hour after the read: their own photo and a one-tap checkout link.
-  'upgrade-offer-colors-first': upgradeOfferEmail({
-    ...recipient,
-    palette: {
+// Each language with the market it's mostly read in.
+const MARKETS: { locale: Locale; region: PricingRegion }[] = [
+  { locale: 'en', region: 'us' },
+  { locale: 'pt-BR', region: 'br' },
+  { locale: 'es', region: 'mx' },
+]
+
+function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailContent> {
+  const recipient = {
+    firstName: 'Nora',
+    email: 'nora@example.com',
+    unsubscribeUrl: 'https://www.avarobe.com/email/unsubscribe?t=preview',
+    locale,
+    region,
+  }
+  const link = 'https://www.avarobe.com/continue?token=preview'
+
+  return {
+    'welcome-new': welcomeEmail({ ...recipient, stage: 'new', season: null }),
+    'welcome-avatar': welcomeEmail({ ...recipient, stage: 'avatar', season: 'Warm Autumn' }),
+    'welcome-looks': welcomeEmail({ ...recipient, stage: 'looks', season: 'Warm Autumn' }),
+    'avatar-nudge': avatarNudgeEmail(recipient),
+    'welcome-colors': welcomeEmail({ ...recipient, stage: 'new', season: null, focus: 'colors' }),
+    'welcome-colors-read': welcomeEmail({ ...recipient, stage: 'new', season: 'Warm Autumn', focus: 'colors' }),
+    'avatar-nudge-colors': avatarNudgeEmail({ ...recipient, focus: 'colors' }),
+    'looks-nudge': looksNudgeEmail({ ...recipient, season: 'Warm Autumn', colors }),
+    'upgrade-offer': upgradeOfferEmail(recipient),
+    'upgrade-offer-colors': upgradeOfferEmail({ ...recipient, palette: { season: 'Warm Autumn', colors } }),
+    // Colors first, an hour after the read: their own photo and a one-tap checkout link.
+    'upgrade-offer-colors-first': upgradeOfferEmail({
+      ...recipient,
+      palette: { season: 'Warm Autumn', colors: [], heroUrl: 'https://www.avarobe.com/demo/colors/lucia.webp', url: link },
+    }),
+    'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
+    'upgrade-last-call': upgradeLastCallEmail(recipient),
+    'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
+    'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
+    'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: link }),
+    // PREVIEW_PHOTO_URL: a public image standing in for their locked drape photo
+    // (a fictional face); without it, the email's fallback picture.
+    'price-drop': priceDropEmail({
+      ...recipient,
       season: 'Warm Autumn',
-      colors: [],
-      heroUrl: 'https://www.avarobe.com/demo/colors/lucia.webp',
-      url: 'https://www.avarobe.com/continue?token=preview',
-    },
-  }),
-  'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
-  'upgrade-last-call': upgradeLastCallEmail(recipient),
-  'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
-  'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
-  'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: 'https://www.avarobe.com/continue?token=preview' }),
-  // PREVIEW_PHOTO_URL: a public image standing in for their locked drape photo
-  // (a fictional face); without it, the email's fallback picture.
-  'price-drop': priceDropEmail({
-    ...recipient,
-    season: 'Warm Autumn',
-    colors,
-    heroUrl: process.env.PREVIEW_PHOTO_URL ?? null,
-    url: 'https://www.avarobe.com/continue?token=preview&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop',
-  }),
-  // Buyers: the next product they don't have (lifecycle/cross-sell.ts).
-  ...crossSellPreviews(),
+      colors,
+      heroUrl: process.env.PREVIEW_PHOTO_URL ?? null,
+      url: `${link}&utm_source=email&utm_medium=lifecycle&utm_campaign=price_drop`,
+    }),
+    // Buyers: the next product they don't have (lifecycle/cross-sell.ts).
+    ...crossSellPreviews(recipient, region),
+    // Purchase deliveries.
+    guide: outfitGuideEmail({ email: recipient.email, firstName: 'Nora', downloadUrl: 'https://api.avarobe.com/api/v1/guide/download/preview', locale }),
+    magazine: magazineReadyEmail({ email: recipient.email, firstName: 'Nora', url: 'https://www.avarobe.com/studio/magazine/preview', locale }),
+    // Account emails (utils/email.ts).
+    'auth-verify': verificationEmail({ firstName: 'Nora', url: link, forPasskey: false, locale }),
+    'auth-verify-passkey': verificationEmail({ firstName: 'Nora', url: link, forPasskey: true, locale }),
+    'auth-saved': savedEmail({ firstName: 'Nora', url: link, locale }),
+    'auth-sign-in': signInLinkEmail({ firstName: 'Nora', url: link, locale }),
+    'auth-continue': continueInBrowserEmail({ firstName: 'Nora', url: link, locale }),
+    'auth-reset': passwordResetEmail({ firstName: 'Nora', url: link, locale }),
+    'auth-changed': passwordChangedEmail({ firstName: 'Nora', resetUrl: link, locale }),
+    'auth-passkey': passkeyAddedEmail({ firstName: 'Nora', deviceName: 'iPhone', accountUrl: link, locale }),
+  }
 }
 
-function crossSellPreviews() {
+function crossSellPreviews(recipient: Parameters<typeof welcomeEmail>[0], region: PricingRegion) {
   const now = new Date()
   const until = new Date(now.getTime() + 9 * 24 * 60 * 60 * 1000)
   const url = 'https://www.avarobe.com/continue?token=preview'
-  const owner = { ...recipient, season: 'Warm Autumn', colors, now, url, side: null, owns: { color: true, style: false } }
+  const price = (product: Parameters<typeof regionalAmount>[0]) => regionalAmount(product, region)
+  const owner = {
+    ...recipient,
+    season: 'Warm Autumn',
+    colors,
+    now,
+    url,
+    side: null,
+    owns: { color: true, style: false },
+    currency: REGION_CURRENCY[region],
+  }
 
   return {
-    'xsell-style-pair-price': crossSellEmail({ ...owner, kind: 'xsell_style', price: 691, regular: 790, until }),
-    'xsell-style': crossSellEmail({ ...owner, kind: 'xsell_style', price: 790, regular: null, until: null }),
-    'xsell-color': crossSellEmail({ ...owner, kind: 'xsell_color', price: 499, regular: null, until: null, colors: [], owns: { color: false, style: true } }),
-    'xsell-last-call': crossSellEmail({ ...owner, kind: 'xsell_addon_last_call', price: 691, regular: 790, until: new Date(now.getTime() + 30 * 60 * 60 * 1000), side: 'style' }),
-    'xsell-hair': crossSellEmail({ ...owner, kind: 'xsell_hair', price: 790, regular: null, until: null }),
-    'xsell-magazine': crossSellEmail({ ...owner, kind: 'xsell_magazine', price: 990, regular: null, until: null }),
-    'xsell-event': crossSellEmail({ ...owner, kind: 'xsell_event', price: 490, regular: null, until: null }),
-    'xsell-guide': crossSellEmail({ ...owner, kind: 'xsell_guide', price: 1490, regular: null, until: null, url: 'https://www.avarobe.com/guide' }),
+    'xsell-style-pair-price': crossSellEmail({ ...owner, kind: 'xsell_style', price: price('style_addon'), regular: price('style_report'), until }),
+    'xsell-style': crossSellEmail({ ...owner, kind: 'xsell_style', price: price('style_report'), regular: null, until: null }),
+    'xsell-color': crossSellEmail({
+      ...owner,
+      kind: 'xsell_color',
+      price: price('color_report'),
+      regular: null,
+      until: null,
+      colors: [],
+      owns: { color: false, style: true },
+    }),
+    'xsell-last-call': crossSellEmail({
+      ...owner,
+      kind: 'xsell_addon_last_call',
+      price: price('style_addon'),
+      regular: price('style_report'),
+      until: new Date(now.getTime() + 30 * 60 * 60 * 1000),
+      side: 'style',
+    }),
+    'xsell-hair': crossSellEmail({ ...owner, kind: 'xsell_hair', price: price('hair_advisor'), regular: null, until: null }),
+    'xsell-magazine': crossSellEmail({ ...owner, kind: 'xsell_magazine', price: price('magazine'), regular: null, until: null }),
+    'xsell-event': crossSellEmail({ ...owner, kind: 'xsell_event', price: price('event_pass'), regular: null, until: null }),
+    'xsell-guide': crossSellEmail({
+      ...owner,
+      kind: 'xsell_guide',
+      price: price('outfit_guide'),
+      regular: null,
+      until: null,
+      url: 'https://www.avarobe.com/guide',
+    }),
+  }
+}
+
+// English at the top of the folder (as before), the others in pt-BR/ and es/.
+const emails: Record<string, EmailContent> = {}
+
+for (const { locale, region } of MARKETS) {
+  for (const [name, email] of Object.entries(emailsFor(locale, region))) {
+    emails[locale === 'en' ? name : `${locale}/${name}`] = email
   }
 }
 
@@ -98,7 +174,9 @@ const log = {
   error: (...args: unknown[]) => console.error(...args),
 } as unknown as Parameters<typeof deliverEmail>[0]['log']
 
-await mkdir(OUT, { recursive: true })
+for (const { locale } of MARKETS) {
+  await mkdir(locale === 'en' ? OUT : path.join(OUT, locale), { recursive: true })
+}
 
 for (const [name, email] of Object.entries(emails)) {
   await writeFile(path.join(OUT, `${name}.html`), email.html)

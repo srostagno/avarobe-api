@@ -4,14 +4,15 @@ import Stripe from 'stripe'
 
 import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
-import { appUrl, type Locale } from '../../utils/locale.js'
+import { PRODUCT_COPY } from '../../i18n/products.js'
+import { appUrl, isLocale, type Locale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
 import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
-import { type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
+import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
@@ -181,13 +182,49 @@ function stripe() {
 
 const priceIds = new Map<string, string>()
 
+// The product's name and description in the buyer's language.
+export function productCopy(product: PurchaseProduct, locale: Locale = 'en') {
+  const config = PRODUCTS[product]
+
+  return locale === 'en' ? { name: config.name, description: config.description } : PRODUCT_COPY[locale][product]
+}
+
+const LOCALE_KEY: Record<Exclude<Locale, 'en'>, string> = { 'pt-BR': 'ptbr', es: 'es' }
+
+// Checkout shows the product's own name, so each language has its own
+// product (same metadata.product), under an id it's found by. The first use
+// after a restart brings its name and description up to date.
+async function localizedProduct(product: PurchaseProduct, locale: Exclude<Locale, 'en'>) {
+  const id = `${PRODUCTS[product].lookupKey}_${LOCALE_KEY[locale]}`
+  const copy = PRODUCT_COPY[locale][product]
+
+  try {
+    const existing = await stripe().products.retrieve(id)
+
+    if (existing.name !== copy.name || existing.description !== copy.description || !existing.active) {
+      await stripe().products.update(id, { name: copy.name, description: copy.description, active: true })
+    }
+
+    return id
+  } catch (error) {
+    if (!(error instanceof Stripe.errors.StripeInvalidRequestError) || error.statusCode !== 404) {
+      throw error
+    }
+  }
+
+  await stripe().products.create({ id, ...copy, metadata: { app: APP, product, locale } })
+  return id
+}
+
 // Finds the product's price by lookup key, creating product and price the
 // first time (so a new account or live mode needs no dashboard setup). A
 // changed amount gets a new price that takes over the lookup key. Each
-// pricing region has its own price (and currency) on the same product.
-async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us') {
+// pricing region has its own price (and currency) on the same product; each
+// language other than English, its own product.
+async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en') {
   const config = PRODUCTS[product]
-  const lookupKey = region === 'us' ? config.lookupKey : `${config.lookupKey}_${region}`
+  const regional = region === 'us' ? config.lookupKey : `${config.lookupKey}_${region}`
+  const lookupKey = locale === 'en' ? regional : `${regional}_${LOCALE_KEY[locale]}`
   const { amount, currency } = region === 'us' ? { amount: config.amount(), currency: 'usd' } : regionalPrice(product, region)
   const cacheKey = `${lookupKey}:${amount}`
   const cached = priceIds.get(cacheKey)
@@ -196,6 +233,7 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us') 
     return cached
   }
 
+  const localized = locale === 'en' ? null : await localizedProduct(product, locale)
   const existing = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
   const current = existing.data[0]
 
@@ -206,8 +244,12 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us') 
 
   // A region's first price joins the product the US price already has.
   const usPrice =
-    !current && region !== 'us' ? (await stripe().prices.list({ lookup_keys: [config.lookupKey], limit: 1 })).data[0] : undefined
-  const knownProduct = typeof current?.product === 'string' ? current.product : typeof usPrice?.product === 'string' ? usPrice.product : null
+    !localized && !current && region !== 'us'
+      ? (await stripe().prices.list({ lookup_keys: [config.lookupKey], limit: 1 })).data[0]
+      : undefined
+  const knownProduct =
+    localized ??
+    (typeof current?.product === 'string' ? current.product : typeof usPrice?.product === 'string' ? usPrice.product : null)
   const productId =
     knownProduct ??
     (
@@ -224,7 +266,7 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us') 
     ...(config.recurring ? { recurring: { interval: config.recurring } } : {}),
     lookup_key: lookupKey,
     transfer_lookup_key: true,
-    metadata: { app: APP, product, region },
+    metadata: { app: APP, product, region, locale },
   })
 
   priceIds.set(cacheKey, price.id)
@@ -333,11 +375,11 @@ export async function createCheckout(input: {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
   const locale = input.user.locale ?? 'en'
-  const metadata = { ...input.attribution, app: APP, product: input.product, userId, region }
+  const metadata = { ...input.attribution, app: APP, product: input.product, userId, region, locale }
   const discount =
     input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents, REGION_CURRENCY[region]) : null
   const common = {
-    line_items: [{ price: await priceFor(input.product, region), quantity: 1 }],
+    line_items: [{ price: await priceFor(input.product, region, locale), quantity: 1 }],
     locale: STRIPE_LOCALE[locale],
     // Not a bare ObjectId, so Trimry's webhook can never take it for one of
     // its own records.
@@ -376,8 +418,8 @@ export async function createCheckout(input: {
           // invoice. The subscription is pro_monthly; `trial` marks how it
           // started, so its first invoice is granted as the trial.
           line_items: [
-            { price: await priceFor('pro_monthly', region), quantity: 1 },
-            { price: await priceFor('pro_trial', region), quantity: 1 },
+            { price: await priceFor('pro_monthly', region, locale), quantity: 1 },
+            { price: await priceFor('pro_trial', region, locale), quantity: 1 },
           ],
           subscription_data: {
             trial_period_days: env.PRO_TRIAL_DAYS,
@@ -418,7 +460,7 @@ export async function createGuideCheckout(input: {
   const params: Stripe.Checkout.SessionCreateParams = {
     ...extra,
     mode: 'payment',
-    line_items: [{ price: await priceFor('outfit_guide', input.region ?? 'us'), quantity: 1 }],
+    line_items: [{ price: await priceFor('outfit_guide', input.region ?? 'us', input.locale ?? 'en'), quantity: 1 }],
     locale: STRIPE_LOCALE[input.locale ?? 'en'],
     client_reference_id: `${APP}_guide_${input.userId ?? 'guest'}`,
     ...(input.email ? { customer_email: input.email } : {}),
@@ -998,8 +1040,13 @@ export async function switchToAnnual(app: FastifyInstance, subscriptionId: strin
     throw new Error(`Subscription ${subscriptionId} has no items.`)
   }
 
+  // In the currency and language it was bought in: Stripe refuses to mix
+  // currencies on one subscription.
+  const region = isPricingRegion(current.metadata?.region) ? current.metadata.region : 'us'
+  const locale = isLocale(current.metadata?.locale) ? current.metadata.locale : 'en'
+
   return chargeSubscriptionChange(app, subscriptionId, {
-    items: [{ id: item.id, price: await priceFor('pro_annual') }],
+    items: [{ id: item.id, price: await priceFor('pro_annual', region, locale) }],
     proration_behavior: 'always_invoice',
     // The trial ends with it. Otherwise Stripe keeps the trial going and
     // charges nothing today.

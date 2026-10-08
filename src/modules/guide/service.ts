@@ -8,6 +8,7 @@ import { env } from '../../config/env.js'
 import type { GuideOrderDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { errorMessage } from '../../utils/http.js'
+import { toLocale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { reportPurchase } from '../billing/conversions.js'
@@ -120,7 +121,15 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     if (claimed.modifiedCount === 1) {
       try {
         const name = session.customer_details?.name?.split(' ')[0] ?? ''
-        await deliverEmail({ log: app.log, to: { email: order.email }, content: outfitGuideEmail({ email: order.email, firstName: name, downloadUrl: guideDownloadUrl(order) }) })
+        // In their language: their account's, or (a guest) the checkout's,
+        // which opened in the language of the page they bought from.
+        const account = order.userId ? await app.collections.users.findOne({ _id: order.userId }, { projection: { locale: 1 } }) : null
+        const locale = account?.locale ?? toLocale(session.locale)
+        await deliverEmail({
+          log: app.log,
+          to: { email: order.email },
+          content: outfitGuideEmail({ email: order.email, firstName: name, downloadUrl: guideDownloadUrl(order), locale }),
+        })
       } catch (error) {
         app.log.error({ err: errorMessage(error), order: order._id.toString() }, 'Guide email failed')
         await app.collections.guideOrders.updateOne({ _id: order._id }, { $set: { emailedAt: null } })

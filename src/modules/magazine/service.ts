@@ -142,7 +142,12 @@ export async function runMagazine(app: FastifyInstance, magazineId: ObjectId) {
       await deliverEmail({
         log: app.log,
         to: { email: user.email, name: user.firstName ?? undefined },
-        content: magazineReadyEmail({ email: user.email, firstName: user.firstName ?? '', url: appUrl(user.locale, `/studio/magazine/${done._id.toString()}`) }),
+        content: magazineReadyEmail({
+          email: user.email,
+          firstName: user.firstName ?? '',
+          url: appUrl(user.locale, `/studio/magazine/${done._id.toString()}`),
+          locale: user.locale,
+        }),
       }).catch((error: unknown) => app.log.error({ err: errorMessage(error) }, 'Magazine email failed'))
     }
   }

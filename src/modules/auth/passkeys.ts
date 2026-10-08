@@ -248,6 +248,7 @@ const passkeyRoutes: FastifyPluginAsync = async (app) => {
           firstName: user.firstName,
           deviceName: passkey.name,
           accountUrl: appUrl(user.locale, '/studio/account'),
+          locale: user.locale,
         }),
       })
 

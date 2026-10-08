@@ -12,6 +12,8 @@ import type {
   TestSwatch,
 } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
+import type { Locale } from '../../utils/locale.js'
+import { currentLocale } from '../../utils/request-locale.js'
 import { toStoredWebp } from '../../utils/images.js'
 import { type ImageInput, generateImage, generateImageFromReferences } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
@@ -77,6 +79,19 @@ const METALS = {
   silver: { label: 'Silver', hex: '#C0C4C8' },
 }
 
+// The other labels come from the analysis, already in the reader's
+// language; these two are ours.
+const METAL_LABELS: Record<Exclude<Locale, 'en'>, Record<keyof typeof METALS, string>> = {
+  'pt-BR': { gold: 'Dourado', silver: 'Prateado' },
+  es: { gold: 'Dorado', silver: 'Plateado' },
+}
+
+function metalPanel(metal: keyof typeof METALS) {
+  const locale = currentLocale() ?? 'en'
+
+  return { ...METALS[metal], ...(locale === 'en' ? {} : { label: METAL_LABELS[locale][metal] }) }
+}
+
 // Cuts and necklines read best in a mid-tone: black hides them and white
 // blows out.
 function midTone(swatches: ColorSwatch[]): ColorSwatch {
@@ -113,7 +128,7 @@ const colorBoards: Record<(typeof COLOR_BOARDS)[number], (report: ColorReport, s
       layout: 'pair',
       panels: metals.map(
         (metal): BoardPanel => ({
-          ...METALS[metal],
+          ...metalPanel(metal),
           verdict: test.best === 'both' || test.best === metal ? 'wear' : 'avoid',
         }),
       ),
