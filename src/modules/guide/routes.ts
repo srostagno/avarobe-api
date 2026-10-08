@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
+import { requestLocale } from '../../utils/locale.js'
+import { pricingRegion } from '../billing/pricing.js'
 import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
 import { billingState, isAdmin, loadBillingUser } from '../billing/entitlements.js'
@@ -44,7 +46,7 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
     // Signed in or not: the guide is sold to anyone, and a signed-in buyer's
     // account is noted on the order.
     const userId = await optionalUserId(request)
-    const user = userId ? await app.collections.users.findOne({ _id: userId }, { projection: { email: 1 } }) : null
+    const user = userId ? await app.collections.users.findOne({ _id: userId }, { projection: { email: 1, location: 1 } }) : null
 
     try {
       const url = await createGuideCheckout({
@@ -52,6 +54,8 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
         email: parsed.data.email ?? null,
         // An admin's test purchase never reaches Meta or GA as a sale.
         attribution: user && isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
+        locale: requestLocale(request),
+        region: pricingRegion(request, user),
       })
       return { url }
     } catch (error) {

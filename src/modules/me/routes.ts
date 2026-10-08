@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { clearAuthCookies } from '../../utils/auth-session.js'
 import { parseBody } from '../../utils/http.js'
+import { LOCALES } from '../../utils/locale.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
@@ -22,6 +23,8 @@ const emailPreferencesSchema = z.object({
   // always go out.
   tips: z.boolean(),
 })
+
+const localeSchema = z.object({ locale: z.enum(LOCALES) })
 
 const code = z.string().regex(/^[a-z][a-z0-9_]{0,40}$/)
 
@@ -120,6 +123,28 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     const user = await app.collections.users.findOneAndUpdate(
       { _id: requireUserId(request) },
       { $set: { firstName: parsed.data.firstName, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    )
+
+    if (!user) {
+      return reply.code(404).send({ message: 'Account not found.' })
+    }
+
+    return { user: serializeUser(user) }
+  })
+
+  // The language they use Avarobe in: the web sets it when they switch, so
+  // emails and AI text made later come in it too.
+  app.patch('/locale', async (request, reply) => {
+    const parsed = parseBody(localeSchema, request.body)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const user = await app.collections.users.findOneAndUpdate(
+      { _id: requireUserId(request) },
+      { $set: { locale: parsed.data.locale, updatedAt: new Date() } },
       { returnDocument: 'after' },
     )
 

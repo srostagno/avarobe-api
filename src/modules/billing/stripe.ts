@@ -4,12 +4,14 @@ import Stripe from 'stripe'
 
 import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
+import { appUrl, type Locale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
 import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
+import { type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
@@ -177,55 +179,62 @@ function stripe() {
   return client
 }
 
-const priceIds = new Map<PurchaseProduct, string>()
+const priceIds = new Map<string, string>()
 
 // Finds the product's price by lookup key, creating product and price the
 // first time (so a new account or live mode needs no dashboard setup). A
-// changed amount gets a new price that takes over the lookup key.
-async function priceFor(product: PurchaseProduct) {
+// changed amount gets a new price that takes over the lookup key. Each
+// pricing region has its own price (and currency) on the same product.
+async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us') {
   const config = PRODUCTS[product]
-  const cached = priceIds.get(product)
+  const lookupKey = region === 'us' ? config.lookupKey : `${config.lookupKey}_${region}`
+  const { amount, currency } = region === 'us' ? { amount: config.amount(), currency: 'usd' } : regionalPrice(product, region)
+  const cacheKey = `${lookupKey}:${amount}`
+  const cached = priceIds.get(cacheKey)
 
   if (cached) {
     return cached
   }
 
-  const existing = await stripe().prices.list({ lookup_keys: [config.lookupKey], active: true, limit: 1 })
+  const existing = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
   const current = existing.data[0]
 
-  if (current && current.unit_amount === config.amount() && current.currency === 'usd') {
-    priceIds.set(product, current.id)
+  if (current && current.unit_amount === amount && current.currency === currency) {
+    priceIds.set(cacheKey, current.id)
     return current.id
   }
 
+  // A region's first price joins the product the US price already has.
+  const usPrice =
+    !current && region !== 'us' ? (await stripe().prices.list({ lookup_keys: [config.lookupKey], limit: 1 })).data[0] : undefined
+  const knownProduct = typeof current?.product === 'string' ? current.product : typeof usPrice?.product === 'string' ? usPrice.product : null
   const productId =
-    typeof current?.product === 'string'
-      ? current.product
-      : (
-          await stripe().products.create({
-            name: config.name,
-            description: config.description,
-            metadata: { app: APP, product },
-          })
-        ).id
+    knownProduct ??
+    (
+      await stripe().products.create({
+        name: config.name,
+        description: config.description,
+        metadata: { app: APP, product },
+      })
+    ).id
   const price = await stripe().prices.create({
     product: productId,
-    currency: 'usd',
-    unit_amount: config.amount(),
+    currency,
+    unit_amount: amount,
     ...(config.recurring ? { recurring: { interval: config.recurring } } : {}),
-    lookup_key: config.lookupKey,
+    lookup_key: lookupKey,
     transfer_lookup_key: true,
-    metadata: { app: APP, product },
+    metadata: { app: APP, product, region },
   })
 
-  priceIds.set(product, price.id)
+  priceIds.set(cacheKey, price.id)
   return price.id
 }
 
 // A one-time discount of `cents` for the first payment (reports counted
-// toward Pro annual). One coupon per amount, created on first use.
-async function creditCoupon(cents: number) {
-  const id = `avarobe_report_credit_${cents}`
+// toward Pro annual). One coupon per amount and currency, created on first use.
+async function creditCoupon(cents: number, currency = 'usd') {
+  const id = currency === 'usd' ? `avarobe_report_credit_${cents}` : `avarobe_report_credit_${cents}_${currency}`
 
   try {
     return (await stripe().coupons.retrieve(id)).id
@@ -235,7 +244,7 @@ async function creditCoupon(cents: number) {
         id,
         name: 'Your reports, counted toward Pro',
         amount_off: cents,
-        currency: 'usd',
+        currency,
         duration: 'once',
         metadata: { app: APP },
       })
@@ -243,10 +252,16 @@ async function creditCoupon(cents: number) {
   }
 }
 
-const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
+const INTL_LOCALE: Record<Locale, string> = { en: 'en-US', 'pt-BR': 'pt-BR', es: 'es-MX' }
 
-const longDate = (date: Date) =>
-  date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+const money = (cents: number, currency = 'usd', locale: Locale = 'en') =>
+  new Intl.NumberFormat(INTL_LOCALE[locale], { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100)
+
+const longDate = (date: Date, locale: Locale = 'en') =>
+  date.toLocaleDateString(INTL_LOCALE[locale], { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+
+// Checkout's own language for the buyer's (it localizes everything but our text).
+const STRIPE_LOCALE: Record<Locale, Stripe.Checkout.SessionCreateParams.Locale> = { en: 'en', 'pt-BR': 'pt-BR', es: 'es-419' }
 
 // When a trial started now would end (Stripe counts whole days from now).
 export function trialEndFrom(now = new Date()) {
@@ -271,22 +286,36 @@ const EMBEDDED_BRANDING = Object.fromEntries(Object.entries(BRANDING).filter(([k
 // What checkout says next to the pay button: how a subscription renews and
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
-function submitMessage(product: PurchaseProduct) {
+function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en') {
   const config = PRODUCTS[product]
+  const currency = REGION_CURRENCY[region]
+  const price = (item: PurchaseProduct) => money(regionalAmount(item, region), currency, locale)
+  const days = env.PRO_TRIAL_DAYS
+  const ends = longDate(trialEndFrom(), locale)
 
   if (product === 'pro_trial') {
-    return `${money(config.amount())} today for ${env.PRO_TRIAL_DAYS} days of Pro. Then ${money(env.PRICE_PRO_MONTHLY_CENTS)} per month starting ${longDate(trialEndFrom())}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged again.`
+    return {
+      en: `${price('pro_trial')} today for ${days} days of Pro. Then ${price('pro_monthly')} per month starting ${ends}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged again.`,
+      'pt-BR': `${price('pro_trial')} hoje por ${days} dias de Pro. Depois, ${price('pro_monthly')} por mês a partir de ${ends}, até você cancelar. Cancele quando quiser antes disso nas configurações da sua conta Avarobe e você não será cobrado de novo.`,
+      es: `${price('pro_trial')} hoy por ${days} días de Pro. Después, ${price('pro_monthly')} al mes a partir del ${ends}, hasta que canceles. Cancela cuando quieras antes de esa fecha en la configuración de tu cuenta de Avarobe y no se te volverá a cobrar.`,
+    }[locale]
   }
 
   if (config.recurring) {
-    return `Renews automatically at ${money(config.amount())} per ${config.recurring} until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`
+    const every = { month: { en: 'month', 'pt-BR': 'mês', es: 'mes' }, year: { en: 'year', 'pt-BR': 'ano', es: 'año' } }[config.recurring][locale]
+
+    return {
+      en: `Renews automatically at ${price(product)} per ${every} until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`,
+      'pt-BR': `Renova automaticamente por ${price(product)} por ${every} até você cancelar. Cancele quando quiser nas configurações da sua conta Avarobe; o Pro continua até o fim do período pago.`,
+      es: `Se renueva automáticamente por ${price(product)} al ${every} hasta que canceles. Cancela cuando quieras en la configuración de tu cuenta de Avarobe; conservas Pro hasta el final del período que pagaste.`,
+    }[locale]
   }
 
-  return 'One-time payment. No subscription.'
+  return { en: 'One-time payment. No subscription.', 'pt-BR': 'Pagamento único. Sem assinatura.', es: 'Pago único. Sin suscripción.' }[locale]
 }
 
 export async function createCheckout(input: {
-  user: Pick<UserDocument, '_id' | 'email'>
+  user: Pick<UserDocument, '_id' | 'email' | 'locale'>
   product: PurchaseProduct
   returnPath: string
   // Reports bought recently, counted toward Pro annual.
@@ -298,12 +327,18 @@ export async function createCheckout(input: {
   // card is typed either way and leaving for checkout.stripe.com lost most
   // buyers (Oct 5: 3 of 16 paid there, 9 of 18 in Safari or Chrome).
   embedded?: boolean
+  // Where the buyer pays from (billing/pricing.ts): price and currency.
+  region?: PricingRegion
 }): Promise<{ url: string | null; clientSecret: string | null }> {
   const userId = input.user._id.toString()
-  const metadata = { ...input.attribution, app: APP, product: input.product, userId }
-  const discount = input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents) : null
+  const region = input.region ?? 'us'
+  const locale = input.user.locale ?? 'en'
+  const metadata = { ...input.attribution, app: APP, product: input.product, userId, region }
+  const discount =
+    input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents, REGION_CURRENCY[region]) : null
   const common = {
-    line_items: [{ price: await priceFor(input.product), quantity: 1 }],
+    line_items: [{ price: await priceFor(input.product, region), quantity: 1 }],
+    locale: STRIPE_LOCALE[locale],
     // Not a bare ObjectId, so Trimry's webhook can never take it for one of
     // its own records.
     client_reference_id: `${APP}_${userId}`,
@@ -317,19 +352,19 @@ export async function createCheckout(input: {
       : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
         ? { allow_promotion_codes: true }
         : {}),
-    custom_text: { submit: { message: submitMessage(input.product) } },
+    custom_text: { submit: { message: submitMessage(input.product, region, locale) } },
     // The embedded form comes back to the same success page; closing it is
     // the way back, so it has no cancel link.
     ...(input.embedded
       ? {
           ui_mode: 'embedded' as const,
           branding_settings: EMBEDDED_BRANDING,
-          return_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+          return_url: `${appUrl(input.user.locale, '/studio/billing/success')}?session_id={CHECKOUT_SESSION_ID}`,
         }
       : {
           branding_settings: BRANDING,
-          success_url: `${env.APP_URL}/studio/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${env.APP_URL}${input.returnPath}?checkout=cancelled&product=${input.product}`,
+          success_url: `${appUrl(input.user.locale, '/studio/billing/success')}?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${appUrl(input.user.locale, input.returnPath)}?checkout=cancelled&product=${input.product}`,
         }),
   }
   const params: Stripe.Checkout.SessionCreateParams =
@@ -341,8 +376,8 @@ export async function createCheckout(input: {
           // invoice. The subscription is pro_monthly; `trial` marks how it
           // started, so its first invoice is granted as the trial.
           line_items: [
-            { price: await priceFor('pro_monthly'), quantity: 1 },
-            { price: await priceFor('pro_trial'), quantity: 1 },
+            { price: await priceFor('pro_monthly', region), quantity: 1 },
+            { price: await priceFor('pro_trial', region), quantity: 1 },
           ],
           subscription_data: {
             trial_period_days: env.PRO_TRIAL_DAYS,
@@ -370,21 +405,36 @@ export async function createCheckout(input: {
 // The Outfit Formula Book: a checkout open to guests (Stripe asks for the
 // email). A signed-in buyer's account is noted too, so it shows in their
 // purchases.
-export async function createGuideCheckout(input: { userId: string | null; email: string | null; attribution?: Record<string, string> }) {
+export async function createGuideCheckout(input: {
+  userId: string | null
+  email: string | null
+  attribution?: Record<string, string>
+  locale?: Locale
+  region?: PricingRegion
+}) {
   const metadata = { ...input.attribution, app: APP, product: 'outfit_guide', ...(input.userId ? { userId: input.userId } : {}) }
   // Branding rides along like in createCheckout (newer than these types).
   const extra = { branding_settings: BRANDING }
   const params: Stripe.Checkout.SessionCreateParams = {
     ...extra,
     mode: 'payment',
-    line_items: [{ price: await priceFor('outfit_guide'), quantity: 1 }],
+    line_items: [{ price: await priceFor('outfit_guide', input.region ?? 'us'), quantity: 1 }],
+    locale: STRIPE_LOCALE[input.locale ?? 'en'],
     client_reference_id: `${APP}_guide_${input.userId ?? 'guest'}`,
     ...(input.email ? { customer_email: input.email } : {}),
     metadata,
-    custom_text: { submit: { message: 'One-time payment. Instant PDF download, and we email it to you too.' } },
+    custom_text: {
+      submit: {
+        message: {
+          en: 'One-time payment. Instant PDF download, and we email it to you too.',
+          'pt-BR': 'Pagamento único. Download imediato do PDF, e também enviamos por e-mail.',
+          es: 'Pago único. Descarga inmediata del PDF, y también te lo enviamos por email.',
+        }[input.locale ?? 'en'],
+      },
+    },
     payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
-    success_url: `${env.APP_URL}/guide/thanks?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.APP_URL}/guide?checkout=cancelled`,
+    success_url: `${appUrl(input.locale, '/guide/thanks')}?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${appUrl(input.locale, '/guide')}?checkout=cancelled`,
   }
   const session = await stripe().checkout.sessions.create(params)
 
@@ -503,6 +553,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           stripePaymentIntentId: grant.paymentIntentId,
           amountTotal: grant.amount,
           currency: grant.currency,
+          amountUsd: toUsdCents(grant.amount, grant.currency),
           credits,
           createdAt: new Date(),
         },

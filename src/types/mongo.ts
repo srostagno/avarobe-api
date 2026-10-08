@@ -1,5 +1,7 @@
 import type { Binary, ObjectId } from 'mongodb'
 
+import type { Locale } from '../utils/locale.js'
+
 export type UserDocument = {
   _id: ObjectId
   email: string
@@ -74,6 +76,9 @@ export type UserDocument = {
   // are deleted after GUEST_TTL_DAYS if they never save.
   guest?: boolean
   claimedAt?: Date | null
+  // The language they use Avarobe in (utils/locale.ts): AI text, emails and
+  // links are made in it. Missing means English (accounts from before).
+  locale?: Locale
 }
 
 // 'edge': the web host's reading of the sign-up request (analytics/geo.ts).
@@ -207,6 +212,9 @@ export type PurchaseDocument = {
   stripePaymentIntentId: string | null
   amountTotal: number
   currency: string
+  // The amount in rough US cents (billing/pricing.ts), so revenue adds up
+  // across currencies; missing on purchases from before (all in dollars).
+  amountUsd?: number
   credits: number
   createdAt: Date
   // Money back: the 7-day guarantee asked for in the app, or a refund made in

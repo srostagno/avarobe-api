@@ -1,4 +1,6 @@
 import { env } from '../config/env.js'
+import { localizeInstructions, type Locale } from './locale.js'
+import { currentLocale } from './request-locale.js'
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 
@@ -125,13 +127,15 @@ export async function createStructuredResponse<T>(input: {
   // Default to AI_TEXT_MODEL / AI_TEXT_REASONING_EFFORT.
   model?: string
   reasoningEffort?: 'low' | 'medium' | 'high'
+  // The person's language: what they read comes back in it (utils/locale).
+  locale?: Locale | null
 }): Promise<T> {
   const payload = await postOpenAi<ResponsesPayload>(
     '/responses',
     JSON.stringify({
       model: input.model ?? env.AI_TEXT_MODEL,
       reasoning: { effort: input.reasoningEffort ?? env.AI_TEXT_REASONING_EFFORT },
-      instructions: input.instructions,
+      instructions: localizeInstructions(input.instructions, input.locale ?? currentLocale()),
       input: [{ role: 'user', content: input.content }],
       text: {
         format: {

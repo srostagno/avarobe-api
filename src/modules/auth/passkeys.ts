@@ -20,6 +20,7 @@ import type { AuthChallengeDocument, PasskeyDocument } from '../../types/mongo.j
 import { issueAuthSession } from '../../utils/auth-session.js'
 import { passkeyAddedEmail, sendNotice } from '../../utils/email.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
+import { appUrl } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { serializeUser } from '../../utils/serializers.js'
@@ -246,7 +247,7 @@ const passkeyRoutes: FastifyPluginAsync = async (app) => {
         content: passkeyAddedEmail({
           firstName: user.firstName,
           deviceName: passkey.name,
-          accountUrl: `${env.APP_URL}/studio/account`,
+          accountUrl: appUrl(user.locale, '/studio/account'),
         }),
       })
 

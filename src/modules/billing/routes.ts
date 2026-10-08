@@ -6,12 +6,13 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
-import type { PurchaseProduct, RefundReason } from '../../types/mongo.js'
+import type { PurchaseProduct, RefundReason, UserDocument } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
-import { trackServerEvent } from '../analytics/service.js'
+import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
+import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
 import {
   BillingNotConfiguredError,
@@ -190,17 +191,36 @@ const confirmSchema = z.object({
   sessionId: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/),
 })
 
-function offer() {
+function offer(region: PricingRegion) {
   return Object.fromEntries(
     Object.entries(PRODUCTS).map(([id, product]) => [
       id,
       {
-        amount: product.amount(),
-        currency: 'usd',
+        ...regionalPrice(id as PurchaseProduct, region),
         credits: product.credits(),
         interval: product.recurring ?? null,
       },
     ]),
+  )
+}
+
+// The reports bought in the last days, counted toward Pro annual, at the
+// prices of the buyer's region (billingState counts in US dollars).
+function regionalReportCredit(user: Pick<UserDocument, 'colorReportAt' | 'styleReportAt'>, state: ReturnType<typeof billingState>, region: PricingRegion) {
+  if (state.reportCreditCents === 0) {
+    return 0
+  }
+
+  if (region === 'us') {
+    return state.reportCreditCents
+  }
+
+  const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  const recent = (at: Date | null | undefined) => Boolean(at && at.getTime() + windowMs > Date.now())
+
+  return Math.min(
+    regionalAmount('reports_bundle', region),
+    (recent(user.colorReportAt) ? regionalAmount('color_report', region) : 0) + (recent(user.styleReportAt) ? regionalAmount('style_report', region) : 0),
   )
 }
 
@@ -259,14 +279,23 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
 }
 
 const billingRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/offer', async () => ({
+  // Prices where the visitor is (or, signed in, where they signed up).
+  app.get('/offer', async (request) => {
+    const userId = await optionalUserId(request)
+    const user = userId ? await app.collections.users.findOne({ _id: userId }, { projection: { location: 1 } }) : null
+    const region = pricingRegion(request, user)
+
+    return {
     available: stripeConfigured(),
-    products: offer(),
+    region,
+    currency: REGION_CURRENCY[region],
+    products: offer(region),
     free: { credits: env.SIGNUP_CREDITS, avatarRuns: env.FREE_AVATAR_RUNS },
     // null while the trial is off: the web leads with the Color Advisor then.
     trial: env.PRO_TRIAL ? { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS } : null,
     reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
-  }))
+    }
+  })
 
   app.post(
     '/checkout',
@@ -299,13 +328,16 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const discountCents = parsed.data.product === 'pro_annual' ? state.reportCreditCents : 0
+        const location = await app.collections.users.findOne({ _id: userId }, { projection: { location: 1 } })
+        const region = pricingRegion(request, location)
+        const discountCents = parsed.data.product === 'pro_annual' ? regionalReportCredit(user, state, region) : 0
         const { url, clientSecret } = await createCheckout({
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
           discountCents,
           embedded: parsed.data.embedded,
+          region,
           // An admin's own test purchase never reaches Meta or Google as a
           // conversion: without the browser ids there's nothing to report.
           attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
@@ -315,7 +347,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           userId,
           props: {
             product: parsed.data.product,
-            amount: Math.max(0, PRODUCTS[parsed.data.product].amount() - discountCents),
+            amount: Math.max(0, regionalAmount(parsed.data.product, region) - discountCents),
+            currency: REGION_CURRENCY[region],
             placement: parsed.data.placement ?? 'unknown',
             ui: parsed.data.embedded ? 'embedded' : 'hosted',
           },
@@ -489,7 +522,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       app.collections.purchases
         .aggregate<{ _id: string; count: number; revenue: number; buyers: unknown[] }>([
           { $match: { createdAt: { $gte: since }, userId: { $nin: adminIds }, refundedAt: null } },
-          { $group: { _id: '$product', count: { $sum: 1 }, revenue: { $sum: '$amountTotal' }, buyers: { $addToSet: '$userId' } } },
+          { $group: { _id: '$product', count: { $sum: 1 }, revenue: { $sum: { $ifNull: ['$amountUsd', '$amountTotal'] } }, buyers: { $addToSet: '$userId' } } },
         ])
         .toArray(),
       countPro('month'),

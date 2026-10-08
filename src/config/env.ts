@@ -140,6 +140,10 @@ const envSchema = z.object({
   // Trying before an account (guests): how long an unsaved guest is kept,
   // and how many can start in a day (each selfie costs an AI read).
   GUEST_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(14),
+  // Rough dollars per real and per peso, only for the admin's revenue totals
+  // (billing/pricing.ts); Stripe does the real conversion.
+  FX_USD_PER_BRL: z.coerce.number().positive().default(0.18),
+  FX_USD_PER_MXN: z.coerce.number().positive().default(0.055),
   GUEST_DAILY_LIMIT: z.coerce.number().int().min(0).default(2000),
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),

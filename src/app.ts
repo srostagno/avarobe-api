@@ -31,6 +31,7 @@ import lifecycleRoutes from './modules/lifecycle/routes.js'
 import mediaRoutes from './modules/media/routes.js'
 import meRoutes from './modules/me/routes.js'
 import mongodbPlugin from './plugins/mongodb.js'
+import { registerRequestLocale } from './utils/request-locale.js'
 
 function isLoopbackOrigin(origin: string) {
   try {
@@ -61,6 +62,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   })
 
   await app.register(cookie)
+  registerRequestLocale(app)
 
   await app.register(cors, {
     credentials: true,

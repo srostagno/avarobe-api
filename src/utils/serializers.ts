@@ -1,3 +1,4 @@
+import { withoutLocalePrefix } from './locale.js'
 import type {
   AvatarDocument,
   CollectionDocument,
@@ -13,7 +14,8 @@ import { signedUrlOrNull } from './storage.js'
 // Came for their colors (a color guide, or a Colors ad): the studio starts
 // with a selfie and their colors, and the avatar comes after.
 export function focusOf(user: Pick<UserDocument, 'acquisition'>): 'colors' | null {
-  const landing = user.acquisition?.landing ?? ''
+  // First touches keep the page's language prefix ('/pt-br/color-analysis').
+  const landing = withoutLocalePrefix(user.acquisition?.landing ?? '')
   const content = user.acquisition?.content ?? ''
 
   return landing.startsWith('/color-analysis') || content.startsWith('colors') ? 'colors' : null
@@ -25,6 +27,7 @@ export function serializeUser(user: UserDocument) {
     // A guest (trying before an account) has no email of its own yet.
     email: user.guest ? '' : user.email,
     guest: Boolean(user.guest),
+    locale: user.locale ?? 'en',
     firstName: user.firstName,
     focus: focusOf(user),
     hasPassword: Boolean(user.passwordHash),

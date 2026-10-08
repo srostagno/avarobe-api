@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 
 import { env } from '../config/env.js'
 import type { UserDocument } from '../types/mongo.js'
+import { appUrl } from './locale.js'
 import { toObjectId } from './object-id.js'
 import { generateSecureToken, hashToken } from './tokens.js'
 
@@ -96,7 +97,8 @@ export async function createLink(
     { expiresIn: config.ttl() },
   )
 
-  return `${env.APP_URL}${config.path}?token=${encodeURIComponent(token)}`
+  // In their language, so the page that opens is too.
+  return `${appUrl(user.locale, config.path)}?token=${encodeURIComponent(token)}`
 }
 
 // Checks signature, expiry and purpose without using up the link.

@@ -4,6 +4,7 @@ import type { ObjectId } from 'mongodb'
 import type { PurchaseDocument, PurchaseProduct, RefundReason, UserDocument } from '../../types/mongo.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { adminUserIds } from './entitlements.js'
+import { toUsdCents } from './pricing.js'
 import { PRODUCTS, refundPayment } from './stripe.js'
 
 // The 7-day money-back guarantee on one-time purchases: asked for in the
@@ -257,7 +258,8 @@ export async function refundsReport(app: FastifyInstance, days: number) {
     days,
     purchases: covered,
     refunds: refunded.length,
-    refundedAmount: refunded.reduce((sum, purchase) => sum + (purchase.refund?.amount ?? purchase.amountTotal), 0),
+    // In rough US cents, so refunds in reais or pesos add up.
+    refundedAmount: refunded.reduce((sum, purchase) => sum + toUsdCents(purchase.refund?.amount ?? purchase.amountTotal, purchase.currency), 0),
     byReason,
     rows: refunded.map((purchase) => ({
       id: purchase._id.toString(),
@@ -265,6 +267,7 @@ export async function refundsReport(app: FastifyInstance, days: number) {
       email: emails.get(purchase.userId.toString()) ?? null,
       product: purchase.product,
       amount: purchase.refund?.amount ?? purchase.amountTotal,
+      currency: purchase.currency,
       purchasedAt: purchase.createdAt.toISOString(),
       refundedAt: (purchase.refundedAt as Date).toISOString(),
       hoursAfter: Math.round(((purchase.refundedAt as Date).getTime() - purchase.createdAt.getTime()) / 3_600_000),

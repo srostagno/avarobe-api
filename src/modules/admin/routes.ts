@@ -31,7 +31,7 @@ const avatarsSchema = z.object({
 async function purchasesByUser(app: FastifyInstance, userIds: ObjectId[]) {
   const [purchases, guides] = await Promise.all([
     app.collections.purchases
-      .find({ userId: { $in: userIds }, amountTotal: { $gt: 0 }, refundedAt: null }, { projection: { userId: 1, product: 1, amountTotal: 1, createdAt: 1 } })
+      .find({ userId: { $in: userIds }, amountTotal: { $gt: 0 }, refundedAt: null }, { projection: { userId: 1, product: 1, amountTotal: 1, amountUsd: 1, createdAt: 1 } })
       .toArray(),
     app.collections.guideOrders
       .find({ userId: { $in: userIds }, amount: { $gt: 0 } }, { projection: { userId: 1, amount: 1, createdAt: 1 } })
@@ -50,7 +50,7 @@ async function purchasesByUser(app: FastifyInstance, userIds: ObjectId[]) {
     byUser.set(userId.toString(), entry)
   }
 
-  for (const purchase of purchases) add(purchase.userId, purchase.product, purchase.amountTotal, purchase.createdAt)
+  for (const purchase of purchases) add(purchase.userId, purchase.product, purchase.amountUsd ?? purchase.amountTotal, purchase.createdAt)
   for (const order of guides) add(order.userId, 'outfit_guide', order.amount, order.createdAt)
 
   return byUser
@@ -541,7 +541,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       .toArray()
     const userIds = [...new Set(sends.map((send) => send.userId.toString()))].map((id) => new ObjectId(id))
     const purchases = await app.collections.purchases
-      .find({ userId: { $in: userIds }, createdAt: { $gte: since } }, { projection: { userId: 1, amountTotal: 1, createdAt: 1, product: 1 } })
+      .find({ userId: { $in: userIds }, createdAt: { $gte: since } }, { projection: { userId: 1, amountTotal: 1, amountUsd: 1, createdAt: 1, product: 1 } })
       .toArray()
     const sendsByUser = new Map<string, typeof sends>()
 
@@ -564,7 +564,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       if (clicked) {
         const key = clicked._id.toString()
         const current = attributed.get(key) ?? { purchases: 0, revenue: 0 }
-        attributed.set(key, { purchases: current.purchases + 1, revenue: current.revenue + purchase.amountTotal })
+        attributed.set(key, { purchases: current.purchases + 1, revenue: current.revenue + (purchase.amountUsd ?? purchase.amountTotal) })
       }
 
       for (const send of userSends) {

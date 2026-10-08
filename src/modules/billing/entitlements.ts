@@ -70,6 +70,7 @@ type BillingFields = Pick<
   | 'compPaused'
   | 'proTrialAt'
   | 'guest'
+  | 'locale'
 >
 
 export function isAdmin(user: Pick<UserDocument, 'email'>) {
@@ -217,6 +218,7 @@ const BILLING_PROJECTION = {
   compPaused: 1,
   proTrialAt: 1,
   guest: 1,
+  locale: 1,
 }
 
 export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {

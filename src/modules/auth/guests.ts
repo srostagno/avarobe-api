@@ -4,6 +4,7 @@ import { ObjectId } from 'mongodb'
 import { env } from '../../config/env.js'
 import type { Acquisition, UserDocument } from '../../types/mongo.js'
 import { guestEmail } from '../../utils/guests.js'
+import { type Locale, requestLocale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { signupLocation } from '../analytics/geo.js'
 import { toAcquisition, trackServerEvent } from '../analytics/service.js'
@@ -45,6 +46,7 @@ export async function createGuest(app: FastifyInstance, request: FastifyRequest,
     // No address to send tips to; cleared when they save with their email.
     emailTipsOptOutAt: now,
     guest: true,
+    locale: requestLocale(request),
     acquisition: toAcquisition(acquisition),
     location: signupLocation(request, now),
   }
@@ -62,7 +64,7 @@ export type ClaimResult = { ok: true; user: UserDocument } | { ok: false; reason
 export async function claimGuest(
   app: FastifyInstance,
   guestId: ObjectId,
-  fields: { email: string; firstName: string; passwordHash?: string; acquisition?: Acquisition | null },
+  fields: { email: string; firstName: string; passwordHash?: string; acquisition?: Acquisition | null; locale?: Locale },
 ): Promise<ClaimResult> {
   const guest = await app.collections.users.findOne({ _id: guestId }, { projection: { guest: 1, acquisition: 1, firstName: 1 } })
 
@@ -85,6 +87,7 @@ export async function claimGuest(
           firstName: fields.firstName || guest.firstName,
           claimedAt: now,
           lastLoginAt: now,
+          ...(fields.locale ? { locale: fields.locale } : {}),
           updatedAt: now,
           ...(fields.passwordHash ? { passwordHash: fields.passwordHash, passwordUpdatedAt: now } : {}),
           // The first touch the browser knew when they started wins.

@@ -32,6 +32,7 @@ import {
   verifyPassword,
 } from '../../utils/password.js'
 import { serializeUser } from '../../utils/serializers.js'
+import { appUrl, requestLocale } from '../../utils/locale.js'
 import { hashToken } from '../../utils/tokens.js'
 import { signupLocation } from '../analytics/geo.js'
 import { acquisitionSchema, optionalUserId, toAcquisition, trackServerEvent } from '../analytics/service.js'
@@ -156,7 +157,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       to: recipient(user),
       content: passwordChangedEmail({
         firstName: user.firstName,
-        resetUrl: `${env.APP_URL}/login?mode=forgot`,
+        resetUrl: appUrl(user.locale, '/login?mode=forgot'),
       }),
     })
   }
@@ -246,6 +247,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         email: parsed.data.email,
         firstName: parsed.data.firstName ?? '',
         acquisition: toAcquisition(parsed.data.acquisition),
+        locale: requestLocale(request),
       })
 
       if (!result.ok) {
@@ -338,6 +340,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           firstName,
           passwordHash,
           acquisition: toAcquisition(parsed.data.acquisition),
+          locale: requestLocale(request),
         })
 
         if (!claimed.ok) {
@@ -391,6 +394,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             emailVerifiedAt: null,
             passwordHash,
             passwordUpdatedAt: now,
+            locale: requestLocale(request),
             acquisition: toAcquisition(parsed.data.acquisition),
             location: signupLocation(request, now),
           })
@@ -466,6 +470,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           updatedAt: now,
           lastLoginAt: null,
           emailVerifiedAt: null,
+          locale: requestLocale(request),
           acquisition: toAcquisition(parsed.data.acquisition),
           location: signupLocation(request, now),
         }
