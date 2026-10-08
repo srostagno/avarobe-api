@@ -889,6 +889,30 @@ export function checkoutRescueEmail(input: Recipient & { product: string; url: s
   })
 }
 
+// Bought the Color Advisor and never opened the report: a link that signs
+// them in on it. About what they paid for, so it goes out even to people who
+// turned off tips.
+export function reportUnopenedEmail(input: Recipient & { season: string | null; url: string }): EmailContent {
+  const { c, locale } = reader(input)
+  const season = input.season ? seasonName(input.season, locale) : null
+
+  return layout({
+    subject: c.reportUnopened.subject,
+    preheader: c.reportUnopened.preheader,
+    hero: HERO.drape(c),
+    recipient: input,
+    blocks: [
+      eyebrow(c.reportUnopened.eyebrow),
+      heading(c.reportUnopened.heading(season)),
+      greeting(c, input.firstName),
+      paragraph(c.reportUnopened.intro),
+      button(c.reportUnopened.button, input.url),
+      small(c.reportUnopened.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // ---------------------------------------------------------------- trial
 // Pro trial notices. Transactional (billing terms), so they go out even to
 // people who turned off tips, and carry no postal address.

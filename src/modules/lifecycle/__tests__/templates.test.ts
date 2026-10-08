@@ -12,6 +12,7 @@ import {
   crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
+  reportUnopenedEmail,
   trialEndingEmail,
   trialStartedEmail,
   upgradeLastCallEmail,
@@ -23,6 +24,21 @@ import {
 const recipient = { firstName: 'Nora', email: 'nora@example.com', unsubscribeUrl: 'https://www.avarobe.com/email/unsubscribe?t=x' }
 
 describe('lifecycle templates', () => {
+  it('sends an unopened report back to it, in their language, with their season', () => {
+    const url = 'https://www.avarobe.com/auth/link?t=x'
+    const en = reportUnopenedEmail({ ...recipient, season: 'Soft Autumn', url })
+    const pt = reportUnopenedEmail({ ...recipient, locale: 'pt-BR', season: 'Soft Autumn', url })
+    const es = reportUnopenedEmail({ ...recipient, locale: 'es', season: null, url })
+    assert.equal(en.subject, 'Your color report is ready to open')
+    assert.ok(en.text.includes('Your Soft Autumn colors are waiting.'))
+    assert.ok(pt.text.includes('Suas cores de Outono Suave estão esperando por você.'))
+    assert.ok(pt.html.includes('Abrir meu relatório'))
+    assert.ok(es.text.includes('Tus colores te están esperando.'))
+    for (const email of [en, pt, es]) {
+      assert.ok(email.html.includes(url))
+    }
+  })
+
   it('escapes what people typed', () => {
     const email = welcomeEmail({ ...recipient, firstName: '<b>Nora</b>', stage: 'new', season: null })
     assert.ok(!email.html.includes('<b>Nora</b>'))

@@ -14,6 +14,7 @@ import {
   appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
+  reportUnopenedEmail,
   crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
@@ -258,6 +259,8 @@ export function lifecycleContentFor(
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
       return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? appUrl(locale, '/studio') })
+    case 'report_unopened':
+      return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
     case 'price_drop':
       return priceDropEmail({
         ...recipient,
@@ -674,6 +677,109 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   }
 }
 
+// ---------------------------------------------------------------- unopened report
+
+// The Color Advisor's report is written the first time its owner opens it.
+// Someone who paid and left before opening it (Oct 8: a buyer watched the
+// next advisors' videos and closed the page) gets one email an hour later,
+// with a link that signs them in on it.
+const REPORT_REMINDER_AFTER_MS = 60 * 60 * 1000
+const REPORT_REMINDER_WITHIN_MS = 3 * 24 * 60 * 60 * 1000
+
+export async function sendReportReminders(app: FastifyInstance, now = new Date()) {
+  const buyers = await app.collections.users
+    .find({
+      colorReportAt: {
+        $gte: new Date(now.getTime() - REPORT_REMINDER_WITHIN_MS),
+        $lte: new Date(now.getTime() - REPORT_REMINDER_AFTER_MS),
+      },
+      'lifecycleEmails.report_unopened': { $exists: false },
+    })
+    .limit(BATCH)
+    .toArray()
+  let sent = 0
+
+  for (const user of buyers) {
+    if (isAdmin(user)) {
+      continue
+    }
+
+    const avatar = await app.collections.avatars.findOne(
+      { userId: user._id },
+      { projection: { colorReport: 1, colorAnalysis: 1 } },
+    )
+
+    // Opened it (or there are no colors to write it from yet).
+    if (!avatar?.colorAnalysis || avatar.colorReport) {
+      continue
+    }
+
+    if (await sendReportReminder(app, user, avatar.colorAnalysis.season ?? null, now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendReportReminder(app: FastifyInstance, user: UserDocument, season: string | null, now: Date) {
+  const field = 'lifecycleEmails.report_unopened'
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false } },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const locale = user.locale ?? 'en'
+    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio/report' })
+    const content = reportUnopenedEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      season,
+      url,
+    })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'report_unopened',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), delivered }, 'Unopened report email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Unopened report email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+    return false
+  }
+}
+
 // ---------------------------------------------------------------- price drop
 
 // Their drape photo in an email: the locked copy (best side blurred), served
@@ -1034,6 +1140,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendCrossSells(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Cross-sell run crashed')
+    })
+    void sendReportReminders(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Unopened report run crashed')
     })
   }
 

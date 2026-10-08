@@ -315,6 +315,17 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace funciona una sola vez y caduca en 3 días.',
   },
 
+  reportUnopened: {
+    subject: 'Tu reporte de color está listo para abrir',
+    preheader: 'Tus mejores colores, tu nº 1 y tu paleta completa, en tu propia cara.',
+    eyebrow: 'Tu Asesor de Color',
+    heading: (season: string | null) => (season ? `Tus colores de ${season} te están esperando.` : 'Tus colores te están esperando.'),
+    intro:
+      'Desbloqueaste tu Asesor de Color, pero todavía no abres tu reporte. Se arma en un minuto: tus mejores colores y tu nº 1 en tu cara, tu paleta completa, la prueba de telas y tus guías.',
+    button: 'Abrir mi reporte',
+    expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
+  },
+
   trialStarted: {
     subject: (days: number) => `Tus ${days} días de Avarobe Pro empiezan ahora`,
     preheader: (end: string, monthly: string) => `Todo lo de Pro hasta el ${end}. Después, ${monthly} al mes, o cancela cuando quieras antes.`,

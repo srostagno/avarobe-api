@@ -159,6 +159,8 @@ export type LifecycleEmailKind =
   | 'xsell_magazine'
   | 'xsell_event'
   | 'xsell_guide'
+  // Bought the Color Advisor and never opened the report: once, an hour on.
+  | 'report_unopened'
 
 export type ProSubscription = {
   subscriptionId: string

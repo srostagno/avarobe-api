@@ -64,6 +64,9 @@ async function summary(app: FastifyInstance, avatar: AvatarDocument, user: UserD
     season: avatar.colorAnalysis?.season ?? null,
     presentation: avatar.body?.presentation ?? null,
     color: avatar.colorReport ? { at: avatar.colorReport.createdAt.toISOString() } : null,
+    // Bought the Color Advisor but never opened it: the report is written
+    // the first time its owner opens it, so there's nothing to see yet.
+    notOpened: Boolean(user.colorReportAt) && !avatar.colorReport,
     style: avatar.styleProfile ? { at: avatar.styleProfile.createdAt.toISOString() } : null,
     drape: avatar.drape?.status ?? null,
     boards: {
@@ -104,10 +107,27 @@ const adminReportRoutes: FastifyPluginAsync = async (app) => {
       .find({ $or: [{ 'colorReport.createdAt': { $gte: since } }, { 'styleProfile.createdAt': { $gte: since } }] })
       .limit(500)
       .toArray()
-    const owners = await app.collections.users.find({ _id: { $in: avatars.map((avatar) => avatar.userId) } }).toArray()
+    // And the ones paid for but never opened, by when they paid, so a
+    // purchase with no report yet still shows up.
+    const buyers = await app.collections.users.find({ colorReportAt: { $gte: since } }, { projection: { _id: 1 } }).limit(500).toArray()
+    const listed = new Set(avatars.map((avatar) => avatar._id.toString()))
+    const unopened = buyers.length
+      ? (
+          await app.collections.avatars
+            .find({ userId: { $in: buyers.map((buyer) => buyer._id) }, colorReport: { $exists: false } })
+            .toArray()
+        ).filter((avatar) => !listed.has(avatar._id.toString()))
+      : []
+    const owners = await app.collections.users
+      .find({ _id: { $in: [...avatars, ...unopened].map((avatar) => avatar.userId) } })
+      .toArray()
     const ownerById = new Map(owners.map((user) => [user._id.toString(), user]))
-    const rows = avatars
-      .map((avatar) => ({ avatar, user: ownerById.get(avatar.userId.toString()), at: writtenAt(avatar) }))
+    const paidAt = (avatar: AvatarDocument) => ownerById.get(avatar.userId.toString())?.colorReportAt?.getTime() ?? 0
+    const rows = [
+      ...avatars.map((avatar) => ({ avatar, at: writtenAt(avatar) })),
+      ...unopened.map((avatar) => ({ avatar, at: paidAt(avatar) })),
+    ]
+      .map(({ avatar, at }) => ({ avatar, user: ownerById.get(avatar.userId.toString()), at }))
       .filter((row): row is { avatar: AvatarDocument; user: UserDocument; at: number } => Boolean(row.user) && !isAdmin(row.user!))
       .filter((row) => !before || row.at < before.getTime())
       .sort((a, b) => b.at - a.at)

@@ -338,6 +338,19 @@ export const enEmails = {
     expiry: 'The link works once and expires in 3 days.',
   },
 
+  // Bought the Color Advisor, never opened the report (it's written the
+  // first time they open it).
+  reportUnopened: {
+    subject: 'Your color report is ready to open',
+    preheader: 'Your best colors, your #1 and your full palette, on your own face.',
+    eyebrow: 'Your Color Advisor',
+    heading: (season: string | null) => (season ? `Your ${season} colors are waiting.` : 'Your colors are waiting.'),
+    intro:
+      'You unlocked your Color Advisor but haven’t opened your report yet. It takes about a minute to build: your best colors and your #1 on your own face, your full palette, the drape test and your guides.',
+    button: 'Open my report',
+    expiry: 'The link signs you in. It works once and expires in 3 days.',
+  },
+
   trialStarted: {
     subject: (days: number) => `Your ${days} days of Avarobe Pro start now`,
     preheader: (end: string, monthly: string) => `Everything in Pro until ${end}. Then ${monthly} a month, or cancel anytime before.`,
