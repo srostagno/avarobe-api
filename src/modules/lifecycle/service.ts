@@ -249,6 +249,10 @@ export function lifecycleContentFor(
   // Like the app, the emails show no best colors before they pay: the
   // season only (the palette card has no swatches then).
   const freeColors: ColorSwatch[] = []
+  // Colors first (no look): the offer emails lead with their own photo and
+  // pay from a sign-in link (sendOne makes both).
+  const colorsPhoto =
+    looks.count === 0 && analysis ? { heroUrl: offer?.heroUrl ?? null, ...(offer?.url ? { url: offer.url } : {}) } : null
 
   switch (kind) {
     case 'welcome': {
@@ -269,9 +273,9 @@ export function lifecycleContentFor(
             : null,
       })
     case 'upgrade_reminder':
-      return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors })
+      return upgradeReminderEmail({ ...recipient, season: analysis?.season ?? null, colors: freeColors, photo: colorsPhoto })
     case 'upgrade_last_call':
-      return upgradeLastCallEmail(recipient)
+      return upgradeLastCallEmail({ ...recipient, photo: colorsPhoto })
     case 'trial_started':
       return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user) })
     case 'trial_ending':
@@ -524,6 +528,9 @@ export async function sendTrialNotices(app: FastifyInstance, now = new Date()) {
 // Marks the email as sent before sending, so two API processes (or a slow
 // run overlapping the next) can never send it twice. A failed send is
 // rolled back and retried on a later run.
+// Where each colors offer email opens checkout from, for the funnel.
+const OFFER_FROM = { upgrade_offer: 'email_colors', upgrade_reminder: 'email_reminder', upgrade_last_call: 'email_last_call' } as const
+
 async function sendOne(
   app: FastifyInstance,
   user: UserDocument,
@@ -544,11 +551,13 @@ async function sendOne(
   const sendId = new ObjectId()
 
   try {
-    // The colors offer opens checkout signed in, on their own photo.
+    // The colors offer, its reminder and its last call open checkout signed
+    // in, on their own photo.
+    const from = OFFER_FROM[kind as keyof typeof OFFER_FROM]
     const offer =
-      kind === 'upgrade_offer' && facts.looks.count === 0 && facts.avatar?.colorAnalysis
+      from && facts.looks.count === 0 && facts.avatar?.colorAnalysis
         ? {
-            url: await createLink(app, user, 'sign_in', undefined, { next: '/studio?buy=color_report&from=email_colors' }),
+            url: await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=color_report&from=${from}` }),
             heroUrl: facts.avatar.drapePreview?.status === 'ready' && facts.avatar.drapePreview.lockedKey ? emailImageUrl(user._id, now) : null,
           }
         : undefined

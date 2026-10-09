@@ -786,16 +786,25 @@ export function priceDropEmail(
   })
 }
 
-export function upgradeReminderEmail(input: Recipient & { season: string | null; colors: ColorSwatch[] }): EmailContent {
+// Colors first (no look yet), the reminder and the last call show their
+// own photo like the offer (`heroUrl`: the locked drape test, null until
+// it's drawn) and pay from a one-tap sign-in link (`url`). Oct 9: 833 offer
+// emails since Oct 1 sold one report; the stock photo and a button to a page
+// that asks them to sign in first didn't help.
+type OfferPhoto = { heroUrl?: string | null; url?: string } | null
+
+export function upgradeReminderEmail(input: Recipient & { season: string | null; colors: ColorSwatch[]; photo?: OfferPhoto }): EmailContent {
   const x = reader(input)
   const { c } = x
   const { colors } = input
   const season = input.season ? x.season(input.season) : null
+  const photo = env.PRO_TRIAL ? null : (input.photo ?? null)
+  const personal = Boolean(photo?.heroUrl)
 
   return layout({
     subject: c.reminder.subject(season),
     preheader: c.reminder.preheader,
-    hero: HERO.drape(c),
+    hero: personal ? { src: photo!.heroUrl as string, alt: c.hero.paletteOffer } : HERO.drape(c),
     recipient: input,
     promotional: true,
     blocks: [
@@ -803,7 +812,7 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
       heading(c.reminder.heading),
       greeting(c, input.firstName),
       ...(season && colors.length > 0 ? [palette(c, season, colors, c.reminder.caption(colors.length))] : []),
-      paragraph(c.reminder.intro),
+      paragraph(personal ? c.reminder.introPhoto : c.reminder.intro),
       checklist(c.reminder.checklist),
       ...(env.PRO_TRIAL
         ? [
@@ -822,32 +831,45 @@ export function upgradeReminderEmail(input: Recipient & { season: string | null;
             plans([{ ...PLAN.colorReport(x), detail: c.reminder.oneTimeDetail, badge: c.reminder.startHere }, PLAN.proMonthly(x)]),
             small(c.common.renewalNote),
           ]),
-      button(c.common.seeMyPalette, x.link('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
+      photo
+        ? button(
+            c.paletteOffer.button(x.price('color_report')),
+            photo.url ?? x.link('/studio', 'upgrade_reminder', { buy: 'color_report', from: 'email_reminder' }),
+          )
+        : button(c.common.seeMyPalette, x.link('/studio/report', 'upgrade_reminder', { upgrade: 'palette' })),
       signature(c),
     ],
   })
 }
 
-export function upgradeLastCallEmail(input: Recipient): EmailContent {
+export function upgradeLastCallEmail(input: Recipient & { photo?: OfferPhoto }): EmailContent {
   const x = reader(input)
   const { c } = x
   const reports = x.price('reports_bundle')
 
   if (!env.PRO_TRIAL) {
     const once = c.common.priceOnce(x.price('color_report'))
+    const photo = input.photo ?? null
+    const personal = Boolean(photo?.heroUrl)
+
     return layout({
       subject: c.lastCall.subject,
       preheader: c.lastCall.preheader(once),
-      hero: HERO.drape(c),
+      hero: personal ? { src: photo!.heroUrl as string, alt: c.hero.paletteOffer } : HERO.drape(c),
       recipient: input,
       promotional: true,
       blocks: [
         eyebrow(c.common.lastReminder),
         heading(c.lastCall.heading),
         greeting(c, input.firstName),
-        paragraph(c.lastCall.intro),
+        paragraph(personal ? c.lastCall.introPhoto : c.lastCall.intro),
         priceBox(once, c.common.noSubscription, c.common.yoursToKeep),
-        button(c.common.seeMyPalette, x.link('/studio', 'upgrade_last_call', { upgrade: 'palette' })),
+        photo
+          ? button(
+              c.paletteOffer.button(x.price('color_report')),
+              photo.url ?? x.link('/studio', 'upgrade_last_call', { buy: 'color_report', from: 'email_last_call' }),
+            )
+          : button(c.common.seeMyPalette, x.link('/studio', 'upgrade_last_call', { upgrade: 'palette' })),
         small(c.lastCall.orPro),
         plans([PLAN.proMonthly(x), PLAN.pack(x)]),
         small(c.common.renewalNote),

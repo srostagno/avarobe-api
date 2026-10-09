@@ -84,6 +84,17 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     }),
     'upgrade-reminder': upgradeReminderEmail({ ...recipient, season: 'Warm Autumn', colors }),
     'upgrade-last-call': upgradeLastCallEmail(recipient),
+    // Colors first: the reminder and the last call on their own photo too.
+    'upgrade-reminder-colors-first': upgradeReminderEmail({
+      ...recipient,
+      season: 'Warm Autumn',
+      colors: [],
+      photo: { heroUrl: 'https://www.avarobe.com/demo/colors/lucia.webp', url: link },
+    }),
+    'upgrade-last-call-colors-first': upgradeLastCallEmail({
+      ...recipient,
+      photo: { heroUrl: 'https://www.avarobe.com/demo/colors/lucia.webp', url: link },
+    }),
     'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
     'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
     'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: link }),
@@ -106,6 +117,13 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     'auth-verify': verificationEmail({ firstName: 'Nora', url: link, forPasskey: false, locale }),
     'auth-verify-passkey': verificationEmail({ firstName: 'Nora', url: link, forPasskey: true, locale }),
     'auth-saved': savedEmail({ firstName: 'Nora', url: link, locale }),
+    // Saved from their colors: their season and drape test.
+    'auth-saved-colors': savedEmail({
+      firstName: '',
+      url: link,
+      locale,
+      colors: { season: 'Warm Autumn', drapeUrl: 'https://www.avarobe.com/demo/colors/lucia.webp' },
+    }),
     'auth-sign-in': signInLinkEmail({ firstName: 'Nora', url: link, locale }),
     'auth-continue': continueInBrowserEmail({ firstName: 'Nora', url: link, locale }),
     'auth-reset': passwordResetEmail({ firstName: 'Nora', url: link, locale }),

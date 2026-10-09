@@ -275,6 +275,9 @@ export const esEmails: EmailCopy = {
     heading: 'Mira todos los colores que te iluminan.',
     caption: (count: number) => `Ya viste ${count} de tus colores. Tu reporte te los muestra todos.`,
     intro: 'Tu Asesor de Color es un reporte visual hecho con tu propia foto, tuyo para siempre:',
+    // Colors first, with their own photo above (the locked drape test).
+    introPhoto:
+      'Esa eres tú arriba: el color que te apaga, junto a tus mejores colores, todavía borrosos. Tu Asesor de Color te los muestra todos en tu propia cara, y es tuyo para siempre:',
     checklist: [
       'Tu paleta completa: más de 30 colores entre básicos, de acento y protagonistas',
       'Una prueba de telas: tu cara junto a tus mejores y peores colores, como la de arriba',
@@ -294,6 +297,8 @@ export const esEmails: EmailCopy = {
     heading: 'Tu paleta completa, en tu propia cara.',
     intro:
       'Esta es nuestra última nota sobre los planes. Tu Asesor de Color te muestra todos los colores que te iluminan y los que conviene alejar de tu cara, hecho con tu propia foto y tuyo para siempre.',
+    introPhoto:
+      'Este es nuestro último recordatorio. Arriba está tu propia foto: tus mejores colores siguen borrosos, junto al que te apaga. Tu Asesor de Color te muestra todos los colores que te iluminan y los que debes alejar de tu cara, hecho con tu selfie y tuyo para siempre.',
     orPro: 'O vístete bien para cada ocasión con Pro:',
 
     trialSubject: 'Una última nota sobre tu estilista',

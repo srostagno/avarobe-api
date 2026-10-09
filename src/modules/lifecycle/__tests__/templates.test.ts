@@ -183,6 +183,27 @@ describe('offer emails, trial off: the Color Advisor leads', () => {
       assert.ok(!/trial|\$1\.00/i.test(last.text))
     }),
   )
+
+  it(
+    'show their own photo in the reminder and the last call too, colors first, and pay signed in',
+    withTrial(false, () => {
+      const photo = { heroUrl: 'https://api.example.com/email/i/abc.jpg', url: 'https://www.avarobe.com/continue?token=t' }
+      const reminder = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [], photo })
+      assert.ok(reminder.html.includes(photo.heroUrl))
+      assert.ok(reminder.html.includes(photo.url))
+      assert.ok(reminder.text.includes('That’s you above'))
+      assert.ok(reminder.text.includes('Get my full report · $4.99'))
+      const last = upgradeLastCallEmail({ ...recipient, photo })
+      assert.ok(last.html.includes(photo.heroUrl))
+      assert.ok(last.html.includes(photo.url))
+      assert.ok(!last.html.includes('upgrade=palette'))
+      // Not drawn yet: the stock photo and its words, still paying from the link.
+      const stock = upgradeReminderEmail({ ...recipient, season: 'Soft Summer', colors: [], photo: { heroUrl: null, url: photo.url } })
+      assert.ok(!stock.html.includes(photo.heroUrl))
+      assert.ok(!stock.text.includes('That’s you above'))
+      assert.ok(stock.html.includes(photo.url))
+    }),
+  )
 })
 
 describe('price drop email', () => {

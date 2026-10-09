@@ -296,6 +296,9 @@ export const enEmails = {
     heading: 'See every color that lights you up.',
     caption: (count: number) => `You’ve seen ${count} of your colors. Your report shows all of them.`,
     intro: 'Your Color Advisor is a visual report made from your own photo, yours to keep:',
+    // Colors first, with their own photo above (the locked drape test).
+    introPhoto:
+      'That’s you above: the color that drains you, next to your best colors, still blurred. Your Color Advisor shows them all on your own face, yours to keep:',
     checklist: [
       'Your full palette: 30+ colors in basics, accents and statements',
       'A drape test: your face next to your best and worst colors, like the one above',
@@ -316,6 +319,8 @@ export const enEmails = {
     heading: 'Your full palette, on your own face.',
     intro:
       'This is our last note about plans. Your Color Advisor shows every color that lights you up and the ones to keep away from your face, made from your own photo and yours to keep.',
+    introPhoto:
+      'This is our last note about it. Above is your own photo: your best colors are still blurred, next to the one that drains you. Your Color Advisor shows every color that lights you up and the ones to keep away from your face, made from your selfie and yours to keep.',
     orPro: 'Or style every occasion with Pro:',
 
     // Trial on.

@@ -275,6 +275,9 @@ export const ptBrEmails: EmailCopy = {
     heading: 'Veja todas as cores que iluminam você.',
     caption: (count: number) => `Você já viu ${count} das suas cores. Seu relatório mostra todas.`,
     intro: 'Seu Consultor de Cores é um relatório visual feito a partir da sua própria foto, e é seu para sempre:',
+    // Colors first, with their own photo above (the locked drape test).
+    introPhoto:
+      'Essa é você acima: a cor que apaga seu rosto, ao lado das suas melhores cores, ainda desfocadas. Seu Consultor de Cores mostra todas no seu próprio rosto, e é seu para sempre:',
     checklist: [
       'Sua paleta completa: mais de 30 cores, entre básicas, de destaque e marcantes',
       'Um teste de tecidos: seu rosto ao lado das suas melhores e piores cores, como o de cima',
@@ -295,6 +298,8 @@ export const ptBrEmails: EmailCopy = {
     heading: 'Sua paleta completa, no seu próprio rosto.',
     intro:
       'Este é nosso último recado sobre os planos. Seu Consultor de Cores mostra todas as cores que iluminam você e as que devem ficar longe do rosto, é feito a partir da sua própria foto e é seu para sempre.',
+    introPhoto:
+      'Este é nosso último lembrete. Acima está a sua própria foto: suas melhores cores continuam desfocadas, ao lado da que apaga seu rosto. Seu Consultor de Cores mostra todas as cores que iluminam você e as que devem ficar longe do seu rosto, feito a partir da sua selfie e seu para sempre.',
     orPro: 'Ou vista-se bem para cada ocasião com o Pro:',
 
     trialSubject: 'Um último recado sobre seu stylist',
