@@ -320,6 +320,17 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace funciona una sola vez y caduca en 3 días.',
   },
 
+  payLink: {
+    subject: (name: string, wallet: string) => `${name}: paga con ${wallet} en un toque`,
+    preheader: (wallet: string) => `Se abre en el navegador de tu celular, con tu sesión iniciada y ${wallet} listo.`,
+    heading: 'Un toque y es tuyo.',
+    intro: (app: string, wallet: string) =>
+      `Tocaste Comprar dentro de ${app}, donde ${wallet} no funciona. Este botón abre Avarobe en el navegador de tu celular, con tu sesión ya iniciada y el pago listo: paga con ${wallet} o una tarjeta guardada en un toque.`,
+    anyApp: 'Instagram o Facebook',
+    button: (wallet: string) => `Pagar con ${wallet}`,
+    expiry: '¿Ya pagaste en la app? Entonces está todo listo. El enlace inicia tu sesión, funciona una sola vez y caduca en 3 días.',
+  },
+
   reportUnopened: {
     subject: 'Tu reporte de color está listo para abrir',
     preheader: 'Tus mejores colores, tu nº 1 y tu paleta completa, en tu propia cara.',

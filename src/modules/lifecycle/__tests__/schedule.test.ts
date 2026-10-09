@@ -166,6 +166,12 @@ describe('lastLifecycleEmailAt', () => {
       ago(HOUR).getTime(),
     )
   })
+
+  it('counts the pay link sent when they tapped Buy, so the rescue and offers wait after it', () => {
+    const paid = lastLifecycleEmailAt({ lifecycleEmailLastAt: ago(30 * HOUR), checkoutLinkSentAt: ago(HOUR) })
+    assert.equal(paid?.getTime(), ago(HOUR).getTime())
+    assert.equal(tooSoonAfter(paid, now.getTime()), true)
+  })
 })
 
 describe('tooSoonAfter', () => {

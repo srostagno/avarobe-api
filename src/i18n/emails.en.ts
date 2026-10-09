@@ -346,6 +346,21 @@ export const enEmails = {
     expiry: 'The link works once and expires in 3 days.',
   },
 
+  // Tapped Buy inside Instagram's or Facebook's browser, where Apple Pay
+  // and Google Pay don't work: sent at once, with a link that pays in the
+  // phone's own browser. `name` is the product, `wallet` Apple Pay or
+  // Google Pay, `app` Instagram or Facebook.
+  payLink: {
+    subject: (name: string, wallet: string) => `${name}: pay with ${wallet} in one tap`,
+    preheader: (wallet: string) => `Opens in your phone’s browser, signed in, ready for ${wallet}.`,
+    heading: 'One tap and it’s yours.',
+    intro: (app: string, wallet: string) =>
+      `You tapped Buy inside ${app}, where ${wallet} doesn’t work. This button opens Avarobe in your phone’s browser, already signed in, with your checkout ready: pay with ${wallet} or a saved card in one tap.`,
+    anyApp: 'Instagram or Facebook',
+    button: (wallet: string) => `Pay with ${wallet}`,
+    expiry: 'Already paid in the app? Then you’re all set. The link signs you in, works once and expires in 3 days.',
+  },
+
   // Bought the Color Advisor, never opened the report (it's written the
   // first time they open it).
   reportUnopened: {

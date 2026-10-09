@@ -732,10 +732,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       let payload: LinkPayload | null = null
 
       if (parsed.ok) {
-        payload = (await readLink(app, parsed.data.token, 'handoff')) ?? (await readLink(app, parsed.data.token, 'sign_in'))
+        payload =
+          (await readLink(app, parsed.data.token, 'handoff')) ??
+          (await readLink(app, parsed.data.token, 'sign_in')) ??
+          (await readLink(app, parsed.data.token, 'checkout'))
       }
 
-      const purpose = payload?.typ === 'sign_in' ? 'sign_in' : 'handoff'
+      const purpose = payload?.typ === 'sign_in' || payload?.typ === 'checkout' ? payload.typ : 'handoff'
+      const emailed = purpose !== 'handoff'
       const consumed = payload ? await consumeLink(app, payload, purpose) : null
 
       if (!payload || !consumed) {
@@ -747,7 +751,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         { _id: consumed._id },
         {
           $set: {
-            ...(purpose === 'sign_in' ? { emailVerifiedAt: consumed.emailVerifiedAt ?? now } : {}),
+            ...(emailed ? { emailVerifiedAt: consumed.emailVerifiedAt ?? now } : {}),
             lastLoginAt: now,
             updatedAt: now,
           },

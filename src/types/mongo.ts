@@ -21,6 +21,12 @@ export type UserDocument = {
   handoffSentAt?: Date | null
   signInNonceHash?: string | null
   signInSentAt?: Date | null
+  // The pay link emailed when they tap Buy inside Instagram's or Facebook's
+  // browser (lifecycle/service.ts sendCheckoutLink), and when each
+  // product's last went out (one per product every few hours).
+  checkoutLinkNonceHash?: string | null
+  checkoutLinkSentAt?: Date | null
+  checkoutLinkEmails?: Partial<Record<PurchaseProduct, Date>>
   passwordHash?: string | null
   passwordUpdatedAt?: Date | null
   // Throttles password guessing per account on top of the per-IP rate limit.
@@ -165,6 +171,9 @@ export type LifecycleEmailKind =
   | 'trial_ending'
   // A checkout left unpaid: a link to finish it in their own browser.
   | 'checkout_rescue'
+  // Tapped Buy inside Instagram's or Facebook's browser: at once, a link
+  // that pays in the phone's own browser, with Apple Pay or Google Pay.
+  | 'checkout_link'
   // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
   // the old price and bought nothing.
   | 'price_drop'

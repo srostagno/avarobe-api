@@ -282,6 +282,9 @@ export function lifecycleContentFor(
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
       return checkoutRescueEmail({ ...recipient, product: rescue?.product ?? 'color_report', url: rescue?.url ?? appUrl(locale, '/studio') })
+    case 'checkout_link':
+      // Sent the moment they tap Buy, by lifecycle/checkout-link.ts.
+      throw new Error('checkout_link emails are built by sendCheckoutLink')
     case 'report_unopened':
       return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
     case 'price_drop':

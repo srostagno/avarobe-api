@@ -62,12 +62,17 @@ function between(elapsed: number, after: number, window: number) {
 
 // The last lifecycle email of any kind. Checkout rescues sent before
 // 3-Oct-2026 didn't record themselves in lifecycleEmailLastAt, so they
-// count from their own date.
+// count from their own date. The pay link sent when they tap Buy
+// (checkoutLinkSentAt) counts too: the rescue and the offers, which ask
+// for the same purchase, wait their gap after it.
 export function lastLifecycleEmailAt(user: {
   lifecycleEmailLastAt?: Date | null
   lifecycleEmails?: Partial<Record<LifecycleEmailKind, Date>>
+  checkoutLinkSentAt?: Date | null
 }): Date | null {
-  const times = [user.lifecycleEmailLastAt, user.lifecycleEmails?.checkout_rescue].filter((value): value is Date => value instanceof Date)
+  const times = [user.lifecycleEmailLastAt, user.lifecycleEmails?.checkout_rescue, user.checkoutLinkSentAt].filter(
+    (value): value is Date => value instanceof Date,
+  )
   return times.length > 0 ? new Date(Math.max(...times.map((value) => value.getTime()))) : null
 }
 

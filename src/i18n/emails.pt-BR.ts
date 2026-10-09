@@ -321,6 +321,17 @@ export const ptBrEmails: EmailCopy = {
     expiry: 'O link funciona uma vez e expira em 3 dias.',
   },
 
+  payLink: {
+    subject: (name: string, wallet: string) => `${name}: pague com ${wallet} em um toque`,
+    preheader: (wallet: string) => `Abre no navegador do seu celular, com sua conta conectada e o ${wallet} pronto.`,
+    heading: 'Um toque e é seu.',
+    intro: (app: string, wallet: string) =>
+      `Você tocou em Comprar dentro do ${app}, onde o ${wallet} não funciona. Este botão abre o Avarobe no navegador do seu celular, já com sua conta conectada e o pagamento pronto: pague com ${wallet} ou um cartão salvo em um toque.`,
+    anyApp: 'Instagram ou do Facebook',
+    button: (wallet: string) => `Pagar com ${wallet}`,
+    expiry: 'Já pagou no app? Então está tudo certo. O link conecta sua conta, funciona uma vez e expira em 3 dias.',
+  },
+
   reportUnopened: {
     subject: 'Seu relatório de cores está pronto para abrir',
     preheader: 'Suas melhores cores, a sua nº 1 e sua cartela completa, no seu próprio rosto.',

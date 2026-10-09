@@ -12,6 +12,7 @@ import path from 'node:path'
 
 import { REGION_CURRENCY, regionalAmount, type PricingRegion } from '../src/modules/billing/pricing.js'
 import { editText } from '../src/modules/lifecycle/assets.js'
+import { shortProductName } from '../src/modules/lifecycle/checkout-link.js'
 import { EDITS } from '../src/modules/looks/edits.js'
 import {
   avatarNudgeEmail,
@@ -21,6 +22,7 @@ import {
   outfitGuideEmail,
   priceDropEmail,
   trialEndingEmail,
+  checkoutLinkEmail,
   checkoutRescueEmail,
   trialStartedEmail,
   upgradeLastCallEmail,
@@ -98,6 +100,15 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
     'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
     'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: link }),
+    // Tapped Buy inside Instagram on an iPhone (lifecycle/checkout-link.ts).
+    'checkout-link': checkoutLinkEmail({
+      ...recipient,
+      product: 'color_report',
+      name: shortProductName('color_report', locale),
+      url: link,
+      wallet: 'Apple Pay',
+      app: 'Instagram',
+    }),
     // PREVIEW_PHOTO_URL: a public image standing in for their locked drape photo
     // (a fictional face); without it, the email's fallback picture.
     'price-drop': priceDropEmail({

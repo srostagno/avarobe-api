@@ -934,6 +934,33 @@ export function checkoutRescueEmail(input: Recipient & { product: string; url: s
   })
 }
 
+// Tapped Buy inside Instagram's or Facebook's browser, where there's no
+// Apple Pay or Google Pay: at once, a link that opens their checkout in the
+// phone's own browser, signed in. They asked to pay, so it isn't
+// promotional and goes out even to people who turned off tips.
+export function checkoutLinkEmail(
+  input: Recipient & { product: string; name: string; url: string; wallet: string; app: string | null },
+): EmailContent {
+  const { c } = reader(input)
+  const report = /report|addon|reports_bundle|advisors_bundle|mirror/.test(input.product)
+
+  return layout({
+    subject: c.payLink.subject(input.name, input.wallet),
+    preheader: c.payLink.preheader(input.wallet),
+    hero: report ? HERO.drape(c) : HERO.occasions(c),
+    recipient: input,
+    blocks: [
+      eyebrow(input.name),
+      heading(c.payLink.heading),
+      greeting(c, input.firstName),
+      paragraph(c.payLink.intro(input.app ?? c.payLink.anyApp, input.wallet)),
+      button(c.payLink.button(input.wallet), input.url),
+      small(c.payLink.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // Bought the Color Advisor and never opened the report: a link that signs
 // them in on it. About what they paid for, so it goes out even to people who
 // turned off tips.

@@ -9,6 +9,7 @@ import { emailImageTarget, emailImageUrl, emailImageUser, unsubscribeToken, user
 import {
   appLink,
   avatarNudgeEmail,
+  checkoutLinkEmail,
   checkoutRescueEmail,
   crossSellEmail,
   looksNudgeEmail,
@@ -292,6 +293,30 @@ describe('checkout rescue email', () => {
     assert.equal(checkoutRescueEmail({ ...recipient, product: 'hair_advisor', url }).subject, 'Your Hair & Grooming Advisor is one step away')
     assert.equal(checkoutRescueEmail({ ...recipient, product: 'event_pass', url }).subject, 'Your Event Stylist is one step away')
     assert.ok(checkoutRescueEmail({ ...recipient, product: 'event_pass', url }).html.includes('occasions.jpg'))
+  })
+})
+
+describe('checkout link email', () => {
+  it('names the product, the app and the wallet, in their language, with the pay link', () => {
+    const url = 'https://www.avarobe.com/continue?token=abc'
+    const ios = checkoutLinkEmail({ ...recipient, product: 'color_report', name: 'Color Advisor', url, wallet: 'Apple Pay', app: 'Instagram' })
+    assert.equal(ios.subject, 'Color Advisor: pay with Apple Pay in one tap')
+    assert.ok(ios.text.includes('You tapped Buy inside Instagram, where Apple Pay doesn’t work.'))
+    assert.ok(ios.html.includes(url))
+    assert.ok(ios.html.includes('Pay with Apple Pay'))
+    assert.ok(ios.html.includes('color-report.jpg'))
+    // Transactional: no promotional footer with the postal address.
+    assert.ok(!ios.text.includes(env.EMAIL_POSTAL_ADDRESS || 'no postal address set'))
+
+    const android = checkoutLinkEmail({ ...recipient, locale: 'es', product: 'event_pass', name: 'Estilista de Eventos', url, wallet: 'Google Pay', app: null })
+    assert.equal(android.subject, 'Estilista de Eventos: paga con Google Pay en un toque')
+    assert.ok(android.text.includes('Tocaste Comprar dentro de Instagram o Facebook, donde Google Pay no funciona.'))
+    assert.ok(android.html.includes('occasions.jpg'))
+
+    const pt = checkoutLinkEmail({ ...recipient, locale: 'pt-BR', product: 'reports_bundle', name: 'Consultores de Cores e Estilo', url, wallet: 'Apple Pay', app: 'Facebook' })
+    assert.equal(pt.subject, 'Consultores de Cores e Estilo: pague com Apple Pay em um toque')
+    assert.ok(pt.text.includes('Você tocou em Comprar dentro do Facebook, onde o Apple Pay não funciona.'))
+    assert.ok(pt.html.includes('Pagar com Apple Pay'))
   })
 })
 

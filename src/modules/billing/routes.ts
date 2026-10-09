@@ -9,6 +9,7 @@ import { errorMessage, parseBody } from '../../utils/http.js'
 import type { PurchaseProduct, RefundReason, UserDocument } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { optionalUserId, trackServerEvent } from '../analytics/service.js'
+import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
@@ -70,6 +71,16 @@ const checkoutSchema = z.object({
     .string()
     .regex(/^\/studio(\/[\w\-/]*)?$/)
     .default('/studio'),
+})
+
+// Buy, tapped inside Instagram's or Facebook's browser on a phone: the pay
+// link by email (lifecycle/checkout-link.ts).
+const checkoutEmailSchema = z.object({
+  product: checkoutSchema.shape.product,
+  attribution: checkoutSchema.shape.attribution,
+  placement: z.string().regex(/^[a-z0-9_]{1,40}$/),
+  os: z.enum(['ios', 'android']),
+  app: z.enum(['instagram', 'facebook']).optional().catch(undefined),
 })
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
@@ -362,6 +373,36 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         request.log.error({ err: errorMessage(error) }, 'Stripe checkout failed')
         return reply.code(502).send({ message: 'Checkout is not responding. Try again in a moment.' })
       }
+    },
+  )
+
+  // Answers at once whether it went ('sent'), or why not: 'recent' (one per
+  // product every few hours), 'unsent' (no email to send to, or delivery
+  // failed). The web says so over the card form only when it went.
+  app.post(
+    '/checkout/email',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const parsed = parseBody(checkoutEmailSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      // The whole account: the email needs their name, language and links.
+      const user = await app.collections.users.findOne({ _id: userId })
+
+      if (!user) {
+        return reply.code(401).send({ message: 'Sign in again to continue.' })
+      }
+
+      if (user.guest || ineligibility(parsed.data.product, billingState(user))) {
+        return { status: 'unsent' }
+      }
+
+      const { product, placement, os, app: inApp, attribution } = parsed.data
+      return sendCheckoutLink(app, user, { product, placement, os, app: inApp, ads: attribution })
     },
   )
 

@@ -86,6 +86,7 @@ const EMAIL_ORDER: LifecycleEmailKind[] = [
   'upgrade_last_call',
   'trial_started',
   'trial_ending',
+  'checkout_link',
   'checkout_rescue',
   'price_drop',
   'xsell_style',

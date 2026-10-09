@@ -11,8 +11,10 @@ import { generateSecureToken, hashToken } from './tokens.js'
 // a new one voids the previous. 'handoff' and 'sign_in' sign the person in
 // on another browser: from Instagram's or Facebook's in-app browser to the
 // phone's own (where Apple Pay and saved cards work), and from the email
-// that brings back an unfinished checkout.
-export type LinkPurpose = 'verify_email' | 'reset_password' | 'handoff' | 'sign_in'
+// that brings back an unfinished checkout. 'checkout' is the link emailed
+// the moment they tap Buy inside those browsers: its own nonce, so the
+// other emails' sign-in links (offers, rescue) don't void it.
+export type LinkPurpose = 'verify_email' | 'reset_password' | 'handoff' | 'sign_in' | 'checkout'
 
 const LINKS = {
   verify_email: {
@@ -36,6 +38,12 @@ const LINKS = {
   sign_in: {
     nonceField: 'signInNonceHash',
     sentAtField: 'signInSentAt',
+    ttl: () => env.SIGN_IN_LINK_TTL,
+    path: '/continue',
+  },
+  checkout: {
+    nonceField: 'checkoutLinkNonceHash',
+    sentAtField: 'checkoutLinkSentAt',
     ttl: () => env.SIGN_IN_LINK_TTL,
     path: '/continue',
   },
