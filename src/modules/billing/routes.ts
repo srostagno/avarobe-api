@@ -11,7 +11,7 @@ import { serializeUser } from '../../utils/serializers.js'
 import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
-import { attributionMetadata } from './conversions.js'
+import { attributionMetadata, storedMetaClick } from './conversions.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
@@ -339,7 +339,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const location = await app.collections.users.findOne({ _id: userId }, { projection: { location: 1 } })
+        const location = await app.collections.users.findOne({ _id: userId }, { projection: { location: 1, acquisition: 1, createdAt: 1 } })
         const region = pricingRegion(request, location)
         const discountCents = parsed.data.product === 'pro_annual' ? regionalReportCredit(user, state, region) : 0
         const { url, clientSecret } = await createCheckout({
@@ -351,7 +351,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           region,
           // An admin's own test purchase never reaches Meta or Google as a
           // conversion: without the browser ids there's nothing to report.
-          attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
+          attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request, storedMetaClick(location)),
         })
         void trackServerEvent(app, {
           name: 'checkout_created',

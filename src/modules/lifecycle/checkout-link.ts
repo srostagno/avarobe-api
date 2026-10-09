@@ -7,6 +7,7 @@ import { deliverLinkEmail } from '../../utils/email.js'
 import { isGuestEmail } from '../../utils/guests.js'
 import type { Locale } from '../../utils/locale.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { storedAdIds } from '../billing/conversions.js'
 import { regionForCountry } from '../billing/pricing.js'
 import { productCopy } from '../billing/stripe.js'
 import { trackContent, unsubscribeUrl } from './service.js'
@@ -81,9 +82,12 @@ export async function sendCheckoutLink(
   const locale = user.locale ?? 'en'
 
   try {
+    // The browser's ad ids; its Meta click, when it had none, from the
+    // account (only when it sent its ids at all, so tracking is allowed).
+    const stored = input.ads ? storedAdIds(user) : undefined
     const url = await createLink(app, user, 'checkout', undefined, {
       next: `/studio?buy=${input.product}&from=${input.placement}`,
-      ads: input.ads,
+      ads: input.ads ? { ...stored, ...definedOnly(input.ads) } : undefined,
     })
     const content = checkoutLinkEmail({
       firstName: user.firstName,
@@ -129,4 +133,9 @@ export async function sendCheckoutLink(
     ])
     return { status: 'unsent' }
   }
+}
+
+// Drops ids the browser left out, so they don't hide the stored click.
+function definedOnly(ads: LinkAdIds): LinkAdIds {
+  return Object.fromEntries(Object.entries(ads).filter(([, value]) => typeof value === 'string' && value.length > 0))
 }

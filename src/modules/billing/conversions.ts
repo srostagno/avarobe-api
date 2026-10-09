@@ -20,14 +20,41 @@ export type Attribution = { gaClientId?: string; fbp?: string; fbc?: string }
 // Stripe caps each metadata value at 500 characters.
 const METADATA_MAX = 500
 
+// The Meta ad click an account came with (users.acquisition.fbclid, read
+// from the ad's link on their first visit), spelled like Meta's _fbc cookie
+// with the account's creation as the click time. For a checkout whose
+// browser lost it: Safari after the jump from Instagram, a link from one of
+// our emails, or an in-app visit where the pixel never set the cookie.
+// Oct 5-9: 1 in 5 purchases reached Meta without a click id, and Meta
+// credited the ads with about 17 of the 25 purchases that came from them.
+export function storedMetaClick(user: { acquisition?: { fbclid?: string | null } | null; createdAt?: Date | null } | null | undefined) {
+  const fbclid = user?.acquisition?.fbclid
+  const clickedAt = user?.createdAt
+
+  return fbclid && /^[\w-]{4,450}$/.test(fbclid) && clickedAt ? `fb.1.${clickedAt.getTime()}.${fbclid}` : undefined
+}
+
+// The same click for the sign-in links in our emails: the page they open
+// on puts it back in the browser (when tracking is allowed there), so the
+// pixel and the checkout have it.
+export function storedAdIds(user: Parameters<typeof storedMetaClick>[0]) {
+  const fbc = storedMetaClick(user)
+
+  return fbc ? { fbc } : undefined
+}
+
+// `storedFbc` (storedMetaClick) stands in for a click id the browser didn't
+// send, only when it sent its ids at all: a browser that opted out (or with
+// Global Privacy Control) sends none, and then nothing goes to Meta.
 export function attributionMetadata(
   attribution: Attribution | undefined,
   request: { ip: string; headers: Record<string, string | string[] | undefined> },
+  storedFbc?: string,
 ): Record<string, string> {
   const fit = (value: string | undefined) => (value && value.length <= METADATA_MAX ? value : undefined)
   const gaClientId = fit(attribution?.gaClientId)
   const fbp = fit(attribution?.fbp)
-  const fbc = fit(attribution?.fbc)
+  const fbc = fit(attribution?.fbc) ?? (attribution ? fit(storedFbc) : undefined)
 
   if (!gaClientId && !fbp && !fbc) {
     return {}

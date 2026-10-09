@@ -10,6 +10,7 @@ import { withLocale } from '../../utils/request-locale.js'
 import { localHour } from '../../utils/timezones.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
 import { presentationOf } from '../avatar/body.js'
+import { storedAdIds } from '../billing/conversions.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
 import { EDITS } from '../looks/edits.js'
@@ -560,7 +561,7 @@ async function sendOne(
     const offer =
       from && facts.looks.count === 0 && facts.avatar?.colorAnalysis
         ? {
-            url: await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=color_report&from=${from}` }),
+            url: await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=color_report&from=${from}`, ads: storedAdIds(user) }),
             heroUrl: facts.avatar.drapePreview?.status === 'ready' && facts.avatar.drapePreview.lockedKey ? emailImageUrl(user._id, now) : null,
           }
         : undefined
@@ -702,7 +703,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   const sendId = new ObjectId()
 
   try {
-    const url = await createLink(app, user, 'sign_in', undefined, { next: rescueNext(product) })
+    const url = await createLink(app, user, 'sign_in', undefined, { next: rescueNext(product), ads: storedAdIds(user) })
     const content = lifecycleContentFor('checkout_rescue', user, undefined, { count: 0, lastAt: null }, sendId, { product, url })
 
     await app.collections.emailSends.insertOne({
@@ -797,7 +798,7 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
 
   try {
     const locale = user.locale ?? 'en'
-    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio/report' })
+    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio/report', ads: storedAdIds(user) })
     const content = reportUnopenedEmail({
       firstName: user.firstName,
       email: user.email,
@@ -978,7 +979,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
   try {
     // Signed in from the email, straight to the Color Advisor offer, in
     // their own browser (where Apple Pay works).
-    const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: '/studio?upgrade=palette' }))
+    const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: '/studio?upgrade=palette', ads: storedAdIds(user) }))
     signIn.searchParams.set('utm_source', 'email')
     signIn.searchParams.set('utm_medium', 'lifecycle')
     signIn.searchParams.set('utm_campaign', 'price_drop')
@@ -1212,7 +1213,7 @@ async function crossSellPersonal(
 // Sign-in links for one email's buttons (they share one nonce), tagged so
 // the clicks are counted (trackContent).
 async function signInLinks(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, nexts: string[]) {
-  const links = await createLinks(app, user, 'sign_in', nexts)
+  const links = await createLinks(app, user, 'sign_in', nexts, { ads: storedAdIds(user) })
 
   return links.map((link) => {
     const url = new URL(link)
