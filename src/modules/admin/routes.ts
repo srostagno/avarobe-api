@@ -16,6 +16,7 @@ import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
 import { addDays, emailActivity, pacificDay, pacificStart } from './email-activity.js'
 import { hairReport } from './hair-report.js'
+import { defaultRange, transactionsReport } from './transactions.js'
 
 const avatarsSchema = z.object({
   days: z.coerce.number().int().min(1).max(365).default(30),
@@ -71,6 +72,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const emailsSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
 const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.')
 const emailActivitySchema = z.object({ from: DAY.optional(), to: DAY.optional() })
+const transactionsSchema = z.object({ from: DAY.optional(), to: DAY.optional() })
 const hairSchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 const whySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 
@@ -244,7 +246,11 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       app.collections.avatars.distinct('userId', { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } }),
     ])
     const page = found.slice(0, limit)
-    const bought = await purchasesByUser(app, page.map((avatar) => avatar.userId))
+    const [bought, owners] = await Promise.all([
+      purchasesByUser(app, page.map((avatar) => avatar.userId)),
+      app.collections.users.find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { location: 1 } }).toArray(),
+    ])
+    const locationByUser = new Map(owners.map((owner) => [owner._id.toString(), owner.location ?? null]))
     const looks = await app.collections.looks
       .aggregate<LookStats>([
         { $match: { avatarId: { $in: page.map((avatar) => avatar._id) }, status: { $ne: 'locked' } } },
@@ -267,10 +273,14 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         const versions = renders(avatar)
         const lookStats = looksByAvatar.get(avatar._id.toString())
         const purchase = bought.get(avatar.userId.toString())
+        const location = locationByUser.get(avatar.userId.toString())
 
         return {
           id: avatar._id.toString(),
           account: avatar.userId.toString().slice(-6),
+          // Where they signed up from (country and state, never the IP).
+          country: location?.country ?? null,
+          region: location?.region ?? null,
           createdAt: avatar.createdAt,
           status: avatar.status,
           error: avatar.error,
@@ -454,6 +464,34 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   })
 
   // The 7-day guarantee: who asked for their money back, for what and why.
+  // Every payment between two Pacific days (both included; the last 30 days
+  // by default): who, what, from where and how, with the totals and the
+  // revenue per day.
+  app.get('/transactions', { preHandler: authenticate }, async (request, reply) => {
+    const viewerId = await viewerIfAdmin(app, request, reply)
+
+    if (!viewerId) {
+      return reply
+    }
+
+    const parsed = parseBody(transactionsSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    const fallback = defaultRange()
+    const from = parsed.data.from ?? fallback.from
+    const to = parsed.data.to ?? fallback.to
+
+    if (from > to) {
+      return reply.code(400).send({ message: 'The start date is after the end date.' })
+    }
+
+    request.log.info({ adminId: viewerId.toString(), from, to }, 'Admin transactions')
+    return transactionsReport(app, { from, to })
+  })
+
   app.get('/refunds', { preHandler: authenticate }, async (request, reply) => {
     if (!(await viewerIfAdmin(app, request, reply))) {
       return reply
