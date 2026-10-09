@@ -150,6 +150,7 @@ const envSchema = z.object({
   // (billing/pricing.ts); Stripe does the real conversion.
   FX_USD_PER_BRL: z.coerce.number().positive().default(0.18),
   FX_USD_PER_MXN: z.coerce.number().positive().default(0.055),
+  FX_USD_PER_COP: z.coerce.number().positive().default(0.00025),
   GUEST_DAILY_LIMIT: z.coerce.number().int().min(0).default(2000),
   FREE_CREDITS: z.coerce.number().int().min(0).default(3),
   FREE_AVATAR_RUNS: z.coerce.number().int().min(1).default(2),

@@ -15,7 +15,8 @@ export function emailCopy(locale: Locale | null | undefined): EmailCopy {
 
 const INTL_LOCALE: Record<Locale, string> = { en: 'en-US', 'pt-BR': 'pt-BR', es: 'es-MX' }
 
-// "$4.99", "R$ 14,90", "US$ 4,99", "$79.00" (pesos, in Spanish), "USD 2.99".
+// "$4.99", "R$ 14,90", "US$ 4,99", "$79.00" (pesos, in Spanish), "USD 2.99",
+// "$ 11.900" (Colombian pesos, in Spanish: whole pesos, written as there).
 // Minor units of the currency, as Stripe and billing/pricing.ts keep them.
 export function formatMoney(cents: number, currency: string, locale: Locale | null | undefined) {
   const lang = locale ?? 'en'
@@ -23,6 +24,15 @@ export function formatMoney(cents: number, currency: string, locale: Locale | nu
   // Exactly as the English emails always wrote dollars.
   if (lang === 'en' && currency.toLowerCase() === 'usd') {
     return `$${(cents / 100).toFixed(2)}`
+  }
+
+  if (currency.toLowerCase() === 'cop') {
+    return new Intl.NumberFormat(lang === 'es' ? 'es-CO' : INTL_LOCALE[lang], {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(cents / 100)
   }
 
   return new Intl.NumberFormat(INTL_LOCALE[lang], { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100)

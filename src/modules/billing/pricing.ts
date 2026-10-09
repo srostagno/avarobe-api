@@ -5,19 +5,24 @@ import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { requestGeo } from '../analytics/geo.js'
 
 // Prices by where the buyer is (Oct 2026): the US list in dollars, and lower
-// local prices for Brazil (reais, with PIX), Mexico (pesos) and the rest of
-// Latin America (dollars). By country, not language: a Spanish speaker in
-// Texas pays the US price; a Brazilian on the English pages pays in reais.
-export type PricingRegion = 'us' | 'br' | 'mx' | 'latam'
-export type Currency = 'usd' | 'brl' | 'mxn'
+// local prices for Brazil (reais, with PIX), Mexico (pesos), Colombia
+// (pesos) and the rest of Latin America (dollars). By country, not language:
+// a Spanish speaker in Texas pays the US price; a Brazilian on the English
+// pages pays in reais.
+//
+// Colombia left the dollar list on Oct 9: a buyer there opened checkout six
+// times in three hours for $2.99 and never paid, and Colombian cards often
+// turn down charges in dollars. Same prices, in pesos.
+export type PricingRegion = 'us' | 'br' | 'mx' | 'co' | 'latam'
+export type Currency = 'usd' | 'brl' | 'mxn' | 'cop'
 
-const REGIONS: readonly PricingRegion[] = ['us', 'br', 'mx', 'latam']
+const REGIONS: readonly PricingRegion[] = ['us', 'br', 'mx', 'co', 'latam']
 
 export function isPricingRegion(value: unknown): value is PricingRegion {
   return REGIONS.includes(value as PricingRegion)
 }
 
-const LATAM = new Set(['AR', 'BO', 'CL', 'CO', 'CR', 'CU', 'DO', 'EC', 'GT', 'HN', 'NI', 'PA', 'PE', 'PY', 'SV', 'UY', 'VE'])
+const LATAM = new Set(['AR', 'BO', 'CL', 'CR', 'CU', 'DO', 'EC', 'GT', 'HN', 'NI', 'PA', 'PE', 'PY', 'SV', 'UY', 'VE'])
 
 export function regionForCountry(country: string | null | undefined): PricingRegion {
   const code = (country ?? '').toUpperCase()
@@ -30,6 +35,10 @@ export function regionForCountry(country: string | null | undefined): PricingReg
     return 'mx'
   }
 
+  if (code === 'CO') {
+    return 'co'
+  }
+
   return LATAM.has(code) ? 'latam' : 'us'
 }
 
@@ -39,11 +48,12 @@ export function pricingRegion(request: FastifyRequest, user?: Pick<UserDocument,
   return regionForCountry(user?.location?.country ?? requestGeo(request)?.country)
 }
 
-export const REGION_CURRENCY: Record<PricingRegion, Currency> = { us: 'usd', br: 'brl', mx: 'mxn', latam: 'usd' }
+export const REGION_CURRENCY: Record<PricingRegion, Currency> = { us: 'usd', br: 'brl', mx: 'mxn', co: 'cop', latam: 'usd' }
 
 type Listed = Exclude<PurchaseProduct, 'color_addon' | 'style_addon'>
 
-// Minor units of each region's currency (R$ 14,90 = 1490; MX$ 79 = 7900).
+// Minor units of each region's currency (R$ 14,90 = 1490; MX$ 79 = 7900;
+// COP 11.900 = 1190000, the dollar list at about 4,000 pesos).
 const REGION_AMOUNTS: Record<Exclude<PricingRegion, 'us'>, Record<Listed, number>> = {
   br: {
     color_report: 1490,
@@ -74,6 +84,21 @@ const REGION_AMOUNTS: Record<Exclude<PricingRegion, 'us'>, Record<Listed, number
     pro_monthly: 12900,
     pro_annual: 49900,
     pro_trial: 1900,
+  },
+  co: {
+    color_report: 1190000,
+    style_report: 1590000,
+    reports_bundle: 2390000,
+    look_pack: 1190000,
+    color_mirror: 1990000,
+    hair_advisor: 1590000,
+    advisors_bundle: 3990000,
+    event_pass: 1190000,
+    magazine: 1990000,
+    outfit_guide: 3190000,
+    pro_monthly: 1990000,
+    pro_annual: 7990000,
+    pro_trial: 390000,
   },
   latam: {
     color_report: 299,
@@ -136,6 +161,7 @@ const USD_PER_UNIT: Record<Currency, () => number> = {
   usd: () => 1,
   brl: () => env.FX_USD_PER_BRL,
   mxn: () => env.FX_USD_PER_MXN,
+  cop: () => env.FX_USD_PER_COP,
 }
 
 export function toUsdCents(amount: number, currency: string) {
