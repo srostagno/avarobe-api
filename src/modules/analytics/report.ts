@@ -4,6 +4,7 @@ import { type Filter, ObjectId } from 'mongodb'
 import type { AnalyticsChannel, AnalyticsEventDocument, UserLocation } from '../../types/mongo.js'
 import { addDays, daysBetween, pacificDay, pacificStart } from '../../utils/pacific.js'
 import { adminUserIds } from '../billing/entitlements.js'
+import { toUsdCents } from '../billing/pricing.js'
 import { parseGeo } from './geo.js'
 
 // The admin's analytics: the funnel step by step, where people come from,
@@ -76,6 +77,11 @@ const PRODUCT_FAMILY: Record<string, string> = {
 }
 
 export const familyOf = (product: string) => PRODUCT_FAMILY[product] ?? product
+
+// A payment's amount in rough US cents: purchase events carry the amount in
+// the currency paid (reais, pesos), which added up as dollars before.
+const usdOf = (row: { props: Record<string, string | number | boolean> }) =>
+  toUsdCents(typeof row.props.amount === 'number' ? row.props.amount : Number(row.props.amount) || 0, typeof row.props.currency === 'string' ? row.props.currency : 'usd')
 
 
 // Between two Pacific days (both included), the ad account's days.
@@ -205,7 +211,7 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
     if (row.name === 'checkout_started' || row.name === 'checkout_created') source.checkouts.add(person)
     if (row.name === 'purchase_completed') {
       source.payers.add(person)
-      source.revenue += num(row.props.amount)
+      source.revenue += usdOf(row)
     }
 
     sources.set(key, source)
@@ -295,7 +301,7 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
     else if (row.name === 'purchase_completed') {
       const entry = product(id)
       bump(entry.paid)
-      entry.revenue += num(row.props.amount)
+      entry.revenue += usdOf(row)
     }
   }
 
@@ -363,7 +369,7 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
     } else if (row.name === 'purchase_completed') {
       const entry = interestOf(familyOf(str(row.props.product)))
       bump(entry.paid)
-      entry.revenue += num(row.props.amount)
+      entry.revenue += usdOf(row)
     }
   }
 
