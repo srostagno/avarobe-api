@@ -6,6 +6,7 @@ import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AvatarDocument, LifecycleEmailKind, LookDocument } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
+import { daysBetween } from '../../utils/pacific.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
 import { CHANNELS } from '../analytics/service.js'
 import { analyticsReport } from '../analytics/report.js'
@@ -121,12 +122,33 @@ const LOOK_FILTER_QUERIES: Record<(typeof LOOK_FILTERS)[number], Record<string, 
 
 const ICON_NAMES = new Map(ICON_LOOKS.map((icon) => [icon.id, icon.name]))
 
+// Two Pacific days (both included), today by default; `days` (the last
+// n days, today included) still works for older pages.
 const analyticsSchema = z.object({
-  days: z.coerce.number().int().min(1).max(90).default(7),
+  from: DAY.optional(),
+  to: DAY.optional(),
+  days: z.coerce.number().int().min(1).max(90).optional(),
   channel: z.enum(['all', ...CHANNELS]).default('all'),
 })
 
-const checkoutsSchema = z.object({ days: z.coerce.number().int().min(1).max(30).default(7) })
+// The days a request asks for, as Pacific days; at most 120 of them.
+function requestedDays(query: { from?: string; to?: string; days?: number }) {
+  const today = pacificDay(new Date())
+  const to = query.to ?? today
+  const from = query.from ?? (query.days ? addDays(to, -(query.days - 1)) : to)
+
+  if (from > to) {
+    return { error: 'The start date is after the end date.' } as const
+  }
+
+  if (daysBetween(from, to) > 120) {
+    return { error: 'Pick at most 120 days.' } as const
+  }
+
+  return { from, to } as const
+}
+
+const checkoutsSchema = z.object({ from: DAY.optional(), to: DAY.optional(), days: z.coerce.number().int().min(1).max(30).optional() })
 
 async function viewerIfAdmin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
   const viewerId = requireUserId(request)
@@ -429,7 +451,13 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
-    return analyticsReport(app, parsed.data)
+    const range = requestedDays(parsed.data)
+
+    if ('error' in range) {
+      return reply.code(400).send({ message: range.error })
+    }
+
+    return analyticsReport(app, { ...range, channel: parsed.data.channel })
   })
 
   // Why people come, what holds them back from an offer, what convinced
@@ -518,9 +546,17 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
+    const range = requestedDays({ ...parsed.data, days: parsed.data.days ?? 7 })
+
+    if ('error' in range) {
+      return reply.code(400).send({ message: range.error })
+    }
+
     try {
       const admins = new Set((await adminUserIds(app)).map((id) => id.toString()))
-      const checkouts = (await recentCheckouts(parsed.data.days)).filter((item) => !item.userId || !admins.has(item.userId))
+      const checkouts = (await recentCheckouts(pacificStart(range.from), pacificStart(addDays(range.to, 1)))).filter(
+        (item) => !item.userId || !admins.has(item.userId),
+      )
 
       return {
         checkouts: checkouts.map((item) => ({ ...item, userId: item.userId ? item.userId.slice(-6) : null })),

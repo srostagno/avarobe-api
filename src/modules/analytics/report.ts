@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { type Filter, ObjectId } from 'mongodb'
 
 import type { AnalyticsChannel, AnalyticsEventDocument, UserLocation } from '../../types/mongo.js'
+import { addDays, daysBetween, pacificDay, pacificStart } from '../../utils/pacific.js'
 import { adminUserIds } from '../billing/entitlements.js'
 import { parseGeo } from './geo.js'
 
@@ -11,7 +12,6 @@ import { parseGeo } from './geo.js'
 // user when the server saw them before their browser did). Admins and the
 // browsers they used are left out.
 
-const DAY_MS = 24 * 60 * 60 * 1000
 
 export const FUNNEL = [
   { id: 'visited', label: 'Visited', names: ['page_view'] },
@@ -77,20 +77,18 @@ const PRODUCT_FAMILY: Record<string, string> = {
 
 export const familyOf = (product: string) => PRODUCT_FAMILY[product] ?? product
 
-// "2026-09-28" in Pacific time, the ad account's day.
-function pacificDay(date: Date) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date)
-}
 
-export async function analyticsReport(app: FastifyInstance, input: { days: number; channel: AnalyticsChannel | 'all' }) {
-  const since = new Date(Date.now() - input.days * DAY_MS)
+// Between two Pacific days (both included), the ad account's days.
+export async function analyticsReport(app: FastifyInstance, input: { from: string; to: string; channel: AnalyticsChannel | 'all' }) {
+  const since = pacificStart(input.from)
+  const until = pacificStart(addDays(input.to, 1))
   const admins = await adminUserIds(app)
   const adminVisitors = (
     await app.collections.analyticsEvents.distinct('visitorId', { userId: { $in: admins } })
   ).filter((value): value is string => Boolean(value))
 
   const filter: Filter<AnalyticsEventDocument> = {
-    at: { $gte: since },
+    at: { $gte: since, $lt: until },
     userId: { $nin: admins },
     visitorId: { $nin: adminVisitors },
   }
@@ -402,7 +400,7 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
     .find(
       {
         _id: { $nin: admins },
-        createdAt: { $gte: since },
+        createdAt: { $gte: since, $lt: until },
         ...(input.channel === 'all' ? {} : { 'acquisition.channel': input.channel }),
       },
       { projection: { location: 1, paidAt: 1, colorReportAt: 1, styleReportAt: 1, pro: 1, styleKitUntil: 1 } },
@@ -445,7 +443,9 @@ export async function analyticsReport(app: FastifyInstance, input: { days: numbe
   const people = (entry: Tally) => ({ events: entry.events, people: entry.people.size })
 
   return {
-    days: input.days,
+    from: input.from,
+    to: input.to,
+    days: daysBetween(input.from, input.to),
     channel: input.channel,
     funnel,
     sources: [...sources.values()]

@@ -489,11 +489,12 @@ export async function createGuideCheckout(input: {
 
 // The latest Avarobe checkouts as Stripe has them (the admin's checkout
 // table): what was opened, and whether it was paid, abandoned or is open.
-export async function recentCheckouts(days: number) {
-  const since = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000)
+// Checkouts opened between two moments (the admin's Pacific days).
+export async function recentCheckouts(since: Date, until: Date) {
   const sessions: Stripe.Checkout.Session[] = []
+  const created = { gte: Math.floor(since.getTime() / 1000), lt: Math.floor(until.getTime() / 1000) }
 
-  for await (const session of stripe().checkout.sessions.list({ created: { gte: since }, limit: 100 })) {
+  for await (const session of stripe().checkout.sessions.list({ created, limit: 100 })) {
     if (session.metadata?.app === APP) {
       sessions.push(session)
     }
