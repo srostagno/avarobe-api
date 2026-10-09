@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 
 import { env } from '../../../config/env.js'
 import { emailCopy, formatMoney, longDate } from '../../../i18n/emails.js'
-import { passwordResetEmail, verificationEmail } from '../../../utils/email.js'
+import { passwordResetEmail, savedEmail, verificationEmail } from '../../../utils/email.js'
 import { seasonName } from '../../../utils/seasons.js'
 import {
   appLink,
@@ -101,6 +101,21 @@ describe('emails in the reader’s language', () => {
     assert.ok(guide.text.includes('Recibes este correo porque compraste El Libro de Fórmulas de Outfits'))
     assert.equal(verificationEmail({ firstName: 'Nora', url: 'https://x', forPasskey: false, locale: 'pt-BR' }).subject, 'Confirme seu e-mail no Avarobe')
     assert.ok(passwordResetEmail({ firstName: '', url: 'https://x', locale: 'es' }).text.startsWith('¡Hola!'))
+  })
+
+  it('send a saved guest their own colors, the drape test once it’s drawn', () => {
+    const drapeUrl = 'https://api.avarobe.com/api/v1/email/i/abc/drape.jpg?e=1&s=x'
+    const withDrape = savedEmail({ firstName: '', url: 'https://x', locale: 'pt-BR', colors: { season: 'Soft Autumn', drapeUrl } })
+    assert.equal(withDrape.subject, 'Suas cores: Outono Suave')
+    assert.ok(withDrape.html.includes(drapeUrl))
+    assert.ok(withDrape.text.includes('Acima está o seu teste de tecidos'))
+    // Not drawn yet: the season, and no picture to point at.
+    const seasonOnly = savedEmail({ firstName: '', url: 'https://x', locale: 'es', colors: { season: 'Soft Autumn', drapeUrl: null } })
+    assert.equal(seasonOnly.subject, 'Tus colores: Otoño Suave')
+    assert.ok(!seasonOnly.html.includes('<img'))
+    assert.ok(!seasonOnly.text.includes('Arriba'))
+    // Saved before any colors: as before.
+    assert.equal(savedEmail({ firstName: '', url: 'https://x', locale: 'en' }).subject, 'Your Avarobe colors are saved')
   })
 
   it('translate the season names and leave unknown ones alone', () => {

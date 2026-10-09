@@ -4,6 +4,7 @@ import { env } from '../config/env.js'
 import { emailCopy } from '../i18n/emails.js'
 import { isGuestEmail } from './guests.js'
 import type { Locale } from './locale.js'
+import { seasonName } from './seasons.js'
 
 const MAILERSEND_URL = 'https://api.mailersend.com/v1/email'
 
@@ -128,6 +129,8 @@ function layout(input: {
   locale?: Locale
   subject: string
   firstName: string
+  // A picture under the greeting (their own, from a signed link).
+  hero?: { url: string; alt: string }
   paragraphs: string[]
   cta?: { label: string; url: string }
   footer: string
@@ -144,8 +147,11 @@ function layout(input: {
   const button = input.cta
     ? `<p style="margin:8px 0 24px 0;"><a href="${input.cta.url}" style="display:inline-block;background:#171412;color:#ffffff;text-decoration:none;padding:13px 24px;border-radius:999px;font-size:14px;font-weight:600;">${escapeHtml(input.cta.label)}</a></p><p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(copy.pasteLink)}</p><p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;color:#171412;">${input.cta.url}</p>`
     : ''
+  const hero = input.hero
+    ? `<img src="${input.hero.url}" alt="${escapeHtml(input.hero.alt)}" width="456" style="display:block;width:100%;max-width:456px;height:auto;border:0;border-radius:12px;margin:0 0 20px 0;">`
+    : ''
   // English keeps its bare <html>; the other languages say theirs.
-  const html = `<!doctype html><html${locale === 'en' ? '' : ` lang="${locale}"`}><body style="margin:0;padding:32px 16px;background:#f7f4ef;font-family:Helvetica,Arial,sans-serif;color:#171412;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e5ded3;border-radius:16px;"><tr><td style="padding:32px;"><p style="margin:0 0 24px 0;font-family:Georgia,serif;font-size:22px;font-style:italic;">avarobe</p><p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;">${greeting}</p>${body}${button}<p style="margin:0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(input.footer)}</p></td></tr></table></body></html>`
+  const html = `<!doctype html><html${locale === 'en' ? '' : ` lang="${locale}"`}><body style="margin:0;padding:32px 16px;background:#f7f4ef;font-family:Helvetica,Arial,sans-serif;color:#171412;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e5ded3;border-radius:16px;"><tr><td style="padding:32px;"><p style="margin:0 0 24px 0;font-family:Georgia,serif;font-size:22px;font-style:italic;">avarobe</p><p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;">${greeting}</p>${hero}${body}${button}<p style="margin:0;font-size:12px;line-height:1.5;color:#6b645c;">${escapeHtml(input.footer)}</p></td></tr></table></body></html>`
   const text = [
     input.firstName ? copy.hi(input.firstName) : copy.hiAnonymous,
     ...input.paragraphs,
@@ -170,9 +176,34 @@ export function verificationEmail(input: { firstName: string; url: string; forPa
 }
 
 // Right after someone who tried Avarobe first saves it with their email (no
-// password): the link confirms the email and signs them back in.
-export function savedEmail(input: { firstName: string; url: string; locale?: Locale }) {
+// password): the link confirms the email and signs them back in. Saved from
+// their colors, it's their colors: the season in the subject and, once it's
+// drawn, their own drape test (the locked copy: the color to keep away, the
+// best ones blurred) from a signed link. Oct 9: guests who left without an
+// email (34 of 43 who saw their colors and didn't buy) could never be
+// written to again, so the app asks for it right under their colors.
+export function savedEmail(input: {
+  firstName: string
+  url: string
+  locale?: Locale
+  colors?: { season: string; drapeUrl: string | null } | null
+}) {
   const copy = emailCopy(input.locale).auth
+  const colors = input.colors
+
+  if (colors) {
+    const season = seasonName(colors.season, input.locale)
+
+    return layout({
+      locale: input.locale,
+      subject: copy.saved.colorsSubject(season),
+      firstName: input.firstName,
+      hero: colors.drapeUrl ? { url: colors.drapeUrl, alt: copy.saved.colorsAlt } : undefined,
+      paragraphs: [colors.drapeUrl ? copy.saved.colorsDrape(season) : copy.saved.colorsSeason(season), copy.saved.colorsKeep],
+      cta: { label: copy.saved.colorsCta, url: input.url },
+      footer: copy.saved.footer,
+    })
+  }
 
   return layout({
     locale: input.locale,

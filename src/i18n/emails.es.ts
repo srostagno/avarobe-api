@@ -591,6 +591,15 @@ export const esEmails: EmailCopy = {
         'No hay contraseña que recordar: cuando quieras volver, pide un enlace de acceso en la página de inicio de sesión de Avarobe y te lo enviamos por correo. El enlace de abajo funciona una sola vez y caduca en 24 horas.',
       ],
       footer: '¿No usaste Avarobe? Puedes ignorar este correo.',
+      colorsSubject: (season: string) => `Tus colores: ${season}`,
+      colorsDrape: (season: string) =>
+        `Tu estación es ${season}. Arriba está tu prueba de telas en tu propia cara: el color que debes alejar de ella, junto a tus mejores colores, que te esperan en tu reporte de color completo.`,
+      colorsSeason: (season: string) =>
+        `Tu estación es ${season}. Tus mejores colores en tu propia cara te esperan en tu reporte de color completo.`,
+      colorsKeep:
+        'Tus colores están guardados en este correo. Confírmalo con el botón de abajo y vuelve cuando quieras: no hay contraseña, te enviamos un enlace de acceso cada vez que lo pidas. Este funciona una sola vez y caduca en 24 horas.',
+      colorsCta: 'Confirmar y ver mis colores',
+      colorsAlt: 'Tu prueba de telas: un color que debes alejar de tu cara, junto a tus mejores colores, bloqueados',
     },
     signIn: {
       subject: 'Tu enlace para iniciar sesión en Avarobe',

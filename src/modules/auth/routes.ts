@@ -38,6 +38,7 @@ import { signupLocation } from '../analytics/geo.js'
 import { acquisitionSchema, optionalUserId, toAcquisition, trackServerEvent } from '../analytics/service.js'
 import { attributionMetadata, reportRegistration } from '../billing/conversions.js'
 import { recordRegisteredClick } from '../events/service.js'
+import { emailImageUrl } from '../lifecycle/service.js'
 import { GuestLimitError, claimGuest, createGuest } from './guests.js'
 
 const emailField = z.string().trim().toLowerCase().email().max(254)
@@ -186,11 +187,29 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return user?.guest ? user._id : null
   }
 
-  // The link that confirms a saved guest's email and signs them back in.
+  // The link that confirms a saved guest's email and signs them back in,
+  // with their colors when they have them: their season and, once drawn,
+  // their drape test (the locked copy, from a signed link).
   async function sendSaved(log: FastifyBaseLogger, user: UserDocument) {
     const url = await createLink(app, user, 'verify_email')
+    const avatar = await app.collections.avatars.findOne(
+      { userId: user._id },
+      { projection: { 'colorAnalysis.season': 1, 'drapePreview.status': 1, 'drapePreview.lockedKey': 1 } },
+    )
+    const season = avatar?.colorAnalysis?.season
+    const colors = season
+      ? {
+          season,
+          drapeUrl: avatar?.drapePreview?.status === 'ready' && avatar.drapePreview.lockedKey ? emailImageUrl(user._id) : null,
+        }
+      : null
 
-    return deliverLinkEmail({ log, to: recipient(user), link: url, content: savedEmail({ firstName: user.firstName, url, locale: user.locale }) })
+    return deliverLinkEmail({
+      log,
+      to: recipient(user),
+      link: url,
+      content: savedEmail({ firstName: user.firstName, url, locale: user.locale, colors }),
+    })
   }
 
   // Try first: a guest session, so the selfie and colors come before any

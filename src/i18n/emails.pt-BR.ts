@@ -592,6 +592,15 @@ export const ptBrEmails: EmailCopy = {
         'Não há senha para lembrar: quando quiser voltar, peça um link de acesso na página de login do Avarobe e enviamos um por e-mail. O link abaixo funciona uma vez e expira em 24 horas.',
       ],
       footer: 'Não usou o Avarobe? Pode ignorar este e-mail.',
+      colorsSubject: (season: string) => `Suas cores: ${season}`,
+      colorsDrape: (season: string) =>
+        `Sua estação é ${season}. Acima está o seu teste de tecidos no seu próprio rosto: a cor que deve ficar longe dele, ao lado das suas melhores cores, que esperam por você no relatório de cores completo.`,
+      colorsSeason: (season: string) =>
+        `Sua estação é ${season}. Suas melhores cores no seu próprio rosto esperam por você no relatório de cores completo.`,
+      colorsKeep:
+        'Suas cores estão salvas neste e-mail. Confirme pelo botão abaixo e volte quando quiser: não há senha, enviamos um link de acesso sempre que você pedir. Este funciona uma vez e expira em 24 horas.',
+      colorsCta: 'Confirmar e ver minhas cores',
+      colorsAlt: 'Seu teste de tecidos: uma cor para manter longe do rosto, ao lado das suas melhores cores, bloqueadas',
     },
     signIn: {
       subject: 'Seu link de acesso ao Avarobe',

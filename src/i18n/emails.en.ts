@@ -633,6 +633,14 @@ export const enEmails = {
         'There is no password to remember: whenever you want to come back, ask for a sign-in link on the Avarobe sign-in page and we email you one. The link below works once and expires in 24 hours.',
       ],
       footer: "Didn't use Avarobe? You can ignore this email.",
+      colorsSubject: (season: string) => `Your colors: ${season}`,
+      colorsDrape: (season: string) =>
+        `You're a ${season}. Above is your drape test on your own face: the color to keep away from it, next to your best colors, waiting in your full color report.`,
+      colorsSeason: (season: string) => `You're a ${season}. Your best colors on your own face are waiting in your full color report.`,
+      colorsKeep:
+        'Your colors are saved to this email. Confirm it with the button below and come back any time: there is no password, we email you a sign-in link whenever you ask. This one works once and expires in 24 hours.',
+      colorsCta: 'Confirm and see my colors',
+      colorsAlt: 'Your drape test: a color to keep away from your face, next to your best colors, locked',
     },
     signIn: {
       subject: 'Your Avarobe sign-in link',
