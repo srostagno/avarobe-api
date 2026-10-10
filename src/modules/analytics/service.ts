@@ -13,7 +13,9 @@ import { extractBearerToken } from '../../utils/tokens.js'
 // personal data: ids are random (visitor, session) or ours (user), props are
 // short codes (reason, placement, product), never free text.
 
-export const CHANNELS = ['meta', 'google', 'email', 'organic', 'social', 'referral', 'direct'] as const satisfies readonly AnalyticsChannel[]
+// 'ai': answers from AI assistants and AI search (ChatGPT, Perplexity,
+// Gemini, Copilot, Claude), told apart from search engines since Oct 10.
+export const CHANNELS = ['meta', 'google', 'email', 'organic', 'ai', 'social', 'referral', 'direct'] as const satisfies readonly AnalyticsChannel[]
 
 const id = z.string().regex(/^[A-Za-z0-9-]{8,64}$/)
 // Campaign tags come from URLs anyone can write: odd characters are dropped,

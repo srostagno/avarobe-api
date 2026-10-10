@@ -131,7 +131,7 @@ export type Acquisition = {
   recoveredFrom?: AnalyticsChannel | null
 }
 
-export type AnalyticsChannel = 'meta' | 'google' | 'email' | 'organic' | 'social' | 'referral' | 'direct'
+export type AnalyticsChannel = 'meta' | 'google' | 'email' | 'organic' | 'ai' | 'social' | 'referral' | 'direct'
 
 // One first-party analytics event: from the web (page views, clicks, offers
 // seen) or from the server (checkouts, payments, paywalls). Never personal
