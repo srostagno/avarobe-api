@@ -80,3 +80,13 @@ describe('colors first: the free best-vs-worst preview', () => {
     assert.match(buildDrapePreviewPrompt(best, worst), /Image 2 is a close-up/)
   })
 })
+
+describe('photo consent for colors', () => {
+  it('takes the upload after the notice as consent, except in Illinois, where only the checkbox counts', async () => {
+    const { needsCheckboxConsent } = await import('../routes.js')
+    assert.equal(needsCheckboxConsent({ country: 'US', region: 'IL' }), true)
+    assert.equal(needsCheckboxConsent({ country: 'US', region: 'TX' }), false)
+    assert.equal(needsCheckboxConsent({ country: 'BR', region: 'SP' }), false)
+    assert.equal(needsCheckboxConsent(null), false)
+  })
+})

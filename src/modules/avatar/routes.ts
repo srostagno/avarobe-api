@@ -3,7 +3,7 @@ import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
-import { PHOTO_CONSENT_VERSION } from '../../constants/auth.js'
+import { PHOTO_CONSENT_NOTICE_VERSION, PHOTO_CONSENT_VERSION } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AvatarBody, AvatarJob } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
@@ -11,6 +11,7 @@ import { InvalidImageError, normalizeBodyPhoto, normalizeSelfie } from '../../ut
 import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
+import { requestGeo, type Geo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, paletteAccess, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
@@ -261,7 +262,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       let upload: Buffer | null = null
 
       try {
-        for await (const part of request.parts({ limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 4 } })) {
+        for await (const part of request.parts({ limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 5 } })) {
           if (part.type === 'file') {
             const buffer = await part.toBuffer()
 
@@ -293,6 +294,16 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       if (upload && fields.consent !== 'true') {
         return reply.code(400).send({ message: 'Please agree to how we use your photo first.' })
+      }
+
+      // Agreed to by uploading after the notice beside the button, or with
+      // the checkbox. Where the law asks for a written release for anything
+      // read from a face (Illinois), only the checkbox counts: the web shows
+      // it when it gets this answer.
+      const byNotice = fields.consentMethod === 'notice'
+
+      if (upload && byNotice && needsCheckboxConsent(requestGeo(request))) {
+        return reply.code(409).send({ code: 'consent_checkbox', message: 'Please agree to how we use your photo first.' })
       }
 
       let selfie: Buffer | null = null
@@ -333,7 +344,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             drapePreview: null,
             reportBoards: null,
             hairProfile: null,
-            ...(selfieKey ? { selfieKey, consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+            ...(selfieKey ? { selfieKey, consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
           $setOnInsert: {
             _id: new ObjectId(),
@@ -629,3 +640,10 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 }
 
 export default avatarRoutes
+
+// Where a photo's consent has to be a written release (a checkbox), not the
+// act of uploading after a notice: Illinois (BIPA). Unknown places get the
+// notice, like everyone else.
+export function needsCheckboxConsent(geo: Geo | null) {
+  return geo?.country === 'US' && geo.region === 'IL'
+}
