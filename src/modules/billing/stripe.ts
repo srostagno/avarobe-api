@@ -5,6 +5,7 @@ import Stripe from 'stripe'
 import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { PRODUCT_COPY } from '../../i18n/products.js'
+import { isGuestEmail } from '../../utils/guests.js'
 import { appUrl, isLocale, type Locale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
@@ -356,6 +357,14 @@ function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', l
   return { en: 'One-time payment. No subscription.', 'pt-BR': 'Pagamento único. Sem assinatura.', es: 'Pago único. Sin suscripción.' }[locale]
 }
 
+// Beside Pay for a guest, whose email Stripe asks for: what our own email
+// step said before (they agree to the terms and privacy policy).
+const GUEST_TERMS: Record<Locale, string> = {
+  en: 'By paying, you agree to Avarobe’s terms and privacy policy.',
+  'pt-BR': 'Ao pagar, você concorda com os termos e a política de privacidade do Avarobe.',
+  es: 'Al pagar, aceptas los términos y la política de privacidad de Avarobe.',
+}
+
 export async function createCheckout(input: {
   user: Pick<UserDocument, '_id' | 'email' | 'locale'>
   product: PurchaseProduct
@@ -375,6 +384,7 @@ export async function createCheckout(input: {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
   const locale = input.user.locale ?? 'en'
+  const guest = isGuestEmail(input.user.email)
   const metadata = { ...input.attribution, app: APP, product: input.product, userId, region, locale }
   const discount =
     input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents, REGION_CURRENCY[region]) : null
@@ -384,7 +394,9 @@ export async function createCheckout(input: {
     // Not a bare ObjectId, so Trimry's webhook can never take it for one of
     // its own records.
     client_reference_id: `${APP}_${userId}`,
-    customer_email: input.user.email,
+    // A guest has no email yet: Stripe asks for it, and the account takes
+    // it once the payment goes through (guest-checkout.ts).
+    ...(guest ? {} : { customer_email: input.user.email }),
     metadata,
     // Stripe takes either a discount or the promotion code field. The field
     // is left to subscriptions: on a $5 purchase it sends people off to
@@ -394,7 +406,7 @@ export async function createCheckout(input: {
       : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
         ? { allow_promotion_codes: true }
         : {}),
-    custom_text: { submit: { message: submitMessage(input.product, region, locale) } },
+    custom_text: { submit: { message: guest ? `${submitMessage(input.product, region, locale)} ${GUEST_TERMS[locale]}` : submitMessage(input.product, region, locale) } },
     // The embedded form comes back to the same success page; closing it is
     // the way back, so it has no cancel link.
     ...(input.embedded
@@ -546,7 +558,7 @@ export function sessionSettled(session: Stripe.Checkout.Session) {
 const readId = (value: string | { id?: string } | null | undefined) =>
   typeof value === 'string' ? value : (value?.id ?? null)
 
-function avarobeUserId(metadata: Stripe.Metadata | null | undefined) {
+export function avarobeUserId(metadata: Stripe.Metadata | null | undefined) {
   if (metadata?.app !== APP || !ObjectId.isValid(metadata.userId ?? '')) {
     return null
   }

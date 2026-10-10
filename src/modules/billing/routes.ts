@@ -12,6 +12,7 @@ import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
+import { claimGuestFromSession } from './guest-checkout.js'
 import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
@@ -325,11 +326,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ message: 'Sign in again to continue.' })
       }
 
-      // A guest saves with their email first (the web asks before checkout),
-      // so the receipt, the purchase and their way back in all have one.
-      if (user.guest) {
-        return reply.code(409).send({ code: 'email_required', message: 'Add your email to continue.' })
-      }
+      // A guest pays as they are: Stripe asks for the email, and the account
+      // takes it when the payment goes through (guest-checkout.ts).
 
       const state = billingState(user)
       const reason = ineligibility(parsed.data.product, state)
@@ -436,6 +434,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'The payment is still processing. Refresh in a moment.' })
       }
 
+      await claimGuestFromSession(app, session)
       await grantSession(app, session)
 
       const user = await app.collections.users.findOne({ _id: userId })
@@ -877,6 +876,7 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       switch (event.type) {
         case 'checkout.session.completed':
         case 'checkout.session.async_payment_succeeded':
+          await claimGuestFromSession(app, event.data.object)
           await grantSession(app, event.data.object)
           break
         case 'invoice.paid':
