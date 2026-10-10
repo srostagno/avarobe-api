@@ -25,6 +25,10 @@ describe('colors first: who starts with their colors', () => {
   it('starts people from a color guide with their colors', () => {
     assert.equal(focusOf(acquisition({ landing: '/color-analysis' })), 'colors')
     assert.equal(focusOf(acquisition({ landing: '/color-analysis/deep-winter' })), 'colors')
+    // The translated addresses in Portuguese and Spanish.
+    assert.equal(focusOf(acquisition({ landing: '/pt-br/coloracao-pessoal/outono-suave' })), 'colors')
+    assert.equal(focusOf(acquisition({ landing: '/es/colorimetria' })), 'colors')
+    assert.equal(focusOf(acquisition({ landing: '/es/colores/mejores-colores-para-piel-morena' })), null)
   })
 
   it('starts people from any Colors ad with their colors, wherever it landed', () => {

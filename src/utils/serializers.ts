@@ -18,8 +18,12 @@ export function focusOf(user: Pick<UserDocument, 'acquisition'>): 'colors' | nul
   const landing = withoutLocalePrefix(user.acquisition?.landing ?? '')
   const content = user.acquisition?.content ?? ''
 
-  return landing.startsWith('/color-analysis') || content.startsWith('colors') ? 'colors' : null
+  return COLOR_GUIDES.test(landing) || content.startsWith('colors') ? 'colors' : null
 }
+
+// The color guides, at their English address and at the translated ones the
+// web gives them in Portuguese and Spanish (avarobe-web i18n/paths.ts).
+const COLOR_GUIDES = /^\/(color-analysis|coloracao-pessoal|colorimetria)(\/|$)/
 
 export function serializeUser(user: UserDocument) {
   return {
