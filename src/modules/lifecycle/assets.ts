@@ -306,7 +306,7 @@ async function idealCut({ app, user }: Job): Promise<Picture> {
     // Her hair read first, as the Hair studio starts it (it counts toward
     // today's hair allowance, which a failed read gives back). With her free
     // haircut left, it starts the ideal cut on its own.
-    if (!(await reserveGenerations(app, user._id, 'hair', 1))) {
+    if (!(await reserveGenerations(app, user._id, 'hair', 1, { image: false }))) {
       return null
     }
 

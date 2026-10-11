@@ -226,7 +226,8 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
         return 'skipped'
       }
 
-      if (!(await reserveGenerations(app, user._id, 'avatar', 1))) {
+      // A read is text, not one of the day's new pictures.
+      if (!(await reserveGenerations(app, user._id, 'avatar', 1, { image: false }))) {
         return 'skipped'
       }
 
@@ -248,7 +249,7 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
 
       // They tried again themselves meanwhile.
       if (claimed.modifiedCount === 0) {
-        await releaseGenerations(app, user._id, 'avatar', 1)
+        await releaseGenerations(app, user._id, 'avatar', 1, { image: false })
         return 'skipped'
       }
 

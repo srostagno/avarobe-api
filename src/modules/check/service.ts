@@ -6,6 +6,7 @@ import { errorMessage } from '../../utils/http.js'
 import { toStoredWebp } from '../../utils/images.js'
 import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
+import { releaseGenerations } from '../../utils/usage.js'
 import { PaywallError, billingState, loadBillingUser } from '../billing/entitlements.js'
 import { readTaste, toStylistTaste } from '../taste/service.js'
 
@@ -73,8 +74,12 @@ export async function assertCheckAllowed(app: FastifyInstance, userId: ObjectId)
 export async function runCheck(app: FastifyInstance, checkId: ObjectId) {
   const check = await app.collections.colorChecks.findOne({ _id: checkId })
   const avatar = check ? await app.collections.avatars.findOne({ userId: check.userId }) : null
-  const fail = (error: string) =>
-    app.collections.colorChecks.updateOne({ _id: checkId }, { $set: { status: 'failed', error, updatedAt: new Date() } })
+  // No picture drawn: the day's picture it reserved comes back.
+  const giveBack = () => (check ? releaseGenerations(app, check.userId, 'image', 1) : undefined)
+  const fail = async (error: string) => {
+    await app.collections.colorChecks.updateOne({ _id: checkId }, { $set: { status: 'failed', error, updatedAt: new Date() } })
+    await giveBack()
+  }
 
   if (!check || !avatar?.colorAnalysis) {
     await fail('We need your colors first: send a selfie.')
@@ -112,6 +117,7 @@ export async function runCheck(app: FastifyInstance, checkId: ObjectId) {
 
     if (reading.verdict === 'unclear') {
       await app.collections.colorChecks.updateOne({ _id: checkId }, { $set: { status: 'ready', updatedAt: new Date() } })
+      await giveBack()
       return
     }
 

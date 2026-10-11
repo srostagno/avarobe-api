@@ -118,13 +118,13 @@ export async function runHairProfile(app: FastifyInstance, avatarId: ObjectId, s
   } catch (error) {
     app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Hair profile failed')
     await finish({ status: 'failed', data: null, error: PROFILE_FAILED })
-    await releaseGenerations(app, avatar.userId, 'hair', 1)
+    await releaseGenerations(app, avatar.userId, 'hair', 1, { image: false })
     return
   }
 
   if (!profile || profile.recommendations.length === 0) {
     await finish({ status: 'failed', data: null, error: NO_FACE })
-    await releaseGenerations(app, avatar.userId, 'hair', 1)
+    await releaseGenerations(app, avatar.userId, 'hair', 1, { image: false })
     return
   }
 

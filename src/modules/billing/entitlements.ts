@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { UserDocument } from '../../types/mongo.js'
+import { limitMessages } from '../../i18n/limits.js'
+import type { ProSubscription, UserDocument } from '../../types/mongo.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
@@ -95,6 +96,27 @@ export const PRO_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due'])
 
 export function proIsLive(pro: UserDocument['pro'], now = Date.now()) {
   return Boolean(pro && PRO_LIVE_STATUSES.has(pro.status) && pro.periodEnd && pro.periodEnd.getTime() + PRO_GRACE_MS > now)
+}
+
+// Pro's avatar renders a month (PRO_AVATAR_RUNS_PER_MONTH, since Oct 2026).
+// A subscription paid before the cap (no avatarCap mark) keeps unlimited
+// renders until its next payment, unless PRO_AVATAR_GRANDFATHER is off.
+export function avatarCapExempt(pro: Pick<ProSubscription, 'avatarCap'>) {
+  return env.PRO_AVATAR_GRANDFATHER && pro.avatarCap !== true
+}
+
+// When a Pro month's avatar renders start over: the trial's end (its first
+// payment), annual's next monthly drop, a monthly plan's next payment.
+export function avatarRunsResetAt(pro: Pick<ProSubscription, 'status' | 'interval' | 'periodEnd' | 'nextCreditsAt' | 'trialEnd'>) {
+  if (pro.status === 'trialing') {
+    return pro.trialEnd ?? pro.periodEnd
+  }
+
+  if (pro.interval === 'year' && pro.nextCreditsAt) {
+    return pro.periodEnd && pro.periodEnd.getTime() < pro.nextCreditsAt.getTime() ? pro.periodEnd : pro.nextCreditsAt
+  }
+
+  return pro.periodEnd
 }
 
 // Add-on prices: the other report at what completes the bundle.
@@ -200,6 +222,17 @@ export function billingState(user: BillingFields, now = Date.now(), region: Pric
     paid: Boolean(user.paidAt || colorReportAt || styleReportAt || user.colorMirrorAt || user.hairAdvisorAt || pro || user.styleKitUntil),
     credits: user.credits ?? env.FREE_CREDITS,
     freeAvatarRunsLeft: proActive ? null : Math.max(0, env.FREE_AVATAR_RUNS - (user.freeAvatarRuns ?? 0)),
+    // Pro's avatar renders this month; null where there's no cap (comp, a
+    // subscription from before it, the legacy kit, no Pro).
+    proAvatarRuns:
+      proLive && pro && !comp && !avatarCapExempt(pro)
+        ? {
+            used: Math.min(pro.avatarRuns ?? 0, env.PRO_AVATAR_RUNS_PER_MONTH),
+            left: Math.max(0, env.PRO_AVATAR_RUNS_PER_MONTH - (pro.avatarRuns ?? 0)),
+            limit: env.PRO_AVATAR_RUNS_PER_MONTH,
+            resetsAt: avatarRunsResetAt(pro),
+          }
+        : null,
     // Every recommended haircut on them; otherwise the free one(s).
     hairCuts: hairAdvisor,
     freeHairRunsLeft: hairAdvisor ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
@@ -220,6 +253,10 @@ export function serializeBilling(user: BillingFields) {
           periodEnd: iso(state.pro.periodEnd),
           cancelAtPeriodEnd: state.pro.cancelAtPeriodEnd,
           trialEnd: state.trialing ? iso(state.pro.trialEnd ?? state.pro.periodEnd) : null,
+          // Annual: the next monthly looks, and the first month's rest while
+          // it's held (PRO_ANNUAL_FIRST_WEEK_DAYS after the first payment).
+          nextCreditsAt: iso(state.pro.nextCreditsAt),
+          heldCredits: state.pro.heldCredits ? { amount: state.pro.heldCredits.amount, at: iso(state.pro.heldCredits.at) } : null,
         }
       : null,
     colorReport: state.colorReport,
@@ -245,6 +282,9 @@ export function serializeBilling(user: BillingFields) {
     credits: state.credits,
     unlimited: state.comp,
     freeAvatarRunsLeft: state.freeAvatarRunsLeft,
+    proAvatarRuns: state.proAvatarRuns
+      ? { left: state.proAvatarRuns.left, limit: state.proAvatarRuns.limit, resetsAt: iso(state.proAvatarRuns.resetsAt) }
+      : null,
     hairCuts: state.hairCuts,
     freeHairRunsLeft: state.freeHairRunsLeft,
     admin: state.admin,
@@ -345,8 +385,15 @@ export async function spendCredits(app: FastifyInstance, userId: ObjectId, amoun
   )
 
   if (result.modifiedCount === 0) {
-    const { proActive, trialing, paid, credits } = await loadState(app, userId)
+    const { proActive, proLive, pro, trialing, paid, credits } = await loadState(app, userId)
     const left = `${credits} look${credits === 1 ? '' : 's'} left`
+    // Annual's first week: the rest of the month's looks are on their way.
+    const held = proLive && pro?.heldCredits && pro.heldCredits.at.getTime() > Date.now() ? pro.heldCredits : null
+
+    if (held && credits === 0) {
+      void trackServerEvent(app, { name: 'usage_cap_hit', userId, props: { cap: 'held_credits', route: '' } })
+      throw new PaywallError('no_credits', limitMessages().held(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, held.amount, held.at))
+    }
 
     throw new PaywallError(
       'no_credits',
@@ -371,10 +418,63 @@ export async function refundCredits(app: FastifyInstance, userId: ObjectId, amou
   }
 }
 
-// Avatar renders are free up to FREE_AVATAR_RUNS; Pro lifts it.
-export async function useAvatarRun(app: FastifyInstance, userId: ObjectId) {
-  if ((await loadState(app, userId)).proActive) {
-    return
+// What an avatar render took: nothing on a comp account or a subscription
+// from before the cap ('exempt'), one of the Pro month's renders ('pro'), or
+// one of the free ones ('free').
+export type AvatarRun = 'comp' | 'free' | 'pro' | 'exempt'
+
+// The Pro month's avatar renders are used up: back on `resetsAt`. Not an
+// offer (they already have Pro), so routes answer 429, not 402.
+export class AvatarCapError extends Error {
+  constructor(
+    readonly limit: number,
+    readonly resetsAt: Date | null,
+  ) {
+    super(limitMessages().avatarMonth(limit, resetsAt))
+  }
+}
+
+// Avatar renders are free up to FREE_AVATAR_RUNS; Pro gives
+// PRO_AVATAR_RUNS_PER_MONTH a month (unlimited for a subscription from
+// before the cap, see avatarCapExempt).
+export async function useAvatarRun(app: FastifyInstance, userId: ObjectId): Promise<AvatarRun> {
+  const user = await loadBillingUser(app, userId)
+
+  if (!user) {
+    throw new PaywallError('needs_pro', 'Sign in again to continue.')
+  }
+
+  const state = billingState(user)
+
+  if (state.comp) {
+    return 'comp'
+  }
+
+  if (state.proLive && state.pro) {
+    if (!state.proAvatarRuns) {
+      return 'exempt'
+    }
+
+    const limit = env.PRO_AVATAR_RUNS_PER_MONTH
+    const taken = await app.collections.users.updateOne(
+      {
+        _id: userId,
+        'pro.subscriptionId': state.pro.subscriptionId,
+        $or: [{ 'pro.avatarRuns': { $exists: false } }, { 'pro.avatarRuns': { $lt: limit } }],
+      },
+      { $inc: { 'pro.avatarRuns': 1 } },
+    )
+
+    if (taken.modifiedCount === 0) {
+      throw new AvatarCapError(limit, state.proAvatarRuns.resetsAt)
+    }
+
+    return 'pro'
+  }
+
+  // The legacy Style Kit.
+  if (state.proActive) {
+    return 'exempt'
   }
 
   const result = await app.collections.users.updateOne(
@@ -388,6 +488,32 @@ export async function useAvatarRun(app: FastifyInstance, userId: ObjectId) {
   if (result.modifiedCount === 0) {
     throw new PaywallError('needs_pro', 'More avatar changes come with Avarobe Pro.')
   }
+
+  return 'free'
+}
+
+// A render that failed on our side gives the Pro month's render back (free
+// ones stay used, as always).
+export async function releaseAvatarRun(app: FastifyInstance, userId: ObjectId, run: AvatarRun | null | undefined) {
+  if (run === 'pro') {
+    await app.collections.users.updateOne({ _id: userId, 'pro.avatarRuns': { $gt: 0 } }, { $inc: { 'pro.avatarRuns': -1 } })
+  }
+}
+
+// The 429 for a Pro month's avatar renders, counted for the admin.
+export function sendAvatarCap(reply: FastifyReply, error: AvatarCapError) {
+  void trackServerEvent(reply.server, {
+    name: 'usage_cap_hit',
+    userId: toObjectId(reply.request.authUserId),
+    props: { cap: 'avatar_month', route: reply.request.routeOptions.url ?? '' },
+  })
+
+  return reply.code(429).send({
+    code: 'avatar_monthly_limit',
+    message: error.message,
+    limit: error.limit,
+    resetsAt: error.resetsAt?.toISOString() ?? null,
+  })
 }
 
 // One recommended haircut on the person: free with the Style Advisor or Pro,

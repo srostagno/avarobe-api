@@ -195,7 +195,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       const { occasion, count } = parsed.data
       const notes = parsed.data.notes || null
 
-      const quota = await reserveLookQuota(app, userId, count)
+      const quota = await reserveLookQuota(app, userId, count, { route: '/looks' })
 
       if (!quota.ok) {
         return reply.code(quota.status).send(quota.body)
@@ -569,7 +569,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'This look does not need a retry.' })
       }
 
-      const quota = await reserveLookQuota(app, userId, 1)
+      const quota = await reserveLookQuota(app, userId, 1, { route: '/looks/:id/retry' })
 
       if (!quota.ok) {
         return reply.code(quota.status).send(quota.body)
@@ -627,7 +627,11 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Your avatar needs to be ready before styling looks.' })
       }
 
-      const quota = await reserveLookQuota(app, userId, 1)
+      // Drawn ahead of time: it shows right away instead of rendering now,
+      // so it isn't one of the day's new pictures.
+      const teaser = look.teaser?.status === 'ready' && look.teaser.key ? look.teaser : null
+      const usage = { image: !teaser }
+      const quota = await reserveLookQuota(app, userId, 1, { ...usage, route: '/looks/:id/unlock' })
 
       if (!quota.ok) {
         return reply.code(quota.status).send(quota.body)
@@ -638,7 +642,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       try {
         creditSpent = await spendCredits(app, userId, 1)
       } catch (error) {
-        await releaseGenerations(app, userId, 'look', 1)
+        await releaseGenerations(app, userId, 'look', 1, usage)
 
         if (error instanceof PaywallError) {
           return sendPaywall(reply, error)
@@ -647,8 +651,6 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      // Drawn ahead of time: it shows right away instead of rendering now.
-      const teaser = look.teaser?.status === 'ready' && look.teaser.key ? look.teaser : null
       const now = new Date()
 
       // Claimed atomically, so a double tap draws (and charges) it once.
@@ -662,7 +664,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       )
 
       if (claimed.modifiedCount === 0) {
-        await releaseGenerations(app, userId, 'look', 1)
+        await releaseGenerations(app, userId, 'look', 1, usage)
         await refundCredits(app, userId, creditSpent ? 1 : 0)
         return reply.code(409).send({ message: 'This look is already styled.' })
       }
@@ -827,7 +829,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Your avatar needs to be ready before styling looks.' })
       }
 
-      const quota = await reserveLookQuota(app, userId, 1)
+      const quota = await reserveLookQuota(app, userId, 1, { route: '/looks/:id/remix' })
 
       if (!quota.ok) {
         return reply.code(quota.status).send(quota.body)

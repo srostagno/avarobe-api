@@ -102,6 +102,11 @@ const envSchema = z.object({
   DAILY_SHOP_SEARCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(60),
   // Hair studio: reads of the selfie and hairstyle renders, per day.
   DAILY_HAIR_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
+  // Safety cap (Oct 2026): new AI pictures per account per UTC day across
+  // looks, try-ons, events, hairstyles, avatar renders and color checks (not
+  // color reads, report boards, magazines or piece photos). It only delays:
+  // credits are never spent on a picture it stops. Comp accounts are exempt.
+  AI_DAILY_IMAGE_LIMIT: z.coerce.number().int().min(1).max(500).default(15),
   // SerpApi runs the Google Lens searches behind "Find it in stores".
   SERPAPI_API_KEY: z.string().optional(),
   // Billing (Stripe Checkout). Products and prices are created in Stripe on
@@ -137,6 +142,19 @@ const envSchema = z.object({
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),
   PRICE_PRO_ANNUAL_CENTS: z.coerce.number().int().min(100).default(2999),
   PRO_MONTHLY_CREDITS: z.coerce.number().int().min(1).default(30),
+  // Avatar renders per Pro month (create, update, adjust, a haircut on the
+  // avatar), from Oct 2026; unlimited before.
+  PRO_AVATAR_RUNS_PER_MONTH: z.coerce.number().int().min(1).max(500).default(20),
+  // Subscriptions paid before the cap shipped keep unlimited avatar renders
+  // until their next payment (Pro payments from then on are marked
+  // pro.avatarCap). 'off' applies the cap to everyone right away.
+  PRO_AVATAR_GRANDFATHER: z.enum(['on', 'off']).optional(),
+  // Pro annual's first payment: this many looks right away, the rest of the
+  // month's PRO_MONTHLY_CREDITS after PRO_ANNUAL_FIRST_WEEK_DAYS. Renewals and
+  // the switch from monthly get the whole month at once. A value at or above
+  // PRO_MONTHLY_CREDITS turns the hold off.
+  PRO_ANNUAL_FIRST_WEEK_CREDITS: z.coerce.number().int().min(0).default(10),
+  PRO_ANNUAL_FIRST_WEEK_DAYS: z.coerce.number().int().min(1).max(31).default(7),
   // The first-time offer: Pro for a few days at a small price, then monthly.
   // One trial per account, with fewer looks than a paid month.
   PRICE_PRO_TRIAL_CENTS: z.coerce.number().int().min(50).default(100),
@@ -231,6 +249,7 @@ export const env = {
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
+  PRO_AVATAR_GRANDFATHER: (raw.PRO_AVATAR_GRANDFATHER ?? 'on') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   AI_FAULT: raw.NODE_ENV === 'production' ? undefined : raw.AI_FAULT,
   XSELL_PERSONAL_IMAGES: ['on', 'true'].includes(raw.XSELL_PERSONAL_IMAGES ?? 'on'),

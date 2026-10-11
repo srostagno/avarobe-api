@@ -71,7 +71,7 @@ const styleEventRoutes: FastifyPluginAsync = async (app) => {
       const { occasion, budget } = parsed.data
       const date = parsed.data.date ?? null
       const notes = parsed.data.notes || null
-      const quota = await reserveLookQuota(app, userId, EVENT_LOOKS)
+      const quota = await reserveLookQuota(app, userId, EVENT_LOOKS, { route: '/events' })
 
       if (!quota.ok) {
         return reply.code(quota.status).send(quota.body)

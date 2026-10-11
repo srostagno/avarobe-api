@@ -2,7 +2,6 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
-import { env } from '../../config/env.js'
 import { PHOTO_CONSENT_NOTICE_VERSION, PHOTO_CONSENT_VERSION } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AvatarBody, AvatarDocument, AvatarJob, ColorReadLog } from '../../types/mongo.js'
@@ -14,13 +13,14 @@ import { storage } from '../../utils/storage.js'
 import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
 import { requestGeo, type Geo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
-import { PaywallError, paletteAccess, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
+import { paletteAccess } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { answeredBefore, colorsLocked, colorsReadStart, imageHash, loadColorsAccess, newReadId, readEntry, replacedKeys, withRead } from './reads.js'
+import { avatarLimitBody, takeAvatarRender } from './render-quota.js'
 import { newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
@@ -71,13 +71,9 @@ function busyMessage(job: AvatarJob | null | undefined) {
   return job?.kind === 'colors' ? 'We are still reading your colors. One moment.' : 'Your avatar is still being created.'
 }
 
-// `code` tells the day's limit from the per-minute rate limit (also a 429),
-// so the web stops trying again by itself only for this one.
+// The day's avatar renders and reads (render-quota.ts for renders).
 function limitReached(reply: FastifyReply) {
-  return reply.code(429).send({
-    code: 'daily_limit',
-    message: `You can create or adjust your avatar ${env.DAILY_AVATAR_LIMIT} times a day. Try again tomorrow.`,
-  })
+  return reply.code(429).send(avatarLimitBody())
 }
 
 const avatarRoutes: FastifyPluginAsync = async (app) => {
@@ -159,20 +155,10 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
-        return limitReached(reply)
-      }
+      const render = await takeAvatarRender(app, reply, userId)
 
-      try {
-        await useAvatarRun(app, userId)
-      } catch (error) {
-        await releaseGenerations(app, userId, 'avatar', 1)
-
-        if (error instanceof PaywallError) {
-          return sendPaywall(reply, error)
-        }
-
-        throw error
+      if (!render.ok) {
+        return render.sent
       }
 
       const stamp = Date.now()
@@ -225,7 +211,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             error: null,
             failure: null,
             body: roundBody(parsedBody.data),
-            job: newJob('create'),
+            job: newJob('create', render.run),
             updatedAt: now,
             readyAt: existing?.readyAt ?? null,
             avatarKey: existing?.avatarKey ?? null,
@@ -373,7 +359,8 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(202).send({ avatar: await serializeAvatar(existing, await paletteAccess(app, userId)), reused: true })
       }
 
-      if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
+      // A read is text, not one of the day's new pictures.
+      if (!(await reserveGenerations(app, userId, 'avatar', 1, { image: false }))) {
         return limitReached(reply)
       }
 
@@ -432,7 +419,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           await storage.remove(heldKey).catch(() => undefined)
         }
 
-        await releaseGenerations(app, userId, 'avatar', 1)
+        await releaseGenerations(app, userId, 'avatar', 1, { image: false })
         const busy = await app.collections.avatars.findOne({ userId }, { projection: { job: 1 } })
 
         return reply.code(409).send({ message: busyMessage(busy?.job) })
@@ -632,20 +619,10 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Add your measurements to create your avatar.' })
       }
 
-      if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
-        return limitReached(reply)
-      }
+      const render = await takeAvatarRender(app, reply, userId)
 
-      try {
-        await useAvatarRun(app, userId)
-      } catch (error) {
-        await releaseGenerations(app, userId, 'avatar', 1)
-
-        if (error instanceof PaywallError) {
-          return sendPaywall(reply, error)
-        }
-
-        throw error
+      if (!render.ok) {
+        return render.sent
       }
 
       const previous = await app.collections.avatars.findOneAndUpdate(
@@ -655,7 +632,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             status: 'processing',
             error: null,
             failure: null,
-            job: newJob('create'),
+            job: newJob('create', render.run),
             updatedAt: new Date(),
             ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),
           },
@@ -701,26 +678,16 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'Your avatar is still being created.' })
       }
 
-      if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
-        return limitReached(reply)
-      }
+      const render = await takeAvatarRender(app, reply, userId)
 
-      try {
-        await useAvatarRun(app, userId)
-      } catch (error) {
-        await releaseGenerations(app, userId, 'avatar', 1)
-
-        if (error instanceof PaywallError) {
-          return sendPaywall(reply, error)
-        }
-
-        throw error
+      if (!render.ok) {
+        return render.sent
       }
 
       await app.collections.avatars.updateOne(
         { _id: existing._id },
         {
-          $set: { status: 'processing', error: null, job: newJob('refine'), updatedAt: new Date() },
+          $set: { status: 'processing', error: null, job: newJob('refine', render.run), updatedAt: new Date() },
           $inc: { generations: 1 },
         },
       )

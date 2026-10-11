@@ -420,6 +420,11 @@ export function fakeApp(seed: Record<string, Doc[]> = {}) {
     log,
     collections: new Proxy({}, { get: (_target, name) => collection(String(name)) }),
     jwt: { sign: async () => `test-token-${++tokens}` },
+    // Transactions run their work as it comes (the collections ignore the
+    // session option), for the payment grants.
+    mongoClient: {
+      startSession: () => ({ withTransaction: async (work: () => Promise<unknown>) => work(), endSession: async () => undefined }),
+    },
   }
 
   return { app: app as unknown as FastifyInstance, collection, logs }

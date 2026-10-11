@@ -211,6 +211,15 @@ export type ProSubscription = {
   nextCreditsAt?: Date | null
   // Trials (status 'trialing'): when the first monthly charge happens.
   trialEnd?: Date | null
+  // Avatar renders this Pro month (PRO_AVATAR_RUNS_PER_MONTH). Starts over
+  // with every payment (the object is replaced) and every annual refill.
+  avatarRuns?: number
+  // Set on every Pro payment since the avatar cap (Oct 2026): a
+  // subscription paid before it keeps unlimited renders until its next one.
+  avatarCap?: boolean
+  // Annual's first payment: the rest of the first month's looks, held until
+  // `at` (PRO_ANNUAL_FIRST_WEEK_DAYS after paying), then added by the refill.
+  heldCredits?: { amount: number; at: Date } | null
 }
 
 export type PurchaseProduct =
@@ -424,6 +433,9 @@ export type AvatarJob = {
   // the stored one. The avatar's own selfieKey moves only then.
   readId?: string | null
   selfieKey?: string | null
+  // What the render took (billing useAvatarRun), so a failed one gives a
+  // Pro month's render back.
+  avatarRun?: 'comp' | 'free' | 'pro' | 'exempt' | null
 }
 
 // Why the last color read failed (utils/openai.ts classifyAiError), after
@@ -1044,7 +1056,9 @@ export type CollectionDocument = {
   updatedAt: Date
 }
 
-export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report' | 'hair'
+// 'image': every new AI picture of the day across looks, hairstyles, avatar
+// renders and color checks (AI_DAILY_IMAGE_LIMIT, utils/usage.ts).
+export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report' | 'hair' | 'image'
 
 export type UsageCounterDocument = {
   _id: string

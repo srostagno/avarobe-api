@@ -37,7 +37,7 @@ export async function failStaleColorReads(app: FastifyInstance, now = new Date()
 
     if (settled !== null) {
       count += 1
-      await releaseGenerations(app, avatar.userId, 'avatar', 1)
+      await releaseGenerations(app, avatar.userId, 'avatar', 1, { image: false })
     }
   }
 

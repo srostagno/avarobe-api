@@ -13,7 +13,8 @@ import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
 import { claimGuestFromSession } from './guest-checkout.js'
-import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser, reportCreditFor } from './entitlements.js'
+import { DAILY_CHECKS } from '../check/service.js'
+import { EVENT_LOOKS, PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser, reportCreditFor } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
 import {
@@ -21,6 +22,7 @@ import {
   PRODUCTS,
   SwitchDeclinedError,
   addMonths,
+  annualFirstWeek,
   createCheckout,
   grantSession,
   handleInvoicePaid,
@@ -139,6 +141,7 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
       periodEnd: options.ending ? new Date(now.getTime() + 5 * day) : addMonths(now, interval === 'year' ? 12 : 1),
       cancelAtPeriodEnd: Boolean(options.ending),
       nextCreditsAt: interval === 'year' ? addMonths(now, 1) : null,
+      avatarCap: true,
     },
   })
 
@@ -163,6 +166,7 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
           cancelAtPeriodEnd: false,
           nextCreditsAt: null,
           trialEnd,
+          avatarCap: true,
         },
       }
     }
@@ -196,6 +200,19 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
 }
 
 const isSimulated = (subscriptionId: string | undefined) => subscriptionId === SIMULATED_SUBSCRIPTION
+
+function proIncludes() {
+  const week = annualFirstWeek()
+
+  return {
+    credits: env.PRO_MONTHLY_CREDITS,
+    eventLooks: EVENT_LOOKS,
+    avatarRunsPerMonth: env.PRO_AVATAR_RUNS_PER_MONTH,
+    dailyImages: env.AI_DAILY_IMAGE_LIMIT,
+    dailyChecks: DAILY_CHECKS,
+    annualFirstWeek: week ? { credits: week.now, days: week.days } : null,
+  }
+}
 
 const funnelSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
 
@@ -286,6 +303,9 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     // null while the trial is off: the web leads with the Color Advisor then.
     trial: env.PRO_TRIAL ? { days: env.PRO_TRIAL_DAYS, credits: env.PRO_TRIAL_CREDITS } : null,
     reportCreditDays: env.REPORT_CREDIT_WINDOW_DAYS,
+    // What Pro includes, in numbers, for its one official list (the web and
+    // the emails read these, so they say what the API enforces).
+    pro: proIncludes(),
     }
   })
 
@@ -757,6 +777,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
                 'pro.periodEnd': addMonths(now, 12),
                 'pro.cancelAtPeriodEnd': false,
                 'pro.nextCreditsAt': addMonths(now, 1),
+                'pro.avatarRuns': 0,
                 colorReportAt: user.colorReportAt ?? now,
                 styleReportAt: user.styleReportAt ?? now,
                 hairAdvisorAt: user.hairAdvisorAt ?? now,
@@ -810,6 +831,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
                 'pro.periodEnd': addMonths(new Date(), 1),
                 'pro.cancelAtPeriodEnd': false,
                 'pro.trialEnd': null,
+                'pro.avatarRuns': 0,
               },
               $inc: { credits: env.PRO_MONTHLY_CREDITS },
             },

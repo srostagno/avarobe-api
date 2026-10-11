@@ -32,6 +32,7 @@ import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { releaseAvatarRun } from '../billing/entitlements.js'
 import { noteReadFailed, noteReadSucceeded } from '../ops/alerts.js'
 import { startDrapePreview } from '../report/service.js'
 import { deleteHairstyles } from '../hair/service.js'
@@ -79,8 +80,9 @@ export function failureFor(kind: AvatarJobOptions['kind'] | 'colors') {
   return kind === 'refine' ? { status: 'ready' as const, error: REFINE_FAILED } : { status: 'failed' as const, error: CREATE_FAILED }
 }
 
-export function newJob(kind: AvatarJob['kind'], now = new Date()): AvatarJob {
-  return { kind, startedAt: now, previewKey: null, previewCount: 0 }
+// `avatarRun`: what the render took (billing useAvatarRun), given back if it fails.
+export function newJob(kind: AvatarJob['kind'], avatarRun: AvatarJob['avatarRun'] = null, now = new Date()): AvatarJob {
+  return { kind, startedAt: now, previewKey: null, previewCount: 0, ...(avatarRun ? { avatarRun } : {}) }
 }
 
 function requestColorAnalysis(selfie: Buffer) {
@@ -385,6 +387,7 @@ export async function runAvatarJob(
     // A failed refinement or haircut leaves the previous avatar usable.
     Object.assign(update, failureFor(options.kind))
     await releaseGenerations(app, avatar.userId, 'avatar', 1)
+    await releaseAvatarRun(app, avatar.userId, avatar.job?.avatarRun)
   } else {
     update.status = 'ready'
     update.error = null
@@ -623,7 +626,7 @@ async function dropReplacedRead(app: FastifyInstance, avatarId: ObjectId, key: s
   const owner = userId ?? doc?.userId
 
   if (owner) {
-    await releaseGenerations(app, owner, 'avatar', 1)
+    await releaseGenerations(app, owner, 'avatar', 1, { image: false })
   }
 }
 
@@ -820,7 +823,7 @@ async function failColorsJob(
     { code: result.code, at: now, attempts: result.attempts, detail },
     { via: via ?? 'colors', hash: result.hash ?? null },
   )
-  await releaseGenerations(app, avatar.userId, 'avatar', 1)
+  await releaseGenerations(app, avatar.userId, 'avatar', 1, { image: false })
   // superseded: another read (or the avatar) took its place meanwhile, so
   // nothing was kept or failed by this one.
   await trackServerEvent(app, {
@@ -902,6 +905,7 @@ export function startAvatarJob(
 
       if (avatar) {
         await releaseGenerations(app, avatar.userId, 'avatar', 1)
+        await releaseAvatarRun(app, avatar.userId, avatar.job?.avatarRun)
       }
     } catch {
       // Stale-job recovery on the next boot will catch it.

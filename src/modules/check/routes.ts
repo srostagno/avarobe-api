@@ -4,6 +4,7 @@ import { ObjectId } from 'mongodb'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { InvalidImageError, normalizeOutfitPhoto } from '../../utils/images.js'
 import { storage } from '../../utils/storage.js'
+import { dailyLimitReply, releaseGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, sendPaywall } from '../billing/entitlements.js'
 
@@ -80,11 +81,24 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message: error instanceof InvalidImageError ? error.message : 'That photo could not be read.' })
       }
 
+      // Each check draws a picture: one of the day's (AI_DAILY_IMAGE_LIMIT),
+      // given back if it fails or the garment can't be read.
+      const images = await reserveUsage(app, userId, 'image', 1)
+
+      if (!images.ok) {
+        return dailyLimitReply(reply, images, {})
+      }
+
       const checkId = new ObjectId()
       // A .jpg, never matched as shareable: what they uploaded stays theirs.
       const garmentKey = `users/${userId.toString()}/check-${checkId.toString()}-garment.jpg`
 
-      await storage.put(garmentKey, photo, 'image/jpeg')
+      try {
+        await storage.put(garmentKey, photo, 'image/jpeg')
+      } catch (error) {
+        await releaseGenerations(app, userId, 'image', 1)
+        throw error
+      }
 
       const now = new Date()
       const check = {

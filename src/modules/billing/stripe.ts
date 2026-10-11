@@ -346,12 +346,24 @@ function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', l
 
   if (config.recurring) {
     const every = { month: { en: 'month', 'pt-BR': 'mês', es: 'mes' }, year: { en: 'year', 'pt-BR': 'ano', es: 'año' } }[config.recurring][locale]
-
-    return {
+    const renews = {
       en: `Renews automatically at ${price(product)} per ${every} until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`,
       'pt-BR': `Renova automaticamente por ${price(product)} por ${every} até você cancelar. Cancele quando quiser nas configurações da sua conta Avarobe; o Pro continua até o fim do período pago.`,
       es: `Se renueva automáticamente por ${price(product)} al ${every} hasta que canceles. Cancela cuando quieras en la configuración de tu cuenta de Avarobe; conservas Pro hasta el final del período que pagaste.`,
     }[locale]
+    // Annual's first month comes in two parts (annualFirstWeek), said
+    // before paying.
+    const week = product === 'pro_annual' ? annualFirstWeek() : null
+
+    return week
+      ? `${renews} ${
+          {
+            en: `Your first ${week.now} looks come right away; the rest of the month’s ${env.PRO_MONTHLY_CREDITS} arrive ${week.days} days after you subscribe.`,
+            'pt-BR': `Seus primeiros ${week.now} looks chegam na hora; o restante dos ${env.PRO_MONTHLY_CREDITS} do mês chega ${week.days} dias depois da assinatura.`,
+            es: `Tus primeros ${week.now} looks llegan al instante; el resto de los ${env.PRO_MONTHLY_CREDITS} del mes llega ${week.days} días después de suscribirte.`,
+          }[locale]
+        }`
+      : renews
   }
 
   return { en: 'One-time payment. No subscription.', 'pt-BR': 'Pagamento único. Sem assinatura.', es: 'Pago único. Sin suscripción.' }[locale]
@@ -595,6 +607,9 @@ type Grant = {
   set?: (user: UserDocument) => Partial<UserDocument>
   // The offer the checkout came from (createCheckout's placement).
   placement?: string | null
+  // Credits this payment grants, when not the product's usual (annual's
+  // first payment holds some back).
+  credits?: number
 }
 
 // Records one payment and applies it to the user in a transaction: credits,
@@ -606,7 +621,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
   }
 
   const config = PRODUCTS[grant.product]
-  const credits = config.credits()
+  const credits = grant.credits ?? config.credits()
   // What she paid for, for products that unlock her colors: her season now
   // and the read it came from (a later read can't silently replace it).
   const avatar =
@@ -815,10 +830,23 @@ function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoi
   }).catch(() => undefined)
 }
 
+// Annual's first payment: how many looks come right away and how many are
+// held for PRO_ANNUAL_FIRST_WEEK_DAYS (none held when the setting is at or
+// above the month's looks).
+export function annualFirstWeek() {
+  const now = Math.min(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, env.PRO_MONTHLY_CREDITS)
+  const held = env.PRO_MONTHLY_CREDITS - now
+
+  return held > 0 ? { now, held, days: env.PRO_ANNUAL_FIRST_WEEK_DAYS } : null
+}
+
 // One Pro payment (the first one, a renewal, or the switch to annual): its
 // credits, the reports annual includes, and the subscription's state.
 // Annual plans get the rest of each year's monthly looks from
-// refillAnnualCredits, starting a month after every annual payment.
+// refillAnnualCredits, starting a month after every annual payment. A new
+// annual subscription's first month comes in two parts (annualFirstWeek).
+// Every payment starts a new month of avatar renders (the object is
+// replaced) and marks the subscription as under the avatar cap.
 async function grantProPayment(
   app: FastifyInstance,
   input: {
@@ -836,6 +864,8 @@ async function grantProPayment(
   },
 ) {
   const interval = input.product === 'pro_annual' ? 'year' : 'month'
+  const now = new Date()
+  const firstWeek = input.product === 'pro_annual' && input.first ? annualFirstWeek() : null
   const applied = await applyGrant(app, {
     userId: input.userId,
     product: input.product,
@@ -844,6 +874,7 @@ async function grantProPayment(
     amount: input.amount,
     currency: input.currency,
     placement: input.placement ?? null,
+    ...(firstWeek ? { credits: firstWeek.now } : {}),
     set: (user) => ({
       pro: {
         subscriptionId: input.subscriptionId,
@@ -852,7 +883,9 @@ async function grantProPayment(
         interval,
         periodEnd: input.periodEnd,
         cancelAtPeriodEnd: user.pro?.subscriptionId === input.subscriptionId ? user.pro.cancelAtPeriodEnd : false,
-        nextCreditsAt: interval === 'year' ? addMonths(new Date(), 1) : null,
+        nextCreditsAt: interval === 'year' ? addMonths(now, 1) : null,
+        avatarCap: true,
+        ...(firstWeek ? { heldCredits: { amount: firstWeek.held, at: new Date(now.getTime() + firstWeek.days * 24 * 60 * 60 * 1000) } } : {}),
       },
     }),
   })
@@ -905,6 +938,7 @@ async function grantProTrial(
         cancelAtPeriodEnd: false,
         nextCreditsAt: null,
         trialEnd: input.trialEnd,
+        avatarCap: true,
       },
     }),
   })
@@ -1117,13 +1151,37 @@ export async function startProNow(app: FastifyInstance, subscriptionId: string) 
 }
 
 // The monthly looks of annual plans, a month apart until the paid year ends
-// (the renewal payment grants the next year's first month).
+// (the renewal payment grants the next year's first month), each with a new
+// month of avatar renders. Also the rest of a new annual plan's first month,
+// once its week is up; dropped without looks if Pro ended meanwhile (a
+// refund, a cancellation).
 export async function refillAnnualCredits(app: FastifyInstance, now = new Date()) {
+  const held = await app.collections.users
+    .find({ 'pro.heldCredits.at': { $lte: now } }, { projection: { pro: 1 } })
+    .limit(500)
+    .toArray()
+  let refilled = 0
+
+  for (const user of held) {
+    const hold = user.pro?.heldCredits
+
+    if (!hold) {
+      continue
+    }
+
+    const live = proIsLive(user.pro, now.getTime())
+    const result = await app.collections.users.updateOne(
+      { _id: user._id, 'pro.heldCredits.at': hold.at },
+      { ...(live ? { $inc: { credits: hold.amount } } : {}), $unset: { 'pro.heldCredits': '' }, $set: { updatedAt: now } },
+    )
+
+    refilled += live ? result.modifiedCount : 0
+  }
+
   const due = await app.collections.users
     .find({ 'pro.interval': 'year', 'pro.nextCreditsAt': { $lte: now } }, { projection: { pro: 1 } })
     .limit(500)
     .toArray()
-  let refilled = 0
 
   for (const user of due) {
     const pro = user.pro
@@ -1135,7 +1193,7 @@ export async function refillAnnualCredits(app: FastifyInstance, now = new Date()
 
     const result = await app.collections.users.updateOne(
       { _id: user._id, 'pro.nextCreditsAt': next },
-      { $inc: { credits: env.PRO_MONTHLY_CREDITS }, $set: { 'pro.nextCreditsAt': addMonths(next, 1), updatedAt: now } },
+      { $inc: { credits: env.PRO_MONTHLY_CREDITS }, $set: { 'pro.nextCreditsAt': addMonths(next, 1), 'pro.avatarRuns': 0, updatedAt: now } },
     )
     refilled += result.modifiedCount
   }

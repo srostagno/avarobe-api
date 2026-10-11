@@ -9,9 +9,10 @@ import { InvalidImageError, normalizeOutfitPhoto } from '../../utils/images.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
-import { releaseGenerations, remainingGenerations, reserveGenerations } from '../../utils/usage.js'
+import { dailyLimitReply, releaseGenerations, remainingGenerations, reserveGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { currentHair } from '../avatar/hair.js'
+import { takeAvatarRender } from '../avatar/render-quota.js'
 import { startAvatarJob } from '../avatar/service.js'
 import {
   PaywallError,
@@ -20,7 +21,6 @@ import {
   requirePro,
   sendPaywall,
   spendCredits,
-  useAvatarRun,
 } from '../billing/entitlements.js'
 import {
   NotAHaircutError,
@@ -38,10 +38,10 @@ const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 const recommendedSchema = z.object({ recommendationId: z.string().regex(/^r\d{1,2}$/) })
 const requestFieldsSchema = z.object({ description: z.string().trim().max(200).optional() })
 
+const hairLimitBody = () => ({ message: `You can try ${env.DAILY_HAIR_LIMIT} hairstyles a day. Come back tomorrow.` })
+
 function hairLimitReached(reply: FastifyReply) {
-  return reply.code(429).send({
-    message: `You can try ${env.DAILY_HAIR_LIMIT} hairstyles a day. Come back tomorrow.`,
-  })
+  return reply.code(429).send(hairLimitBody())
 }
 
 // The Hair studio: a read of their face shape and hair with the cuts that
@@ -75,7 +75,8 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ message: 'We’re already reading your hair.' })
     }
 
-    if (!(await reserveGenerations(app, userId, 'hair', 1))) {
+    // The read is text: today's hair allowance, not one of its new pictures.
+    if (!(await reserveGenerations(app, userId, 'hair', 1, { image: false }))) {
       return hairLimitReached(reply)
     }
 
@@ -111,8 +112,10 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'Read your hair first to get your recommended cuts.' })
     }
 
-    if (!(await reserveGenerations(app, userId, 'hair', 1))) {
-      return hairLimitReached(reply)
+    const reserved = await reserveUsage(app, userId, 'hair', 1)
+
+    if (!reserved.ok) {
+      return dailyLimitReply(reply, reserved, hairLimitBody())
     }
 
     try {
@@ -186,8 +189,10 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: error instanceof InvalidImageError ? error.message : 'That photo could not be read.' })
     }
 
-    if (!(await reserveGenerations(app, userId, 'hair', 1))) {
-      return hairLimitReached(reply)
+    const reserved = await reserveUsage(app, userId, 'hair', 1)
+
+    if (!reserved.ok) {
+      return dailyLimitReply(reply, reserved, hairLimitBody())
     }
 
     let creditSpent: boolean
@@ -292,22 +297,15 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
       return { avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) }
     }
 
-    if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
-      return reply.code(429).send({
-        message: `You can create or adjust your avatar ${env.DAILY_AVATAR_LIMIT} times a day. Try again tomorrow.`,
-      })
-    }
+    const render = await takeAvatarRender(
+      app,
+      reply,
+      userId,
+      new PaywallError('needs_pro', 'Putting more haircuts on your avatar comes with Avarobe Pro.'),
+    )
 
-    try {
-      await useAvatarRun(app, userId)
-    } catch (error) {
-      await releaseGenerations(app, userId, 'avatar', 1)
-
-      if (error instanceof PaywallError) {
-        return sendPaywall(reply, new PaywallError('needs_pro', 'Putting more haircuts on your avatar comes with Avarobe Pro.'))
-      }
-
-      throw error
+    if (!render.ok) {
+      return render.sent
     }
 
     const now = new Date()
@@ -318,7 +316,7 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
         $set: {
           status: 'processing',
           error: null,
-          job: { kind: 'hair', startedAt: now, previewKey: null, previewCount: 0, hairstyleId: hairstyle._id.toString() },
+          job: { kind: 'hair', startedAt: now, previewKey: null, previewCount: 0, hairstyleId: hairstyle._id.toString(), avatarRun: render.run },
           updatedAt: now,
         },
         $inc: { generations: 1 },

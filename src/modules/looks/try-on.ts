@@ -21,7 +21,7 @@ export async function startTryOn(
   input: { userId: ObjectId; avatar: AvatarDocument; photo: Buffer; notes: string | null; icon?: IconLook },
 ) {
   const { userId, avatar, photo, notes, icon } = input
-  const quota = await reserveLookQuota(app, userId, 1)
+  const quota = await reserveLookQuota(app, userId, 1, { route: icon ? '/looks/icons/try-on' : '/looks/try-on' })
 
   if (!quota.ok) {
     return reply.code(quota.status).send(quota.body)
