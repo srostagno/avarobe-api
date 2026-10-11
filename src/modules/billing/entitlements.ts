@@ -5,6 +5,7 @@ import { env } from '../../config/env.js'
 import type { UserDocument } from '../../types/mongo.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
 // season, a few colors and their best and worst color on their face, and
@@ -71,6 +72,7 @@ type BillingFields = Pick<
   | 'proTrialAt'
   | 'guest'
   | 'locale'
+  | 'location'
 >
 
 export function isAdmin(user: Pick<UserDocument, 'email'>) {
@@ -99,7 +101,46 @@ export function proIsLive(pro: UserDocument['pro'], now = Date.now()) {
 export const colorAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_STYLE_REPORT_CENTS)
 export const styleAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_COLOR_REPORT_CENTS)
 
-export function billingState(user: BillingFields, now = Date.now()) {
+// Reports bought in the last days (REPORT_CREDIT_WINDOW_DAYS) count toward
+// Pro annual, which includes them, up to the bundle price: in the prices and
+// currency of the buyer's region, as checkout takes it off (a one-time
+// coupon) and as every offer of it shows it. None on Pro.
+export type ReportCredit = { amount: number; currency: Currency; from: ('color' | 'style')[]; until: Date }
+
+export function reportCreditFor(
+  user: Pick<UserDocument, 'colorReportAt' | 'styleReportAt' | 'pro'>,
+  region: PricingRegion,
+  now = Date.now(),
+): ReportCredit | null {
+  if (proIsLive(user.pro ?? null, now)) {
+    return null
+  }
+
+  const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS
+  const within = (at: Date | null | undefined) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
+  const color = within(user.colorReportAt)
+  const style = within(user.styleReportAt)
+  const amount = Math.min(
+    regionalAmount('reports_bundle', region),
+    (color ? regionalAmount('color_report', region) : 0) + (style ? regionalAmount('style_report', region) : 0),
+  )
+
+  if (amount <= 0) {
+    return null
+  }
+
+  const until = color && style ? new Date(Math.min(color.getTime(), style.getTime())) : (color ?? style)!
+
+  return {
+    amount,
+    currency: REGION_CURRENCY[region],
+    from: [...(color ? ['color' as const] : []), ...(style ? ['style' as const] : [])],
+    until,
+  }
+}
+
+// `region`: where they pay (where they signed up), for the report credit.
+export function billingState(user: BillingFields, now = Date.now(), region: PricingRegion = regionForCountry(user.location?.country)) {
   const admin = isAdmin(user)
   // An admin can switch the free access off to see the app as a customer does.
   const comp = admin && !user.compPaused
@@ -121,7 +162,8 @@ export function billingState(user: BillingFields, now = Date.now()) {
   const colorRecent = within(colorReportAt)
   const styleRecent = within(styleReportAt)
   // Reports bought in the last days count toward Pro annual (which includes
-  // them), up to the bundle price.
+  // them), up to the bundle price. In US cents here (reportCredit has the
+  // buyer's own prices).
   const reportCreditCents = proLive
     ? 0
     : Math.min(
@@ -153,6 +195,7 @@ export function billingState(user: BillingFields, now = Date.now()) {
     styleAddonUntil: !styleReport && colorRecent ? colorRecent : null,
     reportCreditCents,
     reportCreditUntil: reportCreditCents > 0 ? reportCreditUntil : null,
+    reportCredit: reportCreditFor(user, region, now),
     // Bought anything, ever (reports, a look pack or Pro).
     paid: Boolean(user.paidAt || colorReportAt || styleReportAt || user.colorMirrorAt || user.hairAdvisorAt || pro || user.styleKitUntil),
     credits: user.credits ?? env.FREE_CREDITS,
@@ -187,7 +230,16 @@ export function serializeBilling(user: BillingFields) {
     magazineCredits: state.magazineCredits,
     colorAddonUntil: iso(state.colorAddonUntil),
     styleAddonUntil: iso(state.styleAddonUntil),
-    reportCredit: state.reportCreditCents > 0 ? { amount: state.reportCreditCents, until: iso(state.reportCreditUntil) } : null,
+    // In the buyer's currency and prices (until Oct 2026 this was US cents,
+    // which the web took off the local price).
+    reportCredit: state.reportCredit
+      ? {
+          amount: state.reportCredit.amount,
+          currency: state.reportCredit.currency,
+          from: state.reportCredit.from,
+          until: iso(state.reportCredit.until),
+        }
+      : null,
     trialEligible: state.trialEligible,
     paid: state.paid,
     credits: state.credits,
@@ -219,6 +271,7 @@ export const BILLING_PROJECTION = {
   proTrialAt: 1,
   guest: 1,
   locale: 1,
+  location: 1,
 }
 
 export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {

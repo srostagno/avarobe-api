@@ -264,6 +264,9 @@ export type PurchaseDocument = {
   // What she paid for, for products that unlock her colors (the Color
   // Advisor, the mirror): her season then, and the read it came from.
   colorRead?: { season: string; readId: string | null } | null
+  // The offer the checkout was opened from (e.g. purchase_success_pro_credit,
+  // email_xsell_style_pro), when the checkout said.
+  placement?: string | null
 }
 
 export type RefundReason = 'not_accurate' | 'not_expected' | 'technical' | 'mistake' | 'other'

@@ -380,12 +380,24 @@ export async function createCheckout(input: {
   embedded?: boolean
   // Where the buyer pays from (billing/pricing.ts): price and currency.
   region?: PricingRegion
+  // Which offer led here (first-party analytics). It rides in the metadata
+  // to the purchase, so a checkout opened from an email (no click in the
+  // app to count) is attributed too.
+  placement?: string
 }): Promise<{ url: string | null; clientSecret: string | null }> {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
   const locale = input.user.locale ?? 'en'
   const guest = isGuestEmail(input.user.email)
-  const metadata = { ...input.attribution, app: APP, product: input.product, userId, region, locale }
+  const metadata = {
+    ...input.attribution,
+    app: APP,
+    product: input.product,
+    userId,
+    region,
+    locale,
+    ...(input.placement ? { placement: input.placement } : {}),
+  }
   const discount =
     input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents, REGION_CURRENCY[region]) : null
   const common = {
@@ -581,6 +593,8 @@ type Grant = {
   currency: string
   // Extra fields to set on the user alongside credits and reports.
   set?: (user: UserDocument) => Partial<UserDocument>
+  // The offer the checkout came from (createCheckout's placement).
+  placement?: string | null
 }
 
 // Records one payment and applies it to the user in a transaction: credits,
@@ -619,6 +633,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           credits,
           createdAt: new Date(),
           ...(config.unlocks?.color || config.unlocks?.mirror ? { colorRead } : {}),
+          ...(grant.placement ? { placement: grant.placement } : {}),
         },
         { session: mongoSession },
       )
@@ -665,7 +680,12 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
   await trackServerEvent(app, {
     name: 'purchase_completed',
     userId: grant.userId,
-    props: { product: grant.product, amount: grant.amount, currency: grant.currency },
+    props: {
+      product: grant.product,
+      amount: grant.amount,
+      currency: grant.currency,
+      ...(grant.placement ? { placement: grant.placement } : {}),
+    },
   })
 
   return true
@@ -720,6 +740,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
         trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
         amount: session.amount_total ?? 0,
         currency: session.currency ?? 'usd',
+        placement: session.metadata?.placement ?? null,
       })
 
       if (applied) {
@@ -742,6 +763,8 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
       periodEnd: (await subscriptionPeriodEnd(subscriptionId)) ?? addMonths(new Date(), product === 'pro_annual' ? 12 : 1),
       amount: session.amount_total ?? 0,
       currency: session.currency ?? 'usd',
+      first: true,
+      placement: session.metadata?.placement ?? null,
     })
 
     if (applied) {
@@ -758,6 +781,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
     paymentIntentId: readId(session.payment_intent),
     amount: session.amount_total ?? 0,
     currency: session.currency ?? 'usd',
+    placement: session.metadata?.placement ?? null,
   })
 
   if (applied) {
@@ -806,6 +830,9 @@ async function grantProPayment(
     periodEnd: Date
     amount: number
     currency: string
+    // The subscription's first payment (not a renewal or a plan switch).
+    first?: boolean
+    placement?: string | null
   },
 ) {
   const interval = input.product === 'pro_annual' ? 'year' : 'month'
@@ -816,6 +843,7 @@ async function grantProPayment(
     paymentIntentId: null,
     amount: input.amount,
     currency: input.currency,
+    placement: input.placement ?? null,
     set: (user) => ({
       pro: {
         subscriptionId: input.subscriptionId,
@@ -854,6 +882,7 @@ async function grantProTrial(
     trialEnd: Date
     amount: number
     currency: string
+    placement?: string | null
   },
 ) {
   const now = new Date()
@@ -864,6 +893,7 @@ async function grantProTrial(
     paymentIntentId: null,
     amount: input.amount,
     currency: input.currency,
+    placement: input.placement ?? null,
     set: (user) => ({
       proTrialAt: user.proTrialAt ?? now,
       pro: {
@@ -914,6 +944,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
       trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
       amount: invoice.amount_paid,
       currency: invoice.currency,
+      placement: details?.metadata?.placement ?? null,
     })
 
     if (applied) {
@@ -942,6 +973,9 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     periodEnd: lineEnd ? new Date(lineEnd * 1000) : addMonths(new Date(), product === 'pro_annual' ? 12 : 1),
     amount: invoice.amount_paid,
     currency: invoice.currency,
+    first,
+    // Only the first payment came from an offer.
+    placement: first ? (details?.metadata?.placement ?? null) : null,
   })
 
   if (applied && first) {

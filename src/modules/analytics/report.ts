@@ -262,7 +262,17 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
       entry.checkouts.people.add(person)
       lastCheckout.set(person, { reason, placement })
     } else if (row.name === 'purchase_completed') {
-      const last = lastCheckout.get(person) ?? { reason: 'unknown', placement: 'unknown' }
+      // The purchase says which offer its checkout came from (since Oct
+      // 2026), so one opened from an email, with no click in the app before
+      // it, counts there too; otherwise their last checkout's.
+      const placement = str(row.props.placement)
+      const checkout = lastCheckout.get(person)
+      const last = row.props.placement
+        ? {
+            reason: lastOfferReason.get(person)?.get(placement) ?? (checkout?.placement === placement ? checkout.reason : 'unknown'),
+            placement,
+          }
+        : (checkout ?? { reason: 'unknown', placement: 'unknown' })
       const entry = offer(last.reason, last.placement)
       entry.paid.events += 1
       entry.paid.people.add(person)

@@ -6,14 +6,14 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
-import type { PurchaseProduct, RefundReason, UserDocument } from '../../types/mongo.js'
+import type { PurchaseProduct, RefundReason } from '../../types/mongo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
 import { claimGuestFromSession } from './guest-checkout.js'
-import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser } from './entitlements.js'
+import { PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser, reportCreditFor } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
 import {
@@ -216,26 +216,6 @@ function offer(region: PricingRegion) {
   )
 }
 
-// The reports bought in the last days, counted toward Pro annual, at the
-// prices of the buyer's region (billingState counts in US dollars).
-function regionalReportCredit(user: Pick<UserDocument, 'colorReportAt' | 'styleReportAt'>, state: ReturnType<typeof billingState>, region: PricingRegion) {
-  if (state.reportCreditCents === 0) {
-    return 0
-  }
-
-  if (region === 'us') {
-    return state.reportCreditCents
-  }
-
-  const windowMs = env.REPORT_CREDIT_WINDOW_DAYS * 24 * 60 * 60 * 1000
-  const recent = (at: Date | null | undefined) => Boolean(at && at.getTime() + windowMs > Date.now())
-
-  return Math.min(
-    regionalAmount('reports_bundle', region),
-    (recent(user.colorReportAt) ? regionalAmount('color_report', region) : 0) + (recent(user.styleReportAt) ? regionalAmount('style_report', region) : 0),
-  )
-}
-
 // Who can buy what: nobody buys what they already have, the add-ons follow
 // a recent report, and a monthly plan moves to annual from the account (a
 // plan switch, not a second subscription).
@@ -339,7 +319,9 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       try {
         const location = await app.collections.users.findOne({ _id: userId }, { projection: { location: 1, acquisition: 1, createdAt: 1 } })
         const region = pricingRegion(request, location)
-        const discountCents = parsed.data.product === 'pro_annual' ? regionalReportCredit(user, state, region) : 0
+        // Reports bought in the last days count toward Pro annual, at the
+        // prices of the buyer's region (entitlements.ts reportCreditFor).
+        const discountCents = parsed.data.product === 'pro_annual' ? (reportCreditFor(user, region)?.amount ?? 0) : 0
         const { url, clientSecret } = await createCheckout({
           user,
           product: parsed.data.product,
@@ -347,6 +329,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           discountCents,
           embedded: parsed.data.embedded,
           region,
+          placement: parsed.data.placement,
           // An admin's own test purchase never reaches Meta or Google as a
           // conversion: without the browser ids there's nothing to report.
           attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request, storedMetaClick(location)),
