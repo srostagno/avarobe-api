@@ -231,10 +231,19 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
       }
 
       const startedAt = new Date()
+      const read = { readId: newReadId(), photoKey: avatar.selfieKey }
       const claimed = await app.collections.avatars.updateOne(
-        // As listed: not if they (or another instance's pass) tried since.
-        { _id: avatar._id, status: 'failed', avatarKey: null, colorAnalysis: null, 'colorsNotify.lastTriedAt': avatar.colorsNotify?.lastTriedAt ?? null },
-        { $set: { ...colorsReadStart(startedAt, { readId: newReadId(), selfieKey: avatar.selfieKey }), 'colorsNotify.lastTriedAt': startedAt } },
+        // As listed: not if they (or another instance's pass) tried since,
+        // nor once a new selfie of theirs replaced the one listed.
+        {
+          _id: avatar._id,
+          status: 'failed',
+          avatarKey: null,
+          colorAnalysis: null,
+          selfieKey: avatar.selfieKey,
+          'colorsNotify.lastTriedAt': avatar.colorsNotify?.lastTriedAt ?? null,
+        },
+        { $set: { ...colorsReadStart(startedAt, { readId: read.readId, selfieKey: read.photoKey }), 'colorsNotify.lastTriedAt': startedAt } },
       )
 
       // They tried again themselves meanwhile.
@@ -243,7 +252,7 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
         return 'skipped'
       }
 
-      await withLocale(user.locale ?? 'en', () => runColorsJobSafely(app, avatar._id, 'notify'))
+      await withLocale(user.locale ?? 'en', () => runColorsJobSafely(app, avatar._id, read, 'notify'))
 
       const after = await app.collections.avatars.findOne({ _id: avatar._id }, { projection: { ...projection, status: 1, failure: 1 } })
 

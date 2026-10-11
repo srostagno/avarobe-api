@@ -7,6 +7,7 @@ import { PHOTO_CONSENT_NOTICE_VERSION, PHOTO_CONSENT_VERSION } from '../../const
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { AvatarBody, AvatarDocument, AvatarJob, ColorReadLog } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
+import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { InvalidImageError, normalizeBodyPhoto, normalizeSelfie } from '../../utils/images.js'
 import { serializeAvatar } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
@@ -19,7 +20,7 @@ import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, boardKeys, unsetBoards } from 
 import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
-import { colorsLocked, colorsReadStart, imageHash, newReadId, readEntry, replacedKeys, withRead } from './reads.js'
+import { answeredBefore, colorsLocked, colorsReadStart, imageHash, loadColorsAccess, newReadId, readEntry, replacedKeys, withRead } from './reads.js'
 import { newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
@@ -41,6 +42,7 @@ const choiceSchema = z.object({
 })
 
 const NO_CANDIDATE = { code: 'no_candidate', message: 'There is no new color read to choose.' }
+const REPORT_LOCKED = { code: 'report_locked', message: 'Your color report stays on the colors it was written for.' }
 
 const adjustmentKeys = Object.keys(AVATAR_ADJUSTMENTS) as [
   keyof typeof AVATAR_ADJUSTMENTS,
@@ -194,6 +196,24 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const hasColors = Boolean(existing?.colorAnalysis)
       const locked = existing ? await colorsLocked(app, existing) : false
       const wipe = Boolean(selfieKey) && !hasColors
+      // Colors read before reads kept their source came from the stored
+      // selfie, which this one replaces: the source is written down now, so
+      // the new photo is never taken for theirs (and read, not given back).
+      const legacySource =
+        selfieKey && existing?.colorAnalysis && !existing.colorsSource
+          ? {
+              readId: `before-${existing._id.toString()}`,
+              at: existing.colorsAt ?? existing.updatedAt,
+              selfieKey: existing.selfieKey,
+              imageHash: await storage
+                .read(existing.selfieKey)
+                .then(imageHash)
+                .catch(() => null),
+              method: 'classic' as const,
+              scores: null,
+              lighting: null,
+            }
+          : null
 
       // What it replaces comes from the document as it was right before, so
       // a report image that finished rendering meanwhile goes too.
@@ -222,7 +242,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
                     reportBoards: null,
                     hairProfile: null,
                   }
-                : { selfieKey, hairProfile: null }
+                : { selfieKey, hairProfile: null, ...(legacySource ? { colorsSource: legacySource } : {}) }
               : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
@@ -344,8 +364,12 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       // The same photo again (or no photo) while they have colors: the
       // stored result, without reading it again (the same photo read twice
       // used to flip seasons, and a "read again" wiped a buyer's report).
-      if (existing?.colorAnalysis && (!hash || (await samePhoto(existing, hash)))) {
-        await reuseColors(app, existing, hash)
+      // Also a photo already answered: the one waiting for their choice, one
+      // that confirmed their season, or one they kept their colors over.
+      const answered = existing?.colorAnalysis ? (hash ? await answeredPhoto(existing, hash) : 'current') : null
+
+      if (existing && answered) {
+        await reuseColors(app, existing, hash, answered)
         return reply.code(202).send({ avatar: await serializeAvatar(existing, await paletteAccess(app, userId)), reused: true })
       }
 
@@ -354,9 +378,11 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const now = new Date()
+      const readId = newReadId()
       // A new selfie waits in the job until the read succeeds; their colors
-      // and selfie stay as they are meanwhile.
-      const heldKey = selfie ? `users/${userId.toString()}/selfie-${Date.now()}.jpg` : null
+      // and selfie stay as they are meanwhile. Named after its read too, so
+      // two at once never share a file.
+      const heldKey = selfie ? `users/${userId.toString()}/selfie-${Date.now()}-${readId.slice(-8)}.jpg` : null
 
       if (selfie && heldKey) {
         await storage.put(heldKey, selfie, 'image/jpeg')
@@ -364,34 +390,55 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       const photoKey = heldKey ?? existing!.selfieKey
       const locked = existing ? await colorsLocked(app, existing) : false
-      const avatar = await app.collections.avatars.findOneAndUpdate(
-        { userId },
-        {
-          $set: {
-            ...colorsReadStart(now, { readId: newReadId(), selfieKey: photoKey }),
-            ...(heldKey ? { consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
-          },
-          // Their first selfie: nothing to protect, it's theirs at once.
-          $setOnInsert: {
-            _id: new ObjectId(),
-            userId,
-            selfieKey: photoKey,
-            avatarKey: null,
-            body: null,
-            colorAnalysis: null,
-            readyAt: null,
-            generations: 0,
-            createdAt: now,
-          },
-        },
-        { upsert: true, returnDocument: 'after' },
-      )
+      const read = { readId, photoKey }
+      // Not over a read that started meanwhile (a double tap, the busy
+      // card's own retry and a tap): userId is unique, so a document already
+      // processing makes the upsert fail instead of taking its place.
+      let avatar: AvatarDocument | null
 
-      if (!avatar) {
-        return reply.code(500).send({ message: 'Could not start. Please try again.' })
+      try {
+        avatar = await app.collections.avatars.findOneAndUpdate(
+          { userId, status: { $ne: 'processing' } },
+          {
+            $set: {
+              ...colorsReadStart(now, { readId: read.readId, selfieKey: photoKey }),
+              ...(heldKey ? { consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+            },
+            // Their first selfie: nothing to protect, it's theirs at once.
+            $setOnInsert: {
+              _id: new ObjectId(),
+              userId,
+              selfieKey: photoKey,
+              avatarKey: null,
+              body: null,
+              colorAnalysis: null,
+              readyAt: null,
+              generations: 0,
+              createdAt: now,
+            },
+          },
+          { upsert: true, returnDocument: 'after' },
+        )
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) {
+          throw error
+        }
+
+        avatar = null
       }
 
-      startColorsJob(app, avatar._id)
+      if (!avatar) {
+        if (heldKey) {
+          await storage.remove(heldKey).catch(() => undefined)
+        }
+
+        await releaseGenerations(app, userId, 'avatar', 1)
+        const busy = await app.collections.avatars.findOne({ userId }, { projection: { job: 1 } })
+
+        return reply.code(409).send({ message: busyMessage(busy?.job) })
+      }
+
+      startColorsJob(app, avatar._id, read)
       // trigger 'auto': the web's busy card trying again by itself, not a tap.
       void trackServerEvent(app, {
         name: 'colors_started',
@@ -430,10 +477,14 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // A buyer's choice after a new photo read clearly differently: keep the
-  // colors she paid for (the report stays), or switch to the new read (the
-  // report is written again for it from /report/color, under its daily
-  // limit). Until she chooses, everything stays on the paid read.
+  // The choice after a new photo read as another season (a buyer's clear
+  // difference; in 'classic', anyone's): keep the colors they have (a
+  // buyer's report stays), or switch to the new read. A buyer's report is
+  // written again for it from /report/color (not counted against the day's
+  // reports); the one she had is kept in previousColors for an undo by hand.
+  // Until they choose, everything stays as it is. Someone whose report
+  // couldn't be written again (a lapsed Pro, the Hair Advisor alone) keeps
+  // theirs (409 report_locked).
   app.post(
     '/colors/choice',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -460,6 +511,15 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const now = new Date()
       const paid = existing.colorAnalysis?.season ?? null
       const keepNew = parsed.data.keep === 'new'
+
+      if (keepNew && !(await loadColorsAccess(app, existing)).switchable) {
+        return reply.code(409).send(REPORT_LOCKED)
+      }
+
+      // Their selfie moves to the photo read only if it's still the one they
+      // had then and no avatar was made from it: a newer selfie (Photos &
+      // measurements) isn't swapped back for an older photo.
+      const moveSelfie = !existing.avatarKey && (!candidate.baseSelfieKey || candidate.baseSelfieKey === existing.selfieKey)
       const entry = readEntry({
         id: newReadId(),
         at: now,
@@ -475,20 +535,31 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         shown: keepNew ? candidate.analysis.season : paid,
         ...(keepNew ? { from: paid } : {}),
       })
-      // Switching: the new read and its photo; the report, drape test, free
-      // preview, hair read and color boards were of the paid one. The style
-      // boards stay.
+      // Switching: the new read (and its photo, as above); the report, drape
+      // test, free preview and color boards were of the old one, and the
+      // hair read of the old selfie. The style boards stay. What they had
+      // is kept, report included, for an undo by hand.
       const set: Record<string, unknown> = keepNew
         ? {
             colorAnalysis: candidate.analysis,
             colorsAt: candidate.at,
             colorsSource: candidate.source,
-            selfieKey: candidate.selfieKey,
+            ...(moveSelfie ? { selfieKey: candidate.selfieKey, hairProfile: null } : {}),
             colorCandidate: null,
             colorReport: null,
             drape: null,
             drapePreview: null,
-            hairProfile: null,
+            ...(existing.colorAnalysis
+              ? {
+                  previousColors: {
+                    at: now,
+                    analysis: existing.colorAnalysis,
+                    colorsAt: existing.colorsAt ?? null,
+                    source: existing.colorsSource ?? null,
+                    report: existing.colorReport ?? null,
+                  },
+                }
+              : {}),
             colorReads: withRead(existing.colorReads, entry),
             updatedAt: now,
           }
@@ -507,7 +578,10 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       await Promise.all(replacedKeys(existing, after).map((key) => storage.remove(key).catch(() => undefined)))
 
       if (keepNew) {
-        await deleteHairstyles(app, userId)
+        if (moveSelfie) {
+          await deleteHairstyles(app, userId)
+        }
+
         await startDrapePreview(app, existing._id).catch((error: unknown) => {
           request.log.error({ err: error }, 'Drape preview did not start')
         })
@@ -787,31 +861,30 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
 export default avatarRoutes
 
-// Whether an upload is the photo their colors were read from (same bytes
-// after normalizing). Before reads kept their source, colors always came
-// from the stored selfie.
-async function samePhoto(avatar: AvatarDocument, hash: string) {
-  if (avatar.colorsSource) {
-    return avatar.colorsSource.imageHash === hash
-  }
+// Whether an upload (same bytes after normalizing) was answered by a read
+// already (reads.ts answeredBefore). Before reads kept their source, colors
+// always came from the stored selfie.
+async function answeredPhoto(avatar: AvatarDocument, hash: string) {
+  const stored = avatar.colorsSource
+    ? null
+    : await storage
+        .read(avatar.selfieKey)
+        .then(imageHash)
+        .catch(() => null)
 
-  try {
-    return imageHash(await storage.read(avatar.selfieKey)) === hash
-  } catch {
-    return false
-  }
+  return answeredBefore(avatar, hash, stored)
 }
 
-// The colors they have, given back for the same photo: a line in the
-// history, no AI call, nothing else changes.
-async function reuseColors(app: FastifyInstance, avatar: AvatarDocument, hash: string | null) {
+// The colors they have, given back for a photo already answered: a line in
+// the history, no AI call, nothing else changes (a candidate keeps waiting).
+async function reuseColors(app: FastifyInstance, avatar: AvatarDocument, hash: string | null, scope: 'current' | 'candidate' | 'history') {
   const analysis = avatar.colorAnalysis!
   const source = avatar.colorsSource
   const entry: ColorReadLog = readEntry({
     id: newReadId(),
     at: new Date(),
     selfieKey: source?.selfieKey ?? avatar.selfieKey,
-    imageHash: source?.imageHash ?? hash,
+    imageHash: hash ?? source?.imageHash ?? null,
     method: source?.method ?? 'classic',
     outcome: 'reused',
     season: analysis.season,
@@ -827,7 +900,7 @@ async function reuseColors(app: FastifyInstance, avatar: AvatarDocument, hash: s
     { _id: avatar._id, status: { $ne: 'processing' } },
     { $set: { colorReads: withRead(avatar.colorReads, entry) } },
   )
-  void trackServerEvent(app, { name: 'colors_reused', userId: avatar.userId, props: { scope: 'current' } })
+  void trackServerEvent(app, { name: 'colors_reused', userId: avatar.userId, props: { scope } })
 }
 
 // Where a photo's consent has to be a written release (a checkbox), not the

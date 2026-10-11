@@ -94,6 +94,9 @@ function serializeLastRead(reads: AvatarDocument['colorReads']) {
     ...(read.outcome === 'changed' || read.outcome === 'switched' ? { from: read.from ?? null, to: read.shown } : {}),
     ...(read.direction ? { direction: read.direction } : {}),
     ...(read.outcome === 'failed' ? { reason: publicReason(read.failure?.code) } : {}),
+    // 'avatar': the read beside an avatar render (a new selfie from Photos &
+    // measurements), which isn't tried again by itself.
+    ...(read.via ? { via: read.via } : {}),
   }
 }
 
@@ -144,9 +147,15 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     readsKept: true,
     // A buyer's colors change only through her choice (POST /colors/choice).
     colorsLocked: Boolean(avatar.colorAnalysis) && (options.fullPalette || Boolean(avatar.colorReport)),
+    // When a new photo reads as another season: 'ask' (classic reads) it's
+    // theirs to choose, for anyone; 'clear' (scored) it changes by itself
+    // only on a clear difference, a buyer's still through her choice.
+    seasonRule: env.COLOR_READ_METHOD === 'scored' ? 'clear' : 'ask',
     lastRead: serializeLastRead(avatar.colorReads),
-    // A new photo that read clearly differently from her paid colors,
-    // waiting for her choice. Its colors only with the Color Advisor.
+    // A new photo that read as another season, waiting for their choice. Its
+    // colors only with the Color Advisor. `switchable` false: a report from
+    // these colors that couldn't be written again (a lapsed Pro, the Hair
+    // Advisor alone), so theirs stays.
     colorCandidate: candidate
       ? {
           readId: candidate.readId,
@@ -157,6 +166,7 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
           summary: candidate.analysis.summary,
           ...(options.fullPalette ? { bestColors: candidate.analysis.bestColors } : {}),
           selfieUrl: candidateSelfieUrl,
+          switchable: options.fullPalette || !avatar.colorReport,
         }
       : null,
     body: avatar.body,

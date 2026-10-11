@@ -483,6 +483,9 @@ export type ColorReadLog = {
   direction?: ColorChangeDirection | null
   failure?: ColorsFailure | null
   via?: 'colors' | 'avatar' | 'notify'
+  // What the measuring call saw (scored), so a palette written later from
+  // these scores (the same photo again) still describes the person.
+  coloring?: { skin: string; hair: string; eyes: string; lighting: string } | null
 }
 
 // Which read the current colorAnalysis came from (for a confirmed or
@@ -498,8 +501,29 @@ export type ColorsSource = {
   lighting: ColorLighting | null
 }
 
-// A read that clearly differs from a locked (paid) one, waiting for her choice.
-export type ColorCandidate = { readId: string; at: Date; selfieKey: string; analysis: ColorAnalysis; source: ColorsSource }
+// A read of a new photo with another season, waiting for the person's choice
+// (a buyer's that clearly differs; in 'classic', anyone's that differs).
+// `baseSelfieKey`: their selfie when it was read, so a newer selfie (Photos &
+// measurements) isn't swapped back for this photo by a switch.
+export type ColorCandidate = {
+  readId: string
+  at: Date
+  selfieKey: string
+  analysis: ColorAnalysis
+  source: ColorsSource
+  baseSelfieKey?: string | null
+}
+
+// The colors (and report) someone had before switching to a new read, kept
+// for an undo by hand (scripts/restore-colors.ts --previous): the report is
+// the paid part.
+export type PreviousColors = {
+  at: Date
+  analysis: ColorAnalysis
+  colorsAt: Date | null
+  source: ColorsSource | null
+  report: { data: ColorReport; createdAt: Date } | null
+}
 
 // "Tell me when my colors are ready", after a read failed because the AI was
 // busy or out of credits (modules/avatar/retry.ts reads it again and emails
@@ -558,6 +582,7 @@ export type AvatarDocument = {
   colorReads?: ColorReadLog[] | null
   colorsSource?: ColorsSource | null
   colorCandidate?: ColorCandidate | null
+  previousColors?: PreviousColors | null
   // Style Kit reports. The color report, drape and color boards follow the
   // accepted read (for buyers, not the selfie: a new selfie keeps them); the
   // style profile follows the body.

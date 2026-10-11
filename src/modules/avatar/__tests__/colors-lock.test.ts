@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb'
 import { failure, form, json, memoryStorage, photo, routeApp, stubOpenAi, until } from '../../../__tests__/color-reads.js'
 import type { Doc } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
-import type { ColorAnalysis, ColorCandidate, ColorReadLog } from '../../../types/mongo.js'
+import type { ColorAnalysis, ColorCandidate, ColorReadLog, PreviousColors } from '../../../types/mongo.js'
 import { normalizeSelfie } from '../../../utils/images.js'
 import reportRoutes from '../../report/routes.js'
 import { isColorsLocked } from '../reads.js'
@@ -75,7 +75,8 @@ describe('who is a buyer', () => {
 
 // A buyer (Deep Winter, the Color Advisor bought, her report written, its
 // drape test and a color board drawn, and a style board) without an avatar.
-async function buyer() {
+// `user`: other billing (none: her report alone locks her colors).
+async function buyer(user: Doc = { colorReportAt: new Date() }) {
   const { app, collection, auth } = await routeApp({ '/avatar': avatarRoutes, '/report': reportRoutes })
   const userId = new ObjectId()
   const avatarId = new ObjectId()
@@ -94,7 +95,7 @@ async function buyer() {
   }
 
   const board = (key: string) => ({ status: 'ready', key, layout: 'grid', panels: [], prompt: 'x', refs: 'portrait', size: '1024x1024', updatedAt: new Date() })
-  collection('users').docs.push({ _id: userId, email: `bea-${userId.toString()}@example.test`, firstName: 'Bea', colorReportAt: new Date(), createdAt: new Date() })
+  collection('users').docs.push({ _id: userId, email: `bea-${userId.toString()}@example.test`, firstName: 'Bea', createdAt: new Date(), ...user })
   collection('avatars').docs.push({
     _id: avatarId,
     userId,
@@ -119,9 +120,12 @@ async function buyer() {
 
   const avatar = () => collection('avatars').findOne({ _id: avatarId })
   const headers = auth(userId)
-  const recheck = async (rgb: [number, number, number] = [90, 60, 40]) => {
+  const send = async (rgb: [number, number, number]) => {
     const multipart = await form({ consent: 'true' }, { selfie: await photo(rgb) })
-    const response = await app.inject({ method: 'POST', url: '/avatar/colors', payload: multipart.payload, headers: { ...headers, ...multipart.headers } })
+    return app.inject({ method: 'POST', url: '/avatar/colors', payload: multipart.payload, headers: { ...headers, ...multipart.headers } })
+  }
+  const recheck = async (rgb: [number, number, number] = [90, 60, 40]) => {
+    const response = await send(rgb)
     assert.equal(response.statusCode, 202)
     await until(async () => (await avatar())?.status === 'ready')
     return avatar()
@@ -129,7 +133,7 @@ async function buyer() {
   const choose = (readId: string, keep: 'paid' | 'new') =>
     app.inject({ method: 'POST', url: '/avatar/colors/choice', payload: { readId, keep }, headers })
 
-  return { app, collection, userId, avatarId, selfieKey, keys, avatar, headers, recheck, choose, before: await avatar() }
+  return { app, collection, userId, avatarId, selfieKey, keys, avatar, headers, send, recheck, choose, before: await avatar() }
 }
 
 const candidateOf = (avatar: Doc | null) => avatar?.colorCandidate as ColorCandidate | null
@@ -155,7 +159,17 @@ describe('a buyer’s new photo that reads clearly differently', () => {
     assert.equal((avatar.colorAnalysis as { season: string }).season, 'Deep Winter')
     assert.deepEqual(
       { ...(avatar.colorCandidate as object), at: undefined, bestColors: undefined, selfieUrl: undefined },
-      { readId: candidate.readId, at: undefined, season: 'Deep Autumn', undertone: 'warm', contrast: 'high', summary: 'Palette A.', bestColors: undefined, selfieUrl: undefined },
+      {
+        readId: candidate.readId,
+        at: undefined,
+        season: 'Deep Autumn',
+        undertone: 'warm',
+        contrast: 'high',
+        summary: 'Palette A.',
+        bestColors: undefined,
+        selfieUrl: undefined,
+        switchable: true,
+      },
     )
     assert.equal(((avatar.colorCandidate as { bestColors: unknown[] }).bestColors).length, 3)
     assert.match((avatar.colorCandidate as { selfieUrl: string }).selfieUrl, /selfie-/)
@@ -251,6 +265,126 @@ describe('her choice', () => {
     const busy = await bea.choose(candidate.readId, 'new')
     assert.equal(busy.statusCode, 409)
     assert.deepEqual((await bea.avatar())?.colorAnalysis, DEEP_WINTER)
+  })
+})
+
+describe('a photo already answered', () => {
+  it('the one waiting for her choice, or one she kept her colors over: given back, no AI call', async () => {
+    const bea = await buyer()
+    const candidate = candidateOf(await bea.recheck())!
+    ai.calls.length = 0
+
+    const again = await bea.send([90, 60, 40])
+    assert.equal(again.json<{ reused: boolean }>().reused, true)
+    assert.equal(candidateOf(await bea.avatar())?.readId, candidate.readId)
+
+    await bea.choose(candidate.readId, 'paid')
+    const declined = await bea.send([90, 60, 40])
+    assert.equal(declined.json<{ reused: boolean }>().reused, true)
+    assert.equal((await bea.avatar())?.colorCandidate, null)
+    assert.equal(ai.calls.length, 0)
+    const scopes = (await bea.collection('analyticsEvents').find({ name: 'colors_reused' }).toArray()).map((event) => (event.props as Doc).scope)
+    assert.deepEqual(scopes, ['candidate', 'history'])
+  })
+})
+
+describe('classic reads (the default)', () => {
+  beforeEach(() => {
+    env.COLOR_READ_METHOD = 'classic'
+  })
+
+  it('give anyone with another season on a new photo the choice, not a change', async () => {
+    ai.state.season = 'Soft Autumn'
+    const bea = await buyer({})
+    // Free: no report, no Color Advisor.
+    await bea.collection('avatars').updateOne({ _id: bea.avatarId }, { $set: { colorReport: null } })
+    const after = await bea.recheck()
+
+    assert.deepEqual(after?.colorAnalysis, DEEP_WINTER)
+    assert.equal(candidateOf(after)?.analysis.season, 'Soft Autumn')
+    assert.equal(readsOf(after)[0]!.outcome, 'candidate')
+    const shown = (await bea.app.inject({ method: 'GET', url: '/avatar', headers: bea.headers })).json<{ avatar: Record<string, unknown> }>().avatar
+    assert.equal(shown.seasonRule, 'ask')
+    assert.equal(shown.colorsLocked, false)
+    const card = shown.colorCandidate as Record<string, unknown>
+    // Its colors only with the Color Advisor.
+    assert.equal(card.bestColors, undefined)
+    assert.equal(card.switchable, true)
+
+    const switched = await bea.choose(candidateOf(after)!.readId, 'new')
+    assert.equal(switched.statusCode, 200)
+    const done = await bea.avatar()
+    assert.equal((done?.colorAnalysis as ColorAnalysis).season, 'Soft Autumn')
+    assert.equal(done?.selfieKey, candidateOf(after)!.selfieKey)
+    assert.deepEqual((done?.previousColors as PreviousColors).analysis, DEEP_WINTER)
+    assert.equal((done?.previousColors as PreviousColors).report, null)
+  })
+
+  it('a buyer’s switch keeps what she had, report included, and its report isn’t one of the day’s', async () => {
+    ai.state.season = 'Soft Autumn'
+    const bea = await buyer()
+    const candidate = candidateOf(await bea.recheck())!
+    await bea.choose(candidate.readId, 'new')
+
+    const after = await bea.avatar()
+    const previous = after?.previousColors as PreviousColors
+    assert.deepEqual(previous.analysis, DEEP_WINTER)
+    assert.deepEqual(previous.report, bea.before?.colorReport)
+    assert.deepEqual(previous.colorsAt, bea.before?.colorsAt)
+
+    // At the day's limit for reports, the one for her new read is still written.
+    const day = new Date().toISOString().slice(0, 10)
+    bea.collection('usageCounters').docs.push({ _id: `${bea.userId.toString()}:report:${day}`, count: env.DAILY_REPORT_LIMIT })
+    ai.state.reply = () => json(500, { error: { message: 'stop here' } })
+    const report = await bea.app.inject({ method: 'POST', url: '/report/color', payload: {}, headers: bea.headers })
+
+    assert.equal(report.statusCode, 502)
+    assert.ok(ai.calls.some((call) => call.schema === 'color_report'))
+    assert.equal((await bea.collection('usageCounters').findOne({ _id: `${bea.userId.toString()}:report:${day}` }))?.count, env.DAILY_REPORT_LIMIT)
+  })
+
+  it('a newer selfie stays when she switches to an older photo’s read', async () => {
+    ai.state.season = 'Soft Autumn'
+    const bea = await buyer()
+    const candidate = candidateOf(await bea.recheck())!
+    // A newer selfie since (Photos & measurements), with its hair read.
+    const newer = `users/${bea.userId.toString()}/selfie-9.jpg`
+    files.files.set(newer, Buffer.from('newer'))
+    const hairProfile = { status: 'ready', data: null, error: null, startedAt: new Date(), updatedAt: new Date() }
+    await bea.collection('avatars').updateOne({ _id: bea.avatarId }, { $set: { selfieKey: newer, hairProfile } })
+    files.removed.length = 0
+
+    await bea.choose(candidate.readId, 'new')
+    const after = await bea.avatar()
+    assert.equal((after?.colorAnalysis as ColorAnalysis).season, 'Soft Autumn')
+    assert.equal(after?.selfieKey, newer)
+    assert.deepEqual(after?.hairProfile, hairProfile)
+    assert.ok(files.files.has(newer))
+    assert.ok(files.removed.includes(candidate.selfieKey))
+  })
+
+  it('hold the colors of someone whose report couldn’t be written again (no candidate), and refuse a switch', async () => {
+    ai.state.season = 'Soft Autumn'
+    // A report from these colors (a lapsed Pro), no Color Advisor now.
+    const bea = await buyer({})
+    const after = await bea.recheck()
+
+    assert.equal(readsOf(after)[0]!.outcome, 'anchored')
+    assert.equal(after?.colorCandidate ?? null, null)
+    assert.deepEqual(after?.colorReport, bea.before?.colorReport)
+
+    // A candidate from before her Pro lapsed: hers can't be switched.
+    const source = { readId: 'read-old', at: new Date(), selfieKey: bea.selfieKey, imageHash: null, method: 'classic' as const, scores: null, lighting: null }
+    const stale: ColorCandidate = { readId: 'read-old', at: new Date(), selfieKey: bea.selfieKey, analysis: { ...DEEP_WINTER, season: 'Soft Autumn' }, source }
+    await bea.collection('avatars').updateOne({ _id: bea.avatarId }, { $set: { colorCandidate: stale } })
+    const shown = (await bea.app.inject({ method: 'GET', url: '/avatar', headers: bea.headers })).json<{ avatar: { colorCandidate: { switchable: boolean } } }>().avatar
+    assert.equal(shown.colorCandidate.switchable, false)
+
+    const refused = await bea.choose('read-old', 'new')
+    assert.equal(refused.statusCode, 409)
+    assert.deepEqual(refused.json(), { code: 'report_locked', message: 'Your color report stays on the colors it was written for.' })
+    assert.deepEqual((await bea.avatar())?.colorReport, bea.before?.colorReport)
+    assert.equal((await bea.choose('read-old', 'paid')).statusCode, 200)
   })
 })
 

@@ -44,9 +44,14 @@ export function colorsReadStart(now: Date, read: { readId: string; selfieKey: st
   }
 }
 
-// The history, newest first, kept to the last 12.
+// The history, newest first, kept to the last 12. The same photo given
+// back again replaces the line it left last time, so taps on "read again"
+// never push the real reads out.
 export function withRead(reads: ColorReadLog[] | null | undefined, entry: ColorReadLog) {
-  return [entry, ...(reads ?? [])].slice(0, MAX_READS)
+  const rest = reads ?? []
+  const kept = entry.outcome === 'reused' && rest[0]?.outcome === 'reused' ? rest.slice(1) : rest
+
+  return [entry, ...kept].slice(0, MAX_READS)
 }
 
 export function readEntry(
@@ -75,8 +80,43 @@ export function isColorsLocked(user: BillingUser | null, avatar: { colorAnalysis
   return Boolean(avatar.colorAnalysis) && (Boolean(user && billingState(user).colorReport) || Boolean(avatar.colorReport))
 }
 
+// Whether they're a buyer, and whether a switch to another read could be
+// honored: their report is written again for it (the Color Advisor), or
+// there's no report to lose. A lapsed Pro or a Hair Advisor alone has a
+// report from these colors that couldn't be written again: theirs holds.
+export function colorsAccess(user: BillingUser | null, avatar: { colorAnalysis: unknown; colorReport?: unknown }) {
+  const rewrite = Boolean(user && billingState(user).colorReport)
+
+  return { locked: isColorsLocked(user, avatar), switchable: rewrite || !avatar.colorReport }
+}
+
 export async function colorsLocked(app: FastifyInstance, avatar: Pick<AvatarDocument, 'userId' | 'colorAnalysis' | 'colorReport'>) {
   return isColorsLocked(await loadBillingUser(app, avatar.userId), avatar)
+}
+
+export async function loadColorsAccess(app: FastifyInstance, avatar: Pick<AvatarDocument, 'userId' | 'colorAnalysis' | 'colorReport'>) {
+  return colorsAccess(await loadBillingUser(app, avatar.userId), avatar)
+}
+
+// The photo a read of these bytes already answered, so it isn't read again:
+// the one the colors came from, the one waiting as a candidate, or one in
+// the history that confirmed their season or that they declined (kept
+// their paid colors over it). Before reads kept their source, colors always
+// came from the stored selfie (`storedHash`).
+export function answeredBefore(avatar: Pick<AvatarDocument, 'colorAnalysis' | 'colorsSource' | 'colorCandidate' | 'colorReads'>, hash: string, storedHash: string | null) {
+  const season = avatar.colorAnalysis?.season ?? null
+
+  if (avatar.colorsSource ? avatar.colorsSource.imageHash === hash : storedHash === hash) {
+    return 'current' as const
+  }
+
+  if (avatar.colorCandidate?.source.imageHash === hash) {
+    return 'candidate' as const
+  }
+
+  const earlier = avatar.colorReads?.find((entry) => entry.imageHash === hash && entry.season && (entry.season === season || entry.outcome === 'kept_paid'))
+
+  return earlier ? ('history' as const) : null
 }
 
 type KeyFields = Partial<Pick<AvatarDocument, 'selfieKey' | 'job' | 'colorCandidate' | 'drapePreview' | 'drape' | 'reportBoards'>>
@@ -114,8 +154,8 @@ export type SettledRead = {
 //   their selfie (its free preview drawn again);
 // - confirmed / anchored (not a buyer): the colors stay; the photo becomes
 //   their selfie and the colors' source, so it's recognized next time;
-// - candidate (a buyer, clearly different): waits for her choice; nothing
-//   about her colors changes;
+// - candidate (another season, for their choice): waits; nothing about
+//   their colors changes;
 // - confirmed / anchored (a buyer): nothing about her colors changes.
 // 'avatar': the read that runs with an avatar render (its selfie switched
 // at upload; the render's own update sets the status).
@@ -159,7 +199,14 @@ export function settleRead(
     set.drapePreview = null
     set.colorCandidate = null
   } else if (decision.outcome === 'candidate' && input.analysis) {
-    const candidate: ColorCandidate = { readId: input.readId, at: now, selfieKey: input.photoKey, analysis: input.analysis, source: input.source }
+    const candidate: ColorCandidate = {
+      readId: input.readId,
+      at: now,
+      selfieKey: input.photoKey,
+      analysis: input.analysis,
+      source: input.source,
+      baseSelfieKey: before.selfieKey,
+    }
     set.colorCandidate = candidate
   } else if (!input.locked) {
     adopt()

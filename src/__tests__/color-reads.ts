@@ -111,6 +111,14 @@ export const failure = {
   rejected: () => json(400, { error: { message: 'Invalid image.', code: 'invalid_image', type: 'invalid_request_error' } }),
   unsupported: () =>
     json(400, { error: { message: "Unsupported parameter: 'temperature' is not supported with this model.", code: 'unsupported_parameter', type: 'invalid_request_error' } }),
+  unsupportedValue: () =>
+    json(400, {
+      error: {
+        message: "Unsupported value: 'reasoning.effort' does not support 'none' with this model. Supported values are: 'low', 'medium', and 'high'.",
+        code: 'unsupported_value',
+        type: 'invalid_request_error',
+      },
+    }),
 }
 
 // Every /responses call, answered by `reply` (by default: what its schema

@@ -9,13 +9,17 @@
 //
 //   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json>
 //   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json> --before 2026-10-11T11:51:15Z
-//   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json> --apply              -> development database
-//   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json> --apply --confirm-production
+//   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json> --apply --expect-updated-at <ISO>              -> development database
+//   corepack pnpm exec tsx scripts/restore-colors.ts --avatar <id> --from <oplog.json> --apply --expect-updated-at <ISO> --confirm-production
 //
 // --before: restore what she had before this moment (default: the first
-// entry that set her colors back to null). Writing to the production
-// database (MONGODB_DB=avarobe) needs --confirm-production, and the founder's
-// OK for that one restore; it's refused before connecting otherwise.
+// entry that set her colors back to null). --same-season: also when a later
+// read (a "tell me when ready" retry) gave her colors of the same season but
+// no report: the paid read and its report go back over that read. --apply needs the updatedAt the
+// dry run printed (--expect-updated-at): if her avatar changed since, it
+// stops. Writing to the production database (MONGODB_DB=avarobe) needs
+// --confirm-production, and the founder's OK for that one restore; it's
+// refused before connecting otherwise.
 import fs from 'node:fs'
 
 import { BSON, MongoClient, ObjectId } from 'mongodb'
@@ -32,14 +36,22 @@ const option = (name: string) => {
 const avatarArg = option('--avatar')
 const fromArg = option('--from')
 const beforeArg = option('--before')
+const expectArg = option('--expect-updated-at')
 const apply = args.includes('--apply')
+const sameSeason = args.includes('--same-season')
 
 if (!avatarArg || !ObjectId.isValid(avatarArg) || !fromArg) {
-  throw new Error('Usage: --avatar <id> --from <oplog.json> [--before <ISO>] [--apply] [--confirm-production]')
+  throw new Error('Usage: --avatar <id> --from <oplog.json> [--before <ISO>] [--same-season] [--apply --expect-updated-at <ISO>] [--confirm-production]')
 }
 
 if (apply && env.MONGODB_DB === 'avarobe' && !args.includes('--confirm-production')) {
   throw new Error('Refusing to write to the production database without --confirm-production.')
+}
+
+const expectedUpdatedAt = expectArg ? new Date(expectArg) : null
+
+if (apply && (!expectedUpdatedAt || Number.isNaN(expectedUpdatedAt.getTime()))) {
+  throw new Error('--apply needs --expect-updated-at <the updatedAt the dry run printed>.')
 }
 
 const before = beforeArg ? new Date(beforeArg) : undefined
@@ -95,7 +107,7 @@ try {
       `read from ${file(plan.firstSelfieKey)}; wiped at ${plan.before.toISOString()}`,
   )
 
-  const blockers = restoreBlockers(avatar, user, purchases)
+  const blockers = restoreBlockers(avatar, user, purchases, sameSeason ? plan.colorAnalysis.season : null)
 
   if (blockers.length > 0) {
     console.error(`Stopped: ${blockers.join('; ')}.`)
@@ -103,9 +115,20 @@ try {
   }
 
   if (!apply) {
-    console.log('Dry run: nothing written. Add --apply to restore (production also needs --confirm-production).')
+    const { unusedKeys } = restoreUpdate(avatar, plan, new Date())
+
+    console.log(
+      `would replace: ${avatar.colorAnalysis ? `the later read's colors (${avatar.colorAnalysis.season}, colorsAt ${avatar.colorsAt?.toISOString() ?? 'none'})` : 'no colors'}; ` +
+        `would reset the free preview, drape test and boards (redrawn from her current selfie), leaving ${unusedKeys.length} file(s) unused`,
+    )
+    console.log(
+      `Dry run: nothing written. To restore: --apply --expect-updated-at ${avatar.updatedAt.toISOString()} (production also needs --confirm-production).`,
+    )
+  } else if (avatar.updatedAt.getTime() !== expectedUpdatedAt!.getTime()) {
+    console.error(`Stopped: the avatar changed since the dry run (updatedAt ${avatar.updatedAt.toISOString()}). Run the dry run again.`)
+    process.exitCode = 1
   } else {
-    const update = restoreUpdate(avatar, plan, new Date())
+    const update = restoreUpdate(avatar, plan, new Date(), expectedUpdatedAt!)
     const result = await db.collection<AvatarDocument>('avatars').updateOne(update.filter, { $set: update.set })
 
     console.log(`matched ${result.matchedCount}, modified ${result.modifiedCount}`)
@@ -113,6 +136,8 @@ try {
     if (result.matchedCount === 0) {
       console.error('Nothing matched: the avatar changed since it was read. Run the dry run again.')
       process.exitCode = 1
+    } else if (update.unusedKeys.length > 0) {
+      console.log(`no longer used (the preview of the colors replaced; delete in storage if wanted): ${update.unusedKeys.join(', ')}`)
     }
   }
 } finally {

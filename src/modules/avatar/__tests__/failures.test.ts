@@ -292,7 +292,12 @@ describe('redactAiMessage', () => {
 
 describe('color read messages', () => {
   it('are translated in both tables', () => {
-    for (const message of ['There is no color read to retry.', 'We are still reading your colors. One moment.', 'There is no new color read to choose.']) {
+    for (const message of [
+      'There is no color read to retry.',
+      'We are still reading your colors. One moment.',
+      'There is no new color read to choose.',
+      'Your color report stays on the colors it was written for.',
+    ]) {
       assert.ok(esMessages[message], `es: ${message}`)
       assert.ok(ptBrMessages[message], `pt-BR: ${message}`)
     }

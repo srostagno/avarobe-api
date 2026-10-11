@@ -68,9 +68,17 @@ export async function measureColors(selfie: Buffer): Promise<Measurement> {
 
 // A model that refuses one of the fixed settings (reasoning none, a
 // temperature): that read goes the classic way instead of failing, so a
-// refused setting can never fail every read.
+// refused setting can never fail every read. OpenAI says "Unsupported
+// parameter" for a setting the model doesn't take and "Unsupported value"
+// for a value it doesn't (reasoning effort 'none' on a reasoning-only model).
+const REFUSED_CODES = new Set(['unsupported_parameter', 'unsupported_value', 'unknown_parameter'])
+
 export function refusedSetting(error: unknown) {
-  return error instanceof OpenAiRequestError && error.statusCode === 400 && /Unsupported parameter|Unknown parameter/i.test(error.message)
+  return (
+    error instanceof OpenAiRequestError &&
+    error.statusCode === 400 &&
+    (REFUSED_CODES.has(error.code ?? '') || /Unsupported (parameter|value)|Unknown parameter/i.test(error.message))
+  )
 }
 
 // Whether a first measurement is a close call worth one more.

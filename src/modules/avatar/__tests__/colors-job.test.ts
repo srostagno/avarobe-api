@@ -101,16 +101,19 @@ function reading() {
   // The read reserved one of the day's generations.
   collection('usageCounters').docs.push({ _id: `${userId.toString()}:avatar:${new Date().toISOString().slice(0, 10)}`, count: 1 })
 
-  return { app, collection, userId, avatarId, avatar: () => collection('avatars').findOne({ _id: avatarId }) }
+  // The read the start passed to the job.
+  const read = { readId: 'read-1', photoKey: `users/${userId.toString()}/selfie-1.jpg` }
+
+  return { app, collection, userId, avatarId, read, avatar: () => collection('avatars').findOne({ _id: avatarId }) }
 }
 
 describe('runColorsJob', () => {
   it('tries a busy AI 3 times, waiting what OpenAI asks for, then fails as busy', async () => {
     // 1 ms asked (instead of 3 s, then 10 s): the three tries take no time.
     replies = [serverError('1')]
-    const { app, collection, avatarId, avatar } = reading()
+    const { app, collection, avatarId, avatar, read } = reading()
     const started = Date.now()
-    await runColorsJob(app, avatarId)
+    await runColorsJob(app, avatarId, read)
 
     assert.equal(calls, 3)
     assert.ok(Date.now() - started < 2_000)
@@ -124,8 +127,8 @@ describe('runColorsJob', () => {
 
   it('gets the colors when a later try works', async () => {
     replies = [serverError(), colors]
-    const { app, avatarId, avatar } = reading()
-    await runColorsJob(app, avatarId)
+    const { app, avatarId, avatar, read } = reading()
+    await runColorsJob(app, avatarId, read)
 
     assert.equal(calls, 2)
     const ready = await avatar()
@@ -136,13 +139,13 @@ describe('runColorsJob', () => {
 
   it('stops when the read was replaced meanwhile (a new selfie), leaving the new one alone', async () => {
     replies = [serverError()]
-    const { app, collection, avatarId, avatar } = reading()
+    const { app, collection, avatarId, avatar, read } = reading()
     onCall = async (call) => {
       if (call === 1) {
         await collection('avatars').updateOne({ _id: avatarId }, { $set: { 'job.readId': 'read-2', 'job.selfieKey': 'users/other/selfie-2.jpg' } })
       }
     }
-    await runColorsJob(app, avatarId)
+    await runColorsJob(app, avatarId, read)
 
     assert.equal(calls, 1)
     const current = await avatar()
@@ -155,8 +158,8 @@ describe('runColorsJob', () => {
 
   it('never retries no credits', async () => {
     replies = [() => json(429, { error: { message: 'No credits.', code: 'credit_balance_exhausted', type: 'insufficient_quota' } })]
-    const { app, avatarId, avatar } = reading()
-    await runColorsJob(app, avatarId)
+    const { app, avatarId, avatar, read } = reading()
+    await runColorsJob(app, avatarId, read)
     assert.equal(calls, 1)
     assert.deepEqual(failureOf(await avatar()), { code: 'no_credits', attempts: 1 })
   })

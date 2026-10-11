@@ -4,8 +4,9 @@
 // with dotted paths, null matching a missing field, $exists, $ne, $in, $nin,
 // $lt/$lte/$gt/$gte, $or, $nor and $and; updates with $set, $unset, $inc and
 // $setOnInsert, pipeline $set with $ifNull and $min, upserts (and their duplicate-key
-// error) and sort/limit. Anything else throws, so a test never passes on a
-// query the fake didn't understand.
+// error, on _id and on the unique fields of UNIQUE: avatars.userId, as in
+// plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
+// passes on a query the fake didn't understand.
 import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
@@ -208,13 +209,26 @@ function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
 
 const duplicateKey = () => Object.assign(new Error('E11000 duplicate key error'), { code: 11000 })
 
+// Unique indexes besides _id, by collection.
+const UNIQUE: Record<string, string[]> = { avatars: ['userId'] }
+
 type FindOptions = { sort?: Record<string, 1 | -1>; limit?: number; projection?: unknown }
 
 export class FakeCollection {
   docs: Doc[]
+  private unique: string[]
 
-  constructor(docs: Doc[] = []) {
+  constructor(docs: Doc[] = [], unique: string[] = []) {
     this.docs = docs.map((doc) => clone(doc))
+    this.unique = unique
+  }
+
+  private clashes(doc: Doc) {
+    return this.docs.some(
+      (existing) =>
+        (doc._id !== undefined && same(existing._id, doc._id)) ||
+        this.unique.some((field) => read(doc, field) !== undefined && same(read(existing, field), read(doc, field))),
+    )
   }
 
   private select(filter: Doc, options: FindOptions = {}) {
@@ -247,11 +261,12 @@ export class FakeCollection {
       }
     }
 
-    if (seed._id !== undefined && this.docs.some((doc) => same(doc._id, seed._id))) {
+    applyUpdate(seed, update, true)
+
+    if (this.clashes(seed)) {
       throw duplicateKey()
     }
 
-    applyUpdate(seed, update, true)
     seed._id ??= new ObjectId()
     this.docs.push(seed)
 
@@ -300,7 +315,7 @@ export class FakeCollection {
   }
 
   async insertOne(doc: Doc) {
-    if (doc._id !== undefined && this.docs.some((existing) => same(existing._id, doc._id))) {
+    if (this.clashes(doc)) {
       throw duplicateKey()
     }
 
@@ -394,7 +409,7 @@ export function fakeApp(seed: Record<string, Doc[]> = {}) {
     let found = db.get(name)
 
     if (!found) {
-      found = new FakeCollection(seed[name] ?? [])
+      found = new FakeCollection(seed[name] ?? [], UNIQUE[name] ?? [])
       db.set(name, found)
     }
 

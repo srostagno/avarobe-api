@@ -6,11 +6,12 @@ import { ObjectId } from 'mongodb'
 import { failure, form, memoryStorage, photo, routeApp, stubOpenAi, until } from '../../../__tests__/color-reads.js'
 import { fakeApp, type Doc } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
-import type { ColorAnalysis, ColorReadLog, ColorsFailure } from '../../../types/mongo.js'
+import type { AvatarDocument, ColorAnalysis, ColorReadLog, ColorsFailure, ColorsSource } from '../../../types/mongo.js'
 import { normalizeSelfie } from '../../../utils/images.js'
+import { serializeAvatar } from '../../../utils/serializers.js'
 import { storage } from '../../../utils/storage.js'
 import { failStaleColorReads } from '../../../utils/stale-jobs.js'
-import { imageHash } from '../reads.js'
+import { imageHash, readEntry } from '../reads.js'
 import avatarRoutes from '../routes.js'
 import { runColorsJob } from '../service.js'
 
@@ -183,7 +184,7 @@ describe('a re-read that fails keeps everything', () => {
     assert.equal(files.removed.length, 1)
   })
 
-  it('when the server restarted in the middle', async () => {
+  it('when the server restarted in the middle (giving back the generation it held)', async () => {
     const ana = await withColors()
     const held = `users/${ana.userId.toString()}/selfie-2.jpg`
     files.files.set(held, Buffer.from('held'))
@@ -192,6 +193,7 @@ describe('a re-read that fails keeps everything', () => {
       { _id: ana.avatarId },
       { $set: { status: 'processing', job: { kind: 'colors', startedAt: started, previewKey: null, previewCount: 0, readId: 'read-9', selfieKey: held }, updatedAt: started } },
     )
+    ana.collection('usageCounters').docs.push({ _id: `${ana.userId.toString()}:avatar:${new Date().toISOString().slice(0, 10)}`, count: 1 })
 
     assert.equal(await failStaleColorReads(ana.app), 1)
     const after = await ana.avatar()
@@ -199,6 +201,7 @@ describe('a re-read that fails keeps everything', () => {
     assert.deepEqual(failureOf(after) && { code: failureOf(after)!.code, detail: failureOf(after)!.detail }, { code: 'internal', detail: 'interrupted' })
     assert.deepEqual(files.removed, [held])
     assert.equal(readsOf(after)[0]?.outcome, 'failed')
+    assert.equal((await ana.collection('usageCounters').findOne({}))?.count, 0)
   })
 })
 
@@ -242,6 +245,18 @@ describe('the same photo again', () => {
     assert.equal(response.json<{ reused: boolean }>().reused, true)
     assert.equal(response.json<{ avatar: { colorAnalysis: { season: string } } }>().avatar.colorAnalysis.season, 'Deep Winter')
     await unused(ana)
+  })
+
+  it('tapped again and again: one line in the history, so the real reads stay', async () => {
+    const read = readEntry({ id: 'read-0', at: new Date(), selfieKey: 'users/x/selfie-0.jpg', method: 'classic', outcome: 'first', season: 'Deep Winter', shown: 'Deep Winter' })
+    const ana = await withColors({ colorReads: [read] })
+
+    for (let tap = 0; tap < 3; tap += 1) {
+      await post(ana.app, '/avatar/colors', ana.auth(ana.userId), {})
+    }
+
+    assert.deepEqual(readsOf(await ana.avatar()).map((entry) => entry.outcome), ['reused', 'first'])
+    assert.equal(ai.calls.length, 0)
   })
 
   it('the same bytes as the photo the colors came from', async () => {
@@ -326,7 +341,9 @@ describe('a re-read that works', () => {
         from: 'Deep Winter',
         to: 'Deep Autumn',
         direction: 'warmer',
+        via: 'colors',
       })
+      assert.equal(avatar.seasonRule, 'clear')
     } finally {
       storage.remove = remove
     }
@@ -357,7 +374,7 @@ describe('a re-read that works', () => {
       Object.assign(collection('avatars').docs[0]!, { job: { kind: 'colors', startedAt: new Date(), previewKey: null, previewCount: 0, readId: 'read-2', selfieKey: held } })
       return failure.busy()
     }
-    await runColorsJob(app, avatarId)
+    await runColorsJob(app, avatarId, { readId: 'read-1', photoKey: held })
 
     const avatar = await collection('avatars').findOne({ _id: avatarId })
     assert.equal(avatar?.status, 'processing')
@@ -367,6 +384,103 @@ describe('a re-read that works', () => {
     // Its held photo is the new read's too: it stays. The generation goes back.
     assert.ok(files.files.has(held))
     assert.equal((await collection('usageCounters').findOne({}))?.count, 0)
+  })
+
+  it('a read that fails after it was replaced says so, instead of claiming colors lost', async () => {
+    const ana = await withColors()
+    const held = `users/${ana.userId.toString()}/selfie-2.jpg`
+    files.files.set(held, Buffer.from('held'))
+    await ana.collection('avatars').updateOne(
+      { _id: ana.avatarId },
+      { $set: { status: 'processing', job: { kind: 'colors', startedAt: new Date(), previewKey: null, previewCount: 0, readId: 'read-1', selfieKey: held } } },
+    )
+    ai.state.reply = () => {
+      Object.assign(ana.collection('avatars').docs[0]!, { job: { kind: 'colors', startedAt: new Date(), previewKey: null, previewCount: 0, readId: 'read-2', selfieKey: held } })
+      return failure.noCredits()
+    }
+    await runColorsJob(ana.app, ana.avatarId, { readId: 'read-1', photoKey: held })
+
+    assert.deepEqual((await ana.event('colors_failed'))?.props, { reason: 'no_credits', attempts: 1, superseded: true })
+    assert.equal(((await ana.avatar())?.job as { readId: string }).readId, 'read-2')
+  })
+
+  it('reuses the scores of a photo read before: only the palette, still told what the photo showed', async () => {
+    const upload = await photo([90, 60, 40])
+    const coloring = { skin: 'warm olive', hair: 'dark brown', eyes: 'hazel', lighting: 'window light' }
+    const earlier = readEntry({
+      id: 'read-0',
+      at: new Date(Date.now() - 5 * MINUTE),
+      selfieKey: 'users/x/selfie-0.jpg',
+      imageHash: imageHash(await normalizeSelfie(upload)),
+      method: 'scored',
+      outcome: 'anchored',
+      season: 'Deep Autumn',
+      scores: { warmth: 3, depth: 4, chroma: -1, contrast: 2 },
+      lighting: 'good',
+      shown: 'Soft Summer',
+      coloring,
+    })
+    const ana = await withColors({ colorReads: [earlier] })
+    await post(ana.app, '/avatar/colors', ana.auth(ana.userId), { consent: 'true' }, upload)
+    await until(async () => Boolean(await ana.event('colors_ready')))
+
+    assert.deepEqual(ai.calls.map((call) => call.schema), ['color_palette'])
+    const text = ((ai.calls[0]!.body.input as { content: { text?: string }[] }[])[0]!.content[0]!.text)!
+    assert.match(text, /skin warm olive; hair dark brown; eyes hazel/)
+    assert.equal(propsOf(await ana.event('colors_reused')).scope, 'history')
+    assert.equal(propsOf(await ana.event('colors_ready')).samples, 0)
+    const after = await ana.avatar()
+    assert.equal((after?.colorAnalysis as ColorAnalysis).season, 'Deep Autumn')
+    assert.deepEqual(readsOf(after)[0]!.coloring, coloring)
+  })
+})
+
+describe('two reads at once', () => {
+  it('starts one; the other waits, and its photo and generation are given back', async () => {
+    const ana = await withColors()
+    const uploads = [await photo([90, 60, 40]), await photo([95, 65, 45])]
+    const put = storage.put.bind(storage)
+    let arrived = 0
+    let both!: () => void
+    const ready = new Promise<void>((resolve) => {
+      both = resolve
+    })
+    // Both get past the busy check before either starts.
+    storage.put = async (key, body, type) => {
+      if (key.includes('/selfie-')) {
+        arrived += 1
+
+        if (arrived === 2) {
+          both()
+        }
+
+        await ready
+      }
+
+      return put(key, body, type)
+    }
+
+    try {
+      const responses = await Promise.all(uploads.map((upload) => post(ana.app, '/avatar/colors', ana.auth(ana.userId), { consent: 'true' }, upload)))
+
+      // Both stored their photo, so both were past the busy check.
+      assert.equal(arrived, 2)
+      assert.deepEqual(responses.map((response) => response.statusCode).sort(), [202, 409])
+      assert.match(responses.find((response) => response.statusCode === 409)!.json<{ message: string }>().message, /still reading your colors/)
+    } finally {
+      storage.put = put
+    }
+
+    await until(async () => Boolean(await ana.event('colors_ready')))
+    const after = await ana.avatar()
+    // One read: one measurement and its palette, one generation.
+    assert.deepEqual(ai.calls.map((call) => call.schema), ['color_measure', 'color_palette'])
+    assert.equal((await ana.collection('usageCounters').findOne({}))?.count, 1)
+    assert.equal(await ana.collection('analyticsEvents').countDocuments({ name: 'colors_started' }), 1)
+    // The winner's photo is her selfie now; the loser's is gone, never orphaned.
+    const selfies = [...files.files.keys()].filter((key) => key.startsWith(`users/${ana.userId.toString()}/selfie-`))
+    assert.deepEqual(selfies, [after?.selfieKey])
+    assert.equal(readsOf(after).length, 1)
   })
 })
 
@@ -391,6 +505,53 @@ describe('a new selfie from Photos & measurements', () => {
     assert.equal(readsOf(after)[0]?.outcome, 'failed')
     await until(async () => Boolean(await ana.event('colors_failed')))
     assert.deepEqual((await ana.event('colors_failed'))?.props, { reason: 'no_credits', attempts: 1, via: 'avatar', kept: true })
+    // Her colors came from the old selfie, written down before it went: the
+    // new one is never taken for theirs.
+    const source = after?.colorsSource as ColorsSource
+    assert.equal(source.selfieKey, ana.selfieKey)
+    assert.equal(source.imageHash, imageHash(ana.selfie))
+    const shown = await ana.app.inject({ method: 'GET', url: '/avatar', headers: ana.auth(ana.userId) })
+    assert.deepEqual(
+      (({ outcome, reason, via }) => ({ outcome, reason, via }))(shown.json<{ avatar: { lastRead: Record<string, unknown> } }>().avatar.lastRead),
+      { outcome: 'failed', reason: 'busy', via: 'avatar' },
+    )
+  })
+
+  it('tries a busy AI again beside the render, like any read', async () => {
+    ai.state.reply = failure.busy
+    ai.state.images = 1
+    ai.state.image = await photo([200, 200, 200])
+    const ana = await withColors()
+    await post(ana.app, '/avatar', ana.auth(ana.userId), { ...body, consent: 'true' }, await photo([90, 60, 40]))
+    await until(async () => Boolean(await ana.event('colors_failed')))
+
+    assert.equal(ai.calls.length, 3)
+    assert.deepEqual(failureOf(await ana.avatar()), { ...failureOf(await ana.avatar())!, code: 'provider', attempts: 3 })
+    assert.deepEqual((await ana.avatar())?.colorAnalysis, DEEP_WINTER)
+  })
+
+  it('applies a read that works with the render, then deletes the old preview', async () => {
+    ai.state.images = 1
+    ai.state.image = await photo([200, 200, 200])
+    const ana = await withColors()
+    const upload = await photo([90, 60, 40])
+    const oldPreview = (ana.before?.drapePreview as { key: string; lockedKey: string })
+    await post(ana.app, '/avatar', ana.auth(ana.userId), { ...body, consent: 'true' }, upload)
+    await until(async () => Boolean(await ana.event('colors_ready')))
+
+    const after = await ana.avatar()
+    assert.equal(after?.status, 'ready')
+    assert.ok(after?.avatarKey)
+    assert.equal((after?.colorAnalysis as ColorAnalysis).season, 'Deep Autumn')
+    assert.deepEqual([readsOf(after)[0]!.outcome, readsOf(after)[0]!.via], ['changed', 'avatar'])
+    assert.equal((after?.colorsSource as ColorsSource).imageHash, imageHash(await normalizeSelfie(upload)))
+    assert.equal((after?.colorsSource as ColorsSource).selfieKey, after?.selfieKey)
+    assert.ok(!files.files.has(oldPreview.key))
+    assert.ok(!files.files.has(oldPreview.lockedKey))
+    assert.deepEqual(
+      (({ outcome, via, season }) => ({ outcome, via, season }))(propsOf(await ana.event('colors_ready'))),
+      { outcome: 'changed', via: 'avatar', season: 'Deep Autumn' },
+    )
   })
 
   it('never reads a buyer’s colors again: her report, drape test, preview and color boards stay', async () => {
@@ -428,5 +589,25 @@ describe('a new selfie from Photos & measurements', () => {
     assert.ok(!files.files.has(boards.capsule.key))
     assert.notEqual(after?.selfieKey, ana.selfieKey)
     assert.ok(!files.files.has(ana.selfieKey))
+  })
+})
+
+describe('the last read the web hears of', () => {
+  const entry = (fields: Partial<ColorReadLog> = {}) =>
+    readEntry({ id: 'read-1', at: new Date(), selfieKey: 'users/x/selfie-1.jpg', method: 'classic', outcome: 'confirmed', season: 'Deep Winter', shown: 'Deep Winter', ...fields })
+
+  it('is the newest read of the last week, never a photo given back', async () => {
+    const ana = await withColors()
+    const lastRead = async (reads: ColorReadLog[]) =>
+      (await serializeAvatar({ ...(ana.before as unknown as AvatarDocument), colorReads: reads }, { fullPalette: false })).lastRead
+
+    const confirmed = entry()
+    assert.deepEqual(await lastRead([confirmed]), { id: 'read-1', outcome: 'confirmed', at: confirmed.at.toISOString(), season: 'Deep Winter' })
+    assert.equal(await lastRead([entry({ outcome: 'reused' }), entry({ id: 'read-0' })]), null)
+    assert.equal(await lastRead([entry({ at: new Date(Date.now() - 8 * 24 * 60 * MINUTE) })]), null)
+    assert.deepEqual(
+      (({ outcome, reason, via }) => ({ outcome, reason, via }))((await lastRead([entry({ outcome: 'failed', failure: { code: 'rejected', at: new Date(), attempts: 1, detail: null }, via: 'colors' })]))!),
+      { outcome: 'failed', reason: 'photo', via: 'colors' },
+    )
   })
 })

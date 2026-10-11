@@ -42,7 +42,7 @@ import { decideColors, type ColorDecision } from './decide.js'
 import { PROVIDER_CODES, retryDelay } from './failures.js'
 import { currentHair, orphanHairKeys } from './hair.js'
 import { closeCall, measureColors, refusedSetting, scoredRead, writePalette, type Measurement, type ScoredRead } from './measure.js'
-import { colorsLocked, imageHash, newReadId, readEntry, replacedKeys, settleFailedRead, settleRead, withRead } from './reads.js'
+import { imageHash, loadColorsAccess, newReadId, readEntry, replacedKeys, settleFailedRead, settleRead, withRead } from './reads.js'
 import { contrastOf, undertoneOf } from './seasons.js'
 import {
   COHERENCE_RULES,
@@ -136,16 +136,46 @@ function currentVersions(avatar: AvatarDocument): AvatarVersion[] {
     : []
 }
 
+// A read that gave up, and after how many tries.
+class ReadFailed extends Error {
+  constructor(
+    readonly reason: unknown,
+    readonly attempts: number,
+  ) {
+    super(errorMessage(reason))
+  }
+}
+
 // The color read that runs beside an avatar render (a new selfie, or the
-// first colors): one attempt, nothing written until the render is done.
+// first colors): nothing written until the render is done. A busy AI is
+// tried again, briefly, like any read (failures.ts); the render takes
+// longer anyway.
 async function readBesideRender(app: FastifyInstance, avatar: AvatarDocument, selfie: Buffer): Promise<DoneRead> {
   const steps = newSteps()
+  const startedAt = Date.now()
+  let attempts = 0
 
-  await measureStep(app, steps, selfie, avatar.userId)
+  for (;;) {
+    attempts += 1
 
-  const decision = decideColors({ current: avatar.colorAnalysis?.season ?? null, locked: await colorsLocked(app, avatar), measure: photoMeasure(steps) })
+    try {
+      await measureStep(app, steps, selfie, avatar.userId)
 
-  return { steps, hash: imageHash(selfie), analysis: await paletteStep(steps, selfie, decision) }
+      const decision = decideColors({ ...(await decideInput(app, avatar)), measure: photoMeasure(steps) })
+
+      return { steps, hash: imageHash(selfie), analysis: await paletteStep(steps, selfie, decision) }
+    } catch (error) {
+      const code = classifyAiError(error)
+      const wait = retryDelay(code, attempts, Date.now() - startedAt, error instanceof OpenAiRequestError ? error.retryAfterMs : null)
+
+      if (wait === null) {
+        throw new ReadFailed(error, attempts)
+      }
+
+      app.log.warn({ avatarId: avatar._id.toString(), code, attempts, waitMs: wait }, 'Color read beside the render failed; trying again')
+      await sleep(wait)
+    }
+  }
 }
 
 // What the read beside the render adds to the job's final update. A read
@@ -184,8 +214,10 @@ async function settleReadBesideRender(
     }
   }
 
-  const reason = result.status === 'rejected' ? (result.reason as unknown) : null
-  const failure: ColorsFailure = { code: classifyAiError(reason), at: now, attempts: 1, detail: redactAiMessage(errorMessage(reason)) }
+  const rejected = result.status === 'rejected' ? (result.reason as unknown) : null
+  const reason = rejected instanceof ReadFailed ? rejected.reason : rejected
+  const attempts = rejected instanceof ReadFailed ? rejected.attempts : 1
+  const failure: ColorsFailure = { code: classifyAiError(reason), at: now, attempts, detail: redactAiMessage(errorMessage(reason)) }
   const kept = Boolean(fresh.colorAnalysis)
   const entry = readEntry({
     id: readId,
@@ -376,7 +408,7 @@ export async function runAvatarJob(
       await trackServerEvent(app, {
         name: 'colors_failed',
         userId: avatar.userId,
-        props: { reason: colors.failed.code, attempts: 1, via: 'avatar', kept: colors.kept },
+        props: { reason: colors.failed.code, attempts: colors.failed.attempts, via: 'avatar', kept: colors.kept },
       })
     }
 
@@ -481,6 +513,17 @@ async function paletteStep(steps: ReadSteps, selfie: Buffer, decision: ColorDeci
 
 type DoneRead = { steps: ReadSteps; hash: string; analysis: ColorAnalysis | null }
 
+// What a decision weighs besides the photo: the season they have, whether
+// they're a buyer and a switch could be honored (as they are now: a purchase
+// meanwhile makes her a buyer), and the light their colors were read in.
+async function decideInput(app: FastifyInstance, avatar: AvatarDocument) {
+  return {
+    current: avatar.colorAnalysis?.season ?? null,
+    ...(await loadColorsAccess(app, avatar)),
+    currentLighting: avatar.colorsSource?.lighting ?? null,
+  }
+}
+
 // Decides with the avatar as it is now (whether she's a buyer by now), and
 // builds what the read writes and its line in the history.
 async function settleDoneRead(
@@ -491,8 +534,9 @@ async function settleDoneRead(
 ) {
   const { steps } = read
   const measure = photoMeasure(steps)
-  const locked = await colorsLocked(app, fresh)
-  const decision = decideColors({ current: fresh.colorAnalysis?.season ?? null, locked, measure })
+  const weigh = await decideInput(app, fresh)
+  const { locked } = weigh
+  const decision = decideColors({ ...weigh, measure })
   const scored = measure.method === 'scored' ? measure : null
   const source: ColorsSource = {
     readId: input.readId,
@@ -521,6 +565,7 @@ async function settleDoneRead(
     from: decision.from,
     direction: decision.direction,
     via: input.via,
+    ...(scored?.coloring ? { coloring: scored.coloring } : {}),
   })
   const settled = settleRead(fresh, {
     readId: input.readId,
@@ -565,12 +610,20 @@ function dropHairstyles(app: FastifyInstance, userId: ObjectId) {
   })
 }
 
-// A held photo nothing points to anymore (its read was replaced).
-async function dropUnusedPhoto(app: FastifyInstance, avatarId: ObjectId, key: string) {
-  const doc = await app.collections.avatars.findOne({ _id: avatarId }, { projection: { selfieKey: 1, job: 1, colorCandidate: 1 } })
+// A read replaced meanwhile (another start, a new selfie, the avatar): the
+// photo it held goes unless something points to it now, and the generation
+// it reserved comes back (`userId`: when it's known to have reserved one).
+async function dropReplacedRead(app: FastifyInstance, avatarId: ObjectId, key: string, userId?: ObjectId) {
+  const doc = await app.collections.avatars.findOne({ _id: avatarId }, { projection: { userId: 1, selfieKey: 1, job: 1, colorCandidate: 1 } })
 
-  if (doc && ![doc.selfieKey, doc.job?.selfieKey, doc.colorCandidate?.selfieKey].includes(key)) {
+  if (!doc || ![doc.selfieKey, doc.job?.selfieKey, doc.colorCandidate?.selfieKey].includes(key)) {
     await storage.remove(key).catch(() => undefined)
+  }
+
+  const owner = userId ?? doc?.userId
+
+  if (owner) {
+    await releaseGenerations(app, owner, 'avatar', 1)
   }
 }
 
@@ -587,16 +640,22 @@ async function dropUnusedPhoto(app: FastifyInstance, avatarId: ObjectId, key: st
 // guarded by the read's id, then the files it replaced go (reads.ts). The
 // same photo read before (scored) reuses its scores. A failure keeps the
 // colors someone had.
-export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via?: 'notify') {
-  const avatar = await app.collections.avatars.findOne({ _id: avatarId })
-  const readId = avatar?.job?.kind === 'colors' ? avatar.job.readId : null
+//
+// `read`: the read this job was started for and the photo it reads, as the
+// start wrote them (never read back from the document: a second start
+// meanwhile is its own job, with its own read and photo).
+export type ColorsRead = { readId: string; photoKey: string }
 
-  if (!avatar || !readId) {
+export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, read: ColorsRead, via?: 'notify') {
+  const { readId, photoKey } = read
+  const where = { _id: avatarId, 'job.readId': readId }
+  const avatar = await app.collections.avatars.findOne(where)
+
+  if (!avatar) {
+    await dropReplacedRead(app, avatarId, photoKey)
     return
   }
 
-  const where = { _id: avatarId, 'job.readId': readId }
-  const photoKey = avatar.job?.selfieKey ?? avatar.selfieKey
   const startedAt = Date.now()
   let selfie: Buffer
 
@@ -615,7 +674,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via
       : undefined
 
   if (earlier?.scores && earlier.lighting) {
-    steps.first = { coloring: null, lighting: earlier.lighting, olive: earlier.undertone === 'olive', scores: earlier.scores }
+    steps.first = { coloring: earlier.coloring ?? null, lighting: earlier.lighting, olive: earlier.undertone === 'olive', scores: earlier.scores }
     steps.reused = true
     void trackServerEvent(app, { name: 'colors_reused', userId: avatar.userId, props: { scope: 'history' } })
   }
@@ -632,14 +691,11 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via
       const fresh = await app.collections.avatars.findOne(where)
 
       if (!fresh) {
-        await dropUnusedPhoto(app, avatarId, photoKey)
-        await releaseGenerations(app, avatar.userId, 'avatar', 1)
+        await dropReplacedRead(app, avatarId, photoKey, avatar.userId)
         return
       }
 
-      const locked = await colorsLocked(app, fresh)
-
-      analysis = await paletteStep(steps, selfie, decideColors({ current: fresh.colorAnalysis?.season ?? null, locked, measure: photoMeasure(steps) }))
+      analysis = await paletteStep(steps, selfie, decideColors({ ...(await decideInput(app, fresh)), measure: photoMeasure(steps) }))
     } catch (error) {
       const code = classifyAiError(error)
       const wait = retryDelay(code, attempts, Date.now() - startedAt, error instanceof OpenAiRequestError ? error.retryAfterMs : null)
@@ -654,8 +710,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via
 
       // Replaced meanwhile (a new selfie, the avatar): not ours to finish.
       if (!(await app.collections.avatars.findOne(where, { projection: { _id: 1 } }))) {
-        await dropUnusedPhoto(app, avatarId, photoKey)
-        await releaseGenerations(app, avatar.userId, 'avatar', 1)
+        await dropReplacedRead(app, avatarId, photoKey, avatar.userId)
         return
       }
     }
@@ -667,7 +722,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via
   const fresh = await app.collections.avatars.findOne(where)
 
   if (!fresh) {
-    await dropUnusedPhoto(app, avatarId, photoKey)
+    await dropReplacedRead(app, avatarId, photoKey, avatar.userId)
     return
   }
 
@@ -683,7 +738,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via
   const saved = await app.collections.avatars.updateOne(where, { $set: settled.set })
 
   if (saved.matchedCount === 0) {
-    await dropUnusedPhoto(app, avatarId, photoKey)
+    await dropReplacedRead(app, avatarId, photoKey, avatar.userId)
     return
   }
 
@@ -766,29 +821,29 @@ async function failColorsJob(
     { via: via ?? 'colors', hash: result.hash ?? null },
   )
   await releaseGenerations(app, avatar.userId, 'avatar', 1)
+  // superseded: another read (or the avatar) took its place meanwhile, so
+  // nothing was kept or failed by this one.
   await trackServerEvent(app, {
     name: 'colors_failed',
     userId: avatar.userId,
-    props: { reason: result.code, attempts: result.attempts, ...(via ? { via } : {}), kept: Boolean(kept) },
+    props: { reason: result.code, attempts: result.attempts, ...(via ? { via } : {}), ...(kept === null ? { superseded: true } : { kept }) },
   })
   void noteReadFailed(app)
 }
 
 // A crash (not a failed read, which runColorsJob records itself): recorded
 // like any read that didn't finish, if the read is still the one running.
-export async function runColorsJobSafely(app: FastifyInstance, avatarId: ObjectId, via?: 'notify') {
-  const readId = (await app.collections.avatars.findOne({ _id: avatarId }, { projection: { job: 1 } }).catch(() => null))?.job?.readId ?? null
-
+export async function runColorsJobSafely(app: FastifyInstance, avatarId: ObjectId, read: ColorsRead, via?: 'notify') {
   try {
-    await runColorsJob(app, avatarId, via)
+    await runColorsJob(app, avatarId, read, via)
   } catch (error) {
     app.log.error({ err: error, avatarId: avatarId.toString() }, 'Color read crashed')
 
     try {
-      const avatar = readId ? await app.collections.avatars.findOne({ _id: avatarId, 'job.readId': readId }) : null
+      const avatar = await app.collections.avatars.findOne({ _id: avatarId, 'job.readId': read.readId })
 
-      if (avatar && readId) {
-        await failColorsJob(app, avatar, readId, { code: 'internal', attempts: 1 }, via)
+      if (avatar) {
+        await failColorsJob(app, avatar, read.readId, { code: 'internal', attempts: 1 }, via)
       }
     } catch {
       // Stale-job recovery on the next boot will catch it.
@@ -796,8 +851,8 @@ export async function runColorsJobSafely(app: FastifyInstance, avatarId: ObjectI
   }
 }
 
-export function startColorsJob(app: FastifyInstance, avatarId: ObjectId) {
-  void runColorsJobSafely(app, avatarId)
+export function startColorsJob(app: FastifyInstance, avatarId: ObjectId, read: ColorsRead) {
+  void runColorsJobSafely(app, avatarId, read)
 }
 
 const NOTIFY_WINDOW_MS = 24 * 60 * 60 * 1000

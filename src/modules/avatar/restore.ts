@@ -10,6 +10,8 @@ import { readEntry, withRead } from './reads.js'
 // a v2 diff (o.diff: u updated, i inserted fields); older ones a $set.
 export type OplogEntry = {
   op: string
+  // The collection ("avarobe.avatars"): entries of any other are ignored.
+  ns?: string
   o: Record<string, unknown>
   o2?: { _id?: unknown }
   wall: Date
@@ -47,7 +49,9 @@ function fieldsOf(entry: OplogEntry): Record<string, unknown> {
 }
 
 export function restorePlan(all: OplogEntry[], avatarId: string, before?: Date): RestorePlan | { error: string } {
-  const entries = all.filter((entry) => idOf(entry) === avatarId).sort((a, b) => a.wall.getTime() - b.wall.getTime())
+  const entries = all
+    .filter((entry) => (!entry.ns || entry.ns.endsWith('.avatars')) && idOf(entry) === avatarId)
+    .sort((a, b) => a.wall.getTime() - b.wall.getTime())
 
   if (entries.length === 0) {
     return { error: `No entries for avatar ${avatarId} in the log.` }
@@ -105,17 +109,27 @@ const COLOR_PRODUCTS = new Set(['color_report', 'color_addon', 'reports_bundle',
 
 // Why it must not be restored now, if anything: only an avatar the outage
 // left failed and empty, nobody waiting for an email of it, a buyer whose
-// purchase stands.
+// purchase stands. `sameSeason` (--same-season): also one a later read gave
+// colors of the same season again but no report (ready, the report still
+// gone), whose paid read and report go back over that read.
 export function restoreBlockers(
   avatar: Pick<AvatarDocument, 'status' | 'colorAnalysis' | 'colorReport' | 'job' | 'colorsNotify'>,
   user: Pick<UserDocument, 'colorReportAt' | 'colorMirrorAt'> | null,
   purchases: Pick<PurchaseDocument, 'product' | 'refundedAt'>[],
+  sameSeason: string | null = null,
 ) {
   const blockers: string[] = []
   const notify = avatar.colorsNotify
+  const current = avatar.colorAnalysis?.season ?? null
 
-  if (avatar.status !== 'failed') blockers.push(`status is ${avatar.status}, not failed`)
-  if (avatar.colorAnalysis) blockers.push('it has colors')
+  if (sameSeason) {
+    if (avatar.status === 'processing') blockers.push('a read is running')
+    if (current && current !== sameSeason) blockers.push(`its colors are ${current}, not ${sameSeason}`)
+  } else {
+    if (avatar.status !== 'failed') blockers.push(`status is ${avatar.status}, not failed`)
+    if (avatar.colorAnalysis) blockers.push(`it has colors (${current}; --same-season restores over colors of the same season)`)
+  }
+
   if (avatar.colorReport) blockers.push('it has a report')
   if (avatar.job) blockers.push('a job is running')
   if (notify && !notify.sentAt && !notify.gaveUpAt) blockers.push('a "tell me when ready" is pending')
@@ -130,11 +144,18 @@ export function restoreBlockers(
   return blockers
 }
 
-// The one update: guarded by the state the dry run printed (failed, empty,
-// the same selfie and updatedAt), so nothing that happened since is
+// The one update: guarded by the state the dry run printed (its status and
+// colors, no report, the same selfie, and the updatedAt the dry run showed,
+// passed back with --expect-updated-at), so nothing that happened since is
 // overwritten. The drape test, the free preview and the boards are drawn
-// again from her current selfie when she opens the report.
-export function restoreUpdate(avatar: Pick<AvatarDocument, '_id' | 'selfieKey' | 'updatedAt' | 'colorReads'>, plan: RestorePlan, now: Date) {
+// again from her current selfie when she opens the report (`unusedKeys`: the
+// files of a preview drawn from the colors replaced, to delete by hand).
+export function restoreUpdate(
+  avatar: Pick<AvatarDocument, '_id' | 'status' | 'selfieKey' | 'updatedAt' | 'colorReads' | 'colorAnalysis' | 'drapePreview' | 'drape'>,
+  plan: RestorePlan,
+  now: Date,
+  expectedUpdatedAt: Date = avatar.updatedAt,
+) {
   const readId = `restored-${plan.colorsWrittenAt.getTime().toString(36)}`
   const entry: ColorReadLog = readEntry({
     id: readId,
@@ -148,8 +169,11 @@ export function restoreUpdate(avatar: Pick<AvatarDocument, '_id' | 'selfieKey' |
     shown: plan.colorAnalysis.season,
   })
 
+  const colors = avatar.colorAnalysis ? { 'colorAnalysis.season': avatar.colorAnalysis.season } : { colorAnalysis: null }
+
   return {
-    filter: { _id: avatar._id, status: 'failed' as const, colorAnalysis: null, colorReport: null, selfieKey: avatar.selfieKey, updatedAt: avatar.updatedAt },
+    filter: { _id: avatar._id, status: avatar.status, ...colors, colorReport: null, selfieKey: avatar.selfieKey, updatedAt: expectedUpdatedAt },
+    unusedKeys: [avatar.drapePreview?.key, avatar.drapePreview?.lockedKey, avatar.drape?.key].filter((key): key is string => Boolean(key)),
     set: {
       colorAnalysis: plan.colorAnalysis,
       colorsAt: plan.colorsAt,

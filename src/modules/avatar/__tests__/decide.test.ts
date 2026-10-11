@@ -70,19 +70,46 @@ describe('decideColors', () => {
     assert.equal(decision.palette, true)
   })
 
-  it('never changes an existing season in classic', () => {
+  it('never changes an existing season by itself in classic: another season is theirs to choose', () => {
     for (const locked of [false, true]) {
       const other = decideColors({ current: 'Deep Winter', locked, measure: { method: 'classic', season: 'Soft Autumn' } })
       const same = decideColors({ current: 'Deep Winter', locked, measure: { method: 'classic', season: 'Deep Winter' } })
 
-      assert.equal(other.outcome, 'anchored')
+      assert.equal(other.outcome, 'candidate')
+      assert.equal(other.read, 'Soft Autumn')
       assert.equal(other.shown, 'Deep Winter')
-      assert.equal(other.palette, false)
+      assert.equal(other.from, 'Deep Winter')
+      assert.equal(other.palette, true)
       assert.equal(same.outcome, 'confirmed')
+      assert.equal(same.palette, false)
     }
 
     const first = decideColors({ current: null, locked: false, measure: { method: 'classic', season: 'Soft Autumn' } })
     assert.equal(first.outcome, 'first')
     assert.equal(first.shown, 'Soft Autumn')
+  })
+
+  it('holds the season of someone whose report couldn’t be written again', () => {
+    const classic = decideColors({ current: 'Deep Winter', locked: true, switchable: false, measure: { method: 'classic', season: 'Soft Autumn' } })
+    const clear = decideColors({ current: 'Deep Winter', locked: true, switchable: false, measure: scored(3, 4, -1) })
+
+    for (const decision of [classic, clear]) {
+      assert.equal(decision.outcome, 'anchored')
+      assert.equal(decision.shown, 'Deep Winter')
+      assert.equal(decision.palette, false)
+    }
+  })
+
+  it('offers a choice when the colors were read in poor light and a good-light photo leans elsewhere', () => {
+    // A lead of 1: not clear, but her colors came from a photo in poor light.
+    const weak = decideColors({ current: 'Deep Winter', locked: false, currentLighting: 'poor', measure: scored(1, 4, -1) })
+    const stillPoor = decideColors({ current: 'Deep Winter', locked: false, currentLighting: 'poor', measure: scored(1, 4, -1, 'poor') })
+    const goodBefore = decideColors({ current: 'Deep Winter', locked: false, currentLighting: 'good', measure: scored(1, 4, -1) })
+
+    assert.equal(weak.outcome, 'candidate')
+    assert.equal(weak.shown, 'Deep Winter')
+    assert.equal(weak.palette, true)
+    assert.equal(stillPoor.outcome, 'anchored')
+    assert.equal(goodBefore.outcome, 'anchored')
   })
 })

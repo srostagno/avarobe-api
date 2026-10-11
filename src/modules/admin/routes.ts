@@ -245,7 +245,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const [found, total, stats, buyersInPeriod] = await Promise.all([
       app.collections.avatars
         .find(before ? { ...inPeriod, createdAt: { $gte: since, $lt: before } } : inPeriod, {
-          projection: { selfieKey: 0, colorReport: 0, styleProfile: 0, reportBoards: 0, drape: 0 },
+          projection: { selfieKey: 0, colorReport: 0, styleProfile: 0, reportBoards: 0, drape: 0, 'previousColors.report.data': 0 },
         })
         .sort({ createdAt: -1 })
         .limit(limit + 1)
@@ -360,6 +360,10 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
                 at: avatar.colorCandidate.at,
               }
             : null,
+          // What they had before switching to a new read (kept for an undo).
+          previous: avatar.previousColors
+            ? { season: avatar.previousColors.analysis.season, report: Boolean(avatar.previousColors.report), at: avatar.previousColors.at }
+            : null,
           reads: (avatar.colorReads ?? []).map((read) => ({
             at: read.at,
             outcome: read.outcome,
@@ -372,6 +376,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             lead: read.lead,
             method: read.method,
             failure: read.failure ? { code: read.failure.code, attempts: read.failure.attempts } : null,
+            via: read.via ?? null,
             selfie: read.selfieKey.split('/').pop() ?? null,
           })),
           looks: {

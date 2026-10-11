@@ -39,6 +39,16 @@ const boardSchema = z.object({ kind: z.enum([...COLOR_BOARDS, ...STYLE_BOARDS]) 
 
 const isColorBoard = (kind: BoardKind) => (COLOR_BOARDS as readonly BoardKind[]).includes(kind)
 
+const SWITCH_OWES_REPORT_MS = 7 * 24 * 60 * 60 * 1000
+
+// Switched to a new read in the last week, from colors that had a report,
+// and the report for the new one not written yet.
+export function switchOwesReport(avatar: Pick<AvatarDocument, 'colorReport' | 'previousColors'>, now = Date.now()) {
+  const previous = avatar.previousColors
+
+  return !avatar.colorReport && Boolean(previous?.report) && now - (previous?.at.getTime() ?? 0) < SWITCH_OWES_REPORT_MS
+}
+
 // Boards go out with a signed URL once ready; the prompt stays on the server.
 async function serializeBoards(boards: AvatarDocument['reportBoards'], kinds: readonly BoardKind[]) {
   const entries = await Promise.all(
@@ -209,7 +219,11 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
         return serializeReport(filled, access)
       }
 
-      if (!(await reserveGenerations(app, userId, 'report', 1))) {
+      // A switch to a new read (POST /avatar/colors/choice) took the report
+      // she had: the one for the new read is owed, not one of the day's.
+      const owed = switchOwesReport(avatar)
+
+      if (!owed && !(await reserveGenerations(app, userId, 'report', 1))) {
         return reply.code(429).send({ message: REPORT_LIMIT_MESSAGE })
       }
 
@@ -219,7 +233,11 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
         data = await generateColorReport(avatar, presentation)
       } catch (error) {
         request.log.error({ err: errorMessage(error) }, 'Color report failed')
-        await releaseGenerations(app, userId, 'report', 1)
+
+        if (!owed) {
+          await releaseGenerations(app, userId, 'report', 1)
+        }
+
         return reply.code(502).send({ message: 'We could not write your color report. Try again.' })
       }
 

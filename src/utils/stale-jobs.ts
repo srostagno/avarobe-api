@@ -4,6 +4,7 @@ import { settleFailure } from '../modules/avatar/service.js'
 import { refundCredits } from '../modules/billing/entitlements.js'
 import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
+import { releaseGenerations } from './usage.js'
 
 // Generation runs in-process. If the API restarts mid-render the document
 // would stay "processing" forever, so on boot anything older than this is
@@ -16,12 +17,12 @@ const STALE_AFTER_MS = 10 * 60 * 1000
 // check, and the studio would show its progress forever (and a "tell me
 // when ready" would never be read again). Like any failed read: colors
 // someone had stay (ready, the failure kept) and the photo it held goes;
-// without colors it's failed.
+// without colors it's failed. The generation it reserved comes back.
 export async function failStaleColorReads(app: FastifyInstance, now = new Date()) {
   const stuck = await app.collections.avatars
     .find(
       { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: new Date(now.getTime() - STALE_AFTER_MS) } },
-      { projection: { _id: 1, job: 1, updatedAt: 1 } },
+      { projection: { _id: 1, userId: 1, job: 1, updatedAt: 1 } },
     )
     .toArray()
   let count = 0
@@ -34,7 +35,10 @@ export async function failStaleColorReads(app: FastifyInstance, now = new Date()
       : { _id: avatar._id, status: 'processing', 'job.kind': 'colors', updatedAt: avatar.updatedAt }
     const settled = await settleFailure(app, where, { code: 'internal', at: now, attempts: 1, detail: 'interrupted' }, { via: 'colors' })
 
-    count += Number(settled !== null)
+    if (settled !== null) {
+      count += 1
+      await releaseGenerations(app, avatar.userId, 'avatar', 1)
+    }
   }
 
   return count

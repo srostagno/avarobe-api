@@ -28,6 +28,8 @@ const log: OplogEntry[] = [
   update('11:53:01', { status: 'failed' }),
   // Someone else's avatar in the same file.
   { op: 'u', o: { $v: 2, diff: { u: { colorAnalysis: { ...colors, season: 'Soft Summer' }, colorsAt: at('11:40:00') } } }, o2: { _id: new ObjectId() }, wall: at('11:40:00') },
+  // Another collection's document with the same id: never read.
+  { op: 'u', ns: 'avarobe.users', o: { $v: 2, diff: { u: { colorAnalysis: { ...colors, season: 'Bright Winter' }, colorsAt: at('11:45:00') } } }, o2: { _id: avatarId }, wall: at('11:45:00') },
 ]
 
 describe('the buyer restore', () => {
@@ -55,6 +57,10 @@ describe('the buyer restore', () => {
 
     assert.deepEqual(restoreBlockers(wiped, buyer, paid), [])
     assert.deepEqual(restoreBlockers({ ...wiped, status: 'ready' }, buyer, paid), ['status is ready, not failed'])
+    assert.deepEqual(restoreBlockers({ ...wiped, status: 'ready', colorAnalysis: colors as never }, buyer, paid), [
+      'status is ready, not failed',
+      'it has colors (Deep Autumn; --same-season restores over colors of the same season)',
+    ])
     assert.deepEqual(restoreBlockers(wiped, {}, paid), ['the user has no Color Advisor or mirror'])
     assert.deepEqual(restoreBlockers(wiped, buyer, [{ product: 'color_report', refundedAt: new Date() }]), ['the purchase was refunded'])
     assert.deepEqual(
@@ -63,14 +69,24 @@ describe('the buyer restore', () => {
     )
   })
 
+  it('guards the write with the updatedAt the dry run printed, not one read at apply time', () => {
+    const plan = restorePlan(log, avatarId.toString())
+    assert.ok(!('error' in plan))
+    const current = { _id: avatarId, status: 'failed' as const, selfieKey: 'users/u/selfie-2.jpg', updatedAt: at('12:30:00'), colorReads: null, colorAnalysis: null }
+    const { filter } = restoreUpdate(current, plan, new Date(), at('12:08:12'))
+
+    assert.deepEqual(filter.updatedAt, at('12:08:12'))
+  })
+
   it('writes colors and report in one update, guarded by what the dry run saw', () => {
     const plan = restorePlan(log, avatarId.toString())
     assert.ok(!('error' in plan))
     const now = new Date()
-    const current = { _id: avatarId, selfieKey: 'users/u/selfie-2.jpg', updatedAt: at('12:08:12'), colorReads: null }
-    const { filter, set } = restoreUpdate(current, plan, now)
+    const current = { _id: avatarId, status: 'failed' as const, selfieKey: 'users/u/selfie-2.jpg', updatedAt: at('12:08:12'), colorReads: null, colorAnalysis: null }
+    const { filter, set, unusedKeys } = restoreUpdate(current, plan, now)
 
     assert.deepEqual(filter, { _id: avatarId, status: 'failed', colorAnalysis: null, colorReport: null, selfieKey: 'users/u/selfie-2.jpg', updatedAt: at('12:08:12') })
+    assert.deepEqual(unusedKeys, [])
     assert.equal(set.status, 'ready')
     assert.deepEqual(set.colorReport, report)
     assert.equal(set.drapePreview, null)
@@ -81,5 +97,48 @@ describe('the buyer restore', () => {
       set.colorReads.map((read) => [read.outcome, read.season, read.shown]),
       [['restored', 'Deep Autumn', 'Deep Autumn']],
     )
+  })
+})
+
+describe('the restore over a later read of the same season (--same-season)', () => {
+  // A "tell me when ready" retry read her newest selfie at 16:54: Deep Autumn
+  // again, a new palette and preview, and no report.
+  const reread = { ...colors, summary: 'a later read', bestColors: [{ name: 'Telha', hex: '#A0482A' }] }
+  const now = { _id: avatarId, status: 'ready' as const, colorAnalysis: reread as never, colorReport: null, job: null, colorsNotify: { requestedAt: at('16:53:12'), attempts: 0, lastTriedAt: at('16:54:31'), sentAt: at('16:54:37'), gaveUpAt: null, via: 'script' as const } }
+  const buyer = { colorReportAt: at('11:37:33') }
+  const paid = [{ product: 'color_report' as const, refundedAt: null }]
+
+  it('goes ahead only over colors of the season she paid for, with no report and nothing running', () => {
+    assert.deepEqual(restoreBlockers(now, buyer, paid, 'Deep Autumn'), [])
+    assert.deepEqual(restoreBlockers(now, buyer, paid, 'Soft Summer'), ['its colors are Deep Autumn, not Soft Summer'])
+    assert.deepEqual(restoreBlockers({ ...now, status: 'processing' }, buyer, paid, 'Deep Autumn'), ['a read is running'])
+    assert.deepEqual(restoreBlockers({ ...now, colorReport: { createdAt: new Date() } as never }, buyer, paid, 'Deep Autumn'), ['it has a report'])
+  })
+
+  it('puts the paid read and report back, guarded by the colors it replaces, and names the preview files left over', () => {
+    const plan = restorePlan(log, avatarId.toString())
+    assert.ok(!('error' in plan))
+    const current = {
+      ...now,
+      selfieKey: 'users/u/selfie-2.jpg',
+      updatedAt: at('16:54:36.672'),
+      colorReads: null,
+      drapePreview: { status: 'ready' as const, key: 'users/u/drape-preview-9.webp', lockedKey: 'users/u/drape-preview-9-locked.webp' } as never,
+      drape: null,
+    }
+    const { filter, set, unusedKeys } = restoreUpdate(current, plan, new Date(), at('16:54:36.672'))
+
+    assert.deepEqual(filter, {
+      _id: avatarId,
+      status: 'ready',
+      'colorAnalysis.season': 'Deep Autumn',
+      colorReport: null,
+      selfieKey: 'users/u/selfie-2.jpg',
+      updatedAt: at('16:54:36.672'),
+    })
+    assert.deepEqual(set.colorAnalysis, colors)
+    assert.deepEqual(set.colorReport, report)
+    assert.equal(set.drapePreview, null)
+    assert.deepEqual(unusedKeys, ['users/u/drape-preview-9.webp', 'users/u/drape-preview-9-locked.webp'])
   })
 })

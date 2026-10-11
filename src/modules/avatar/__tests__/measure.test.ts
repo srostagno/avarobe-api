@@ -52,13 +52,13 @@ function firstRead() {
     updatedAt: new Date(),
   })
 
-  return { app, collection, avatarId, avatar: () => collection('avatars').findOne({ _id: avatarId }) }
+  return { app, collection, avatarId, read: { readId: 'read-1', photoKey: selfieKey }, avatar: () => collection('avatars').findOne({ _id: avatarId }) }
 }
 
 describe('the scored read', () => {
   it('measures with fixed settings, in English whatever their language, at high detail', async () => {
-    const { app, avatarId } = firstRead()
-    await withLocale('pt-BR', () => runColorsJob(app, avatarId))
+    const { app, avatarId, read } = firstRead()
+    await withLocale('pt-BR', () => runColorsJob(app, avatarId, read))
 
     const measure = ai.calls.find((call) => call.schema === 'color_measure')!
     assert.equal(measure.body.model, env.COLOR_MEASURE_MODEL)
@@ -70,8 +70,8 @@ describe('the scored read', () => {
   })
 
   it('writes the palette for the season decided, in their language, at low detail', async () => {
-    const { app, avatarId, avatar } = firstRead()
-    await withLocale('pt-BR', () => runColorsJob(app, avatarId))
+    const { app, avatarId, avatar, read } = firstRead()
+    await withLocale('pt-BR', () => runColorsJob(app, avatarId, read))
 
     const palette = ai.calls.find((call) => call.schema === 'color_palette')!
     assert.match(palette.body.instructions as string, /The season is decided: Deep Autumn\. Do not judge it again\./)
@@ -93,32 +93,46 @@ describe('the scored read', () => {
   it('measures a close call exactly once more, and averages the two', async () => {
     // Warm Autumn 2.25 against Deep Autumn 2: a margin under 1.
     ai.state.scores = { warmth: 2, depth: 1, chroma: 0, contrast: 1 }
-    const { app, avatarId, avatar } = firstRead()
-    await runColorsJob(app, avatarId)
+    const { app, avatarId, avatar, read } = firstRead()
+    await runColorsJob(app, avatarId, read)
 
     assert.deepEqual(schemas(), ['color_measure', 'color_measure', 'color_palette'])
-    const read = ((await avatar())?.colorReads as ColorReadLog[])[0]!
-    assert.equal(read.outcome, 'first')
-    assert.equal(read.season, 'Warm Autumn')
+    const entry = ((await avatar())?.colorReads as ColorReadLog[])[0]!
+    assert.equal(entry.outcome, 'first')
+    assert.equal(entry.season, 'Warm Autumn')
 
     ai.calls.length = 0
     ai.state.scores = { warmth: 2, depth: 4, chroma: -1, contrast: 2 }
     const clear = firstRead()
-    await runColorsJob(clear.app, clear.avatarId)
+    await runColorsJob(clear.app, clear.avatarId, clear.read)
     assert.deepEqual(schemas(), ['color_measure', 'color_palette'])
   })
 
-  it('reads the classic way when the model refuses the fixed settings, instead of failing', async () => {
-    ai.state.reply = (call) => (call.schema === 'color_measure' ? failure.unsupported() : classicReply('Soft Autumn'))
-    const { app, collection, avatarId, avatar } = firstRead()
-    await runColorsJob(app, avatarId)
+  for (const [name, refusal] of [
+    ['a setting', failure.unsupported],
+    ['a value (reasoning none)', failure.unsupportedValue],
+  ] as const) {
+    it(`reads the classic way when the model refuses ${name}, instead of failing`, async () => {
+      ai.state.reply = (call) => (call.schema === 'color_measure' ? refusal() : classicReply('Soft Autumn'))
+      const { app, collection, avatarId, avatar, read } = firstRead()
+      await runColorsJob(app, avatarId, read)
 
-    assert.deepEqual(schemas(), ['color_measure', 'color_analysis'])
-    const done = await avatar()
-    assert.equal(done?.status, 'ready')
-    assert.equal((done?.colorAnalysis as ColorAnalysis).season, 'Soft Autumn')
-    assert.equal((done?.colorReads as ColorReadLog[])[0]!.method, 'classic')
-    const fallback = await collection('analyticsEvents').findOne({ name: 'colors_measure_fallback' })
-    assert.deepEqual(fallback?.props, { model: env.COLOR_MEASURE_MODEL, status: 400 })
+      assert.deepEqual(schemas(), ['color_measure', 'color_analysis'])
+      const done = await avatar()
+      assert.equal(done?.status, 'ready')
+      assert.equal((done?.colorAnalysis as ColorAnalysis).season, 'Soft Autumn')
+      assert.equal((done?.colorReads as ColorReadLog[])[0]!.method, 'classic')
+      const fallback = await collection('analyticsEvents').findOne({ name: 'colors_measure_fallback' })
+      assert.deepEqual(fallback?.props, { model: env.COLOR_MEASURE_MODEL, status: 400 })
+    })
+  }
+
+  it('fails an image the AI refuses, without reading it the classic way', async () => {
+    ai.state.reply = () => failure.rejected()
+    const { app, avatarId, avatar, read } = firstRead()
+    await runColorsJob(app, avatarId, read)
+
+    assert.deepEqual(schemas(), ['color_measure'])
+    assert.equal((await avatar())?.status, 'failed')
   })
 })

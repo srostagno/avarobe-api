@@ -103,6 +103,7 @@ export const esMessages: MessageTable = {
   'There is no color read to retry.': 'No hay ninguna lectura de colores para reintentar.',
   'There is no drape test to retry.': 'No hay prueba de telas que reintentar.',
   'There is no new color read to choose.': 'No hay ninguna lectura de colores nueva para elegir.',
+  'Your color report stays on the colors it was written for.': 'Tu reporte de colores se mantiene con los colores para los que se hizo.',
   'There is no full-body photo to remove.': 'No hay foto de cuerpo completo que quitar.',
   'There is nothing to retry here.': 'Aquí no hay nada que reintentar.',
   'This confirmation link is invalid, expired or already used.': 'Este enlace de confirmación no es válido, expiró o ya se usó.',
