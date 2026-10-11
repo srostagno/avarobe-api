@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
+import { DAILY_CHECKS } from '../../constants/checks.js'
 import type { ColorCheckDocument } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toStoredWebp } from '../../utils/images.js'
@@ -27,7 +28,6 @@ import {
 // everyone's first check gets it too, so they see what it is.
 const FREE_CHECKS = 1
 const REPORT_CHECKS = 5
-export const DAILY_CHECKS = 10
 
 // The daily cap: not an offer, just "come back tomorrow".
 export class CheckLimitError extends Error {}

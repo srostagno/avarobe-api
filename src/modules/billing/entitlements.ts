@@ -119,6 +119,16 @@ export function avatarRunsResetAt(pro: Pick<ProSubscription, 'status' | 'interva
   return pro.periodEnd
 }
 
+// Annual's first payment: how many looks come right away and how many are
+// held for PRO_ANNUAL_FIRST_WEEK_DAYS (none held when the setting is at or
+// above the month's looks).
+export function annualFirstWeek() {
+  const now = Math.min(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, env.PRO_MONTHLY_CREDITS)
+  const held = env.PRO_MONTHLY_CREDITS - now
+
+  return held > 0 ? { now, held, days: env.PRO_ANNUAL_FIRST_WEEK_DAYS } : null
+}
+
 // Add-on prices: the other report at what completes the bundle.
 export const colorAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_STYLE_REPORT_CENTS)
 export const styleAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_COLOR_REPORT_CENTS)

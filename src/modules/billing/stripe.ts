@@ -12,7 +12,7 @@ import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
-import { colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
+import { annualFirstWeek, colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
 import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
@@ -962,16 +962,6 @@ function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoi
     amount: invoice.amount_paid,
     currency: invoice.currency,
   }).catch(() => undefined)
-}
-
-// Annual's first payment: how many looks come right away and how many are
-// held for PRO_ANNUAL_FIRST_WEEK_DAYS (none held when the setting is at or
-// above the month's looks).
-export function annualFirstWeek() {
-  const now = Math.min(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, env.PRO_MONTHLY_CREDITS)
-  const held = env.PRO_MONTHLY_CREDITS - now
-
-  return held > 0 ? { now, held, days: env.PRO_ANNUAL_FIRST_WEEK_DAYS } : null
 }
 
 // One Pro payment (the first one, a renewal, or the switch to annual): its

@@ -1,4 +1,4 @@
-import type { EmailCopy } from './emails.en.js'
+import type { EmailCopy, ProLimits } from './emails.en.js'
 
 // The emails in Latin American Spanish (neutral, as written in Mexico; tú,
 // never vos or vosotros), following emails.en.ts line by line. Dates come as
@@ -36,6 +36,21 @@ export const esEmails: EmailCopy = {
     lookPack: 'Paquete de looks',
     book: 'El Libro de Fórmulas de Outfits',
     magazine: 'Tu revista personal',
+  },
+
+  proIncludes: {
+    list: (limits: ProLimits) => [
+      'Los tres asesores: Color, Estilo y Cabello y Barba, mientras tengas Pro. Con el anual, son tuyos para siempre.',
+      `${limits.credits} looks al mes: cada look, prueba de outfit o de un Edit, o peinado que describas usa 1. Un evento con el Estilista de Eventos usa ${limits.eventLooks}. Los looks que no uses se quedan en tu cuenta.`,
+      `¿Me quedará bien? Revisa cualquier prenda con tus colores, hasta ${limits.checks} al día.`,
+      'Cada prenda de un look, encontrada en tiendas.',
+      'La opinión completa de tu estilista sobre cada look.',
+      `Hasta ${limits.avatarRuns} cambios de avatar al mes.`,
+      'Pruébate los Edits de cada temporada.',
+    ],
+    fairUse: (images: number) => `Uso justo: hasta ${images} imágenes nuevas al día.`,
+    firstWeek: (first: number, credits: number, days: number) =>
+      `Anual: tus primeros ${first} looks al instante y el resto de los ${credits} del mes, ${days} días después de suscribirte.`,
   },
 
   common: {
@@ -195,12 +210,6 @@ export const esEmails: EmailCopy = {
       'Una prueba de telas: tu cara junto a tus mejores y peores colores',
       'Neutros, blancos y metales, probados en ti',
       'Guías de estampados, mezclilla, maquillaje y lentes',
-    ],
-    proFeatures: (monthlyLooks: number) => [
-      `${monthlyLooks} looks cada mes, planeados para el código de vestimenta y en ti`,
-      'Pruébate cualquier outfit a partir de una foto, y todos los cortes de cabello elegidos para ti',
-      'Cada prenda de un look, encontrada en tiendas',
-      'Tus reportes de color y de estilo mientras tengas Pro',
     ],
     colorAdvisorFeatures: [
       'Tus mejores colores y tu color #1, en tu propia cara',
@@ -445,13 +454,23 @@ export const esEmails: EmailCopy = {
       occasion: 'Un día de paseo',
       notes: (color: string, hex: string) => `Arma todo el outfit alrededor de ${color} (${hex}): que sea la prenda principal.`,
     },
-    proFeatures: (looks: number) => [
-      'Un Edit nuevo cada semana, con cada look probado en ti con un solo toque',
-      `${looks} looks al mes para todo lo que tengas en tu agenda, en ti`,
-      'Pruébate cualquier outfit a partir de una foto, en tu propio avatar',
-      'Los tres asesores mientras tengas Pro: tus colores, tus formas y todos los cortes de cabello',
-    ],
     proDetail: 'Un Edit nuevo cada semana, probado en ti.',
+    proCredit: {
+      eyebrow: {
+        color: 'Tu Asesor de Color ya cuenta',
+        style: 'Tu Asesor de Estilo ya cuenta',
+        both: 'Tus asesores ya cuentan',
+      },
+      title: (today: string) => `Pro por 12 meses por ${today}`,
+      body: (today: string, full: string, credit: string, date: string) =>
+        `${today} en vez de ${full}: los ${credit} que pagaste cuentan para tu primer año. Válido hasta el ${date}.`,
+      firstYear: 'Tu primer año de Pro',
+      cta: (today: string) => `Quiero Pro por un año · ${today}`,
+      renewal: (today: string, full: string) =>
+        `${today} hoy por tu primer año; después, ${full} al año hasta que canceles. Cancela cuando quieras desde tu cuenta.`,
+      preheader: (today: string, full: string, date: string) =>
+        `${today} en vez de ${full} por tu primer año de Pro: lo que pagaste cuenta. Válido hasta el ${date}.`,
+    },
 
     style: {
       subject: 'Ya conoces tus colores. Ahora mira tus formas.',

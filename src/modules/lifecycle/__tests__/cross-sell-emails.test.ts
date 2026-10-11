@@ -208,3 +208,63 @@ describe('cross-sell emails in every language', () => {
     })
   }
 })
+
+describe('the Pro credit in cross-sells', () => {
+  const until = new Date('2026-10-24T18:00:00Z')
+  const proUrl = 'https://www.avarobe.com/continue?token=pro'
+  const MARKETS = [
+    { locale: 'en', region: 'us', currency: 'usd', price: 2500, regular: 2999, credit: 499 },
+    { locale: 'pt-BR', region: 'br', currency: 'brl', price: 8500, regular: 9990, credit: 1490 },
+    { locale: 'es', region: 'mx', currency: 'mxn', price: 42000, regular: 49900, credit: 7900 },
+  ] as const
+  const EYEBROW: Record<Locale, string> = { en: 'Your Color Advisor already counts', 'pt-BR': 'Seu Consultor de Cores já conta', es: 'Tu Asesor de Color ya cuenta' }
+  const LIST: Record<Locale, string> = {
+    en: 'Up to 20 avatar changes a month.',
+    'pt-BR': 'Até 20 mudanças no avatar por mês.',
+    es: 'Hasta 20 cambios de avatar al mes.',
+  }
+
+  for (const market of MARKETS) {
+    it(`adds a block to the Style Advisor email in ${market.locale}, at what checkout charges, with how it renews`, () => {
+      const money = (cents: number) => formatMoney(cents, market.currency, market.locale)
+      const proCredit = { price: market.price, regular: market.regular, credit: market.credit, from: 'color' as const, until, url: proUrl }
+      const mail = email('xsell_style', { locale: market.locale, region: market.region, currency: market.currency, price: 691, proCredit })
+
+      assert.ok(mail.text.includes(EYEBROW[market.locale].toUpperCase()), market.locale)
+      assert.ok(mail.text.includes(money(market.price)) && mail.text.includes(money(market.regular)) && mail.text.includes(money(market.credit)))
+      assert.ok(mail.text.includes(LIST[market.locale]), market.locale)
+      assert.ok(mail.html.includes(proUrl.replace(/&/g, '&amp;')))
+      // The regular offer is still there, and the signature still last.
+      assert.ok(mail.html.includes(checkout))
+      assert.ok(mail.text.indexOf(EYEBROW[market.locale].toUpperCase()) < mail.text.lastIndexOf('Avarobe'))
+    })
+  }
+
+  it('says it plainly in English: the price for the first year, the regular one after, how to cancel and the fair use', () => {
+    const proCredit = { price: 2500, regular: 2999, credit: 499, from: 'color' as const, until, url: proUrl }
+    const mail = email('xsell_hair', { price: 790, proCredit })
+
+    assert.ok(mail.text.includes('Pro for 12 months for $25.00'))
+    assert.ok(mail.text.includes('$25.00 instead of $29.99: the $4.99 you paid counts toward your first year. Good until Saturday, October 24.'))
+    assert.ok(mail.text.includes('$25.00 today for your first year, then $29.99 a year until you cancel. Cancel anytime in your account.'))
+    assert.ok(mail.text.includes('Annual: your first 10 looks right away, the rest of the month’s 30 7 days after you subscribe.'))
+    assert.ok(mail.text.includes('Fair use: up to 15 new pictures a day.'))
+    assert.ok(mail.html.includes('Get Pro for a year · $25.00'))
+    // Without it, none of that.
+    assert.ok(!email('xsell_hair', { price: 790 }).text.includes('Pro for 12 months'))
+  })
+
+  it('makes the Pro email an annual offer with the credit, not monthly', () => {
+    const proCredit = { price: 1809, regular: 2999, credit: 1190, from: 'both' as const, until, url: checkout }
+    const mail = email('xsell_pro', { price: 1809, regular: 2999, until, proCredit })
+
+    assert.ok(mail.text.includes('YOUR ADVISORS ALREADY COUNT'))
+    assert.ok(mail.text.includes('then $29.99 a year until you cancel'))
+    assert.ok(!mail.text.includes('$18.09 a month') && !mail.text.includes('renews monthly'))
+    assert.ok(!mail.html.includes('/mo'))
+    assert.ok(mail.html.includes('$18.09 instead of $29.99 for your first year of Pro'))
+    assert.ok(mail.html.includes('Get Pro for a year · $18.09'))
+    // Once in the email, not twice.
+    assert.equal(mail.text.split('Pro for 12 months for $18.09').length - 1, 1)
+  })
+})

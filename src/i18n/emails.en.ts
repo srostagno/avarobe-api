@@ -30,6 +30,9 @@ const PLURAL_PRODUCTS = new Set(['look_pack', 'reports_bundle', 'advisors_bundle
 // An Edit's name inside a sentence: "We tried the Fall Edit on you".
 const theEdit = (name: string) => name.replace(/^The /, 'the ')
 
+// The numbers in the official Pro list (lifecycle/templates.ts proLimits).
+export type ProLimits = { credits: number; eventLooks: number; checks: number; avatarRuns: number }
+
 export const enEmails = {
   // <html lang>.
   lang: 'en',
@@ -44,6 +47,23 @@ export const enEmails = {
     lookPack: 'Look pack',
     book: 'The Outfit Formula Book',
     magazine: 'Your Personal Magazine',
+  },
+
+  // The official list of what Pro includes: one list everywhere (the web's
+  // offers.proIncludes says the same), with the numbers the API enforces.
+  proIncludes: {
+    list: (limits: ProLimits) => [
+      'All three advisors: Color, Style and Hair & Grooming, while you’re on Pro. With annual, they’re yours to keep.',
+      `${limits.credits} looks a month: each styled look, outfit or Edit try-on, or hairstyle you describe uses 1. An event with the Event Stylist uses ${limits.eventLooks}. Unused looks stay in your account.`,
+      `Will it suit me? Check any piece against your colors, up to ${limits.checks} a day.`,
+      'Every piece of a look, found in stores.',
+      'Your stylist’s full take on each look.',
+      `Up to ${limits.avatarRuns} avatar changes a month.`,
+      'Try on the seasonal Edits.',
+    ],
+    fairUse: (images: number) => `Fair use: up to ${images} new pictures a day.`,
+    firstWeek: (first: number, credits: number, days: number) =>
+      `Annual: your first ${first} looks right away, the rest of the month’s ${credits} ${days} days after you subscribe.`,
   },
 
   common: {
@@ -210,12 +230,6 @@ export const enEmails = {
       'A drape test: your face next to your best and worst colors',
       'Neutrals, whites and metals, tested on you',
       'Guides for prints, denim, makeup and eyewear',
-    ],
-    proFeatures: (monthlyLooks: number) => [
-      `${monthlyLooks} looks every month, planned for the dress code and shown on you`,
-      'Try on any outfit from a photo, and every haircut picked for you',
-      'Every piece of a look, found in stores',
-      'Your color and style reports while you’re on Pro',
     ],
     colorAdvisorFeatures: [
       'Your best colors and your #1, on your own face',
@@ -485,13 +499,26 @@ export const enEmails = {
       notes: (color: string, hex: string) => `Build the whole outfit around ${color} (${hex}): make it the main piece.`,
     },
     // Pro, and each new Edit.
-    proFeatures: (looks: number) => [
-      'A new Edit every week, every look tried on you in one tap',
-      `${looks} looks a month for anything on your calendar, shown on you`,
-      'Try on any outfit from a photo, on your own avatar',
-      'All three advisors while you’re on Pro: your colors, your shapes and every haircut',
-    ],
     proDetail: 'A new Edit every week, tried on you.',
+    // What they paid for an advisor in the last days counts toward Pro
+    // annual (billing reportCreditFor): a block in their first two
+    // cross-sells after buying, and the Pro email's offer while it lasts.
+    proCredit: {
+      eyebrow: {
+        color: 'Your Color Advisor already counts',
+        style: 'Your Style Advisor already counts',
+        both: 'Your advisors already count',
+      },
+      title: (today: string) => `Pro for 12 months for ${today}`,
+      body: (today: string, full: string, credit: string, date: string) =>
+        `${today} instead of ${full}: the ${credit} you paid counts toward your first year. Good until ${date}.`,
+      firstYear: 'Your first year of Pro',
+      cta: (today: string) => `Get Pro for a year · ${today}`,
+      renewal: (today: string, full: string) =>
+        `${today} today for your first year, then ${full} a year until you cancel. Cancel anytime in your account.`,
+      preheader: (today: string, full: string, date: string) =>
+        `${today} instead of ${full} for your first year of Pro: what you paid counts toward it. Good until ${date}.`,
+    },
 
     style: {
       subject: 'You know your colors. Now see your shapes.',

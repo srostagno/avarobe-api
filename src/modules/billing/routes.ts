@@ -13,8 +13,17 @@ import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
 import { claimGuestFromSession } from './guest-checkout.js'
-import { DAILY_CHECKS } from '../check/service.js'
-import { EVENT_LOOKS, PRO_LIVE_STATUSES, adminUserIds, billingState, isAdmin, loadBillingUser, reportCreditFor } from './entitlements.js'
+import { DAILY_CHECKS } from '../../constants/checks.js'
+import {
+  EVENT_LOOKS,
+  PRO_LIVE_STATUSES,
+  adminUserIds,
+  annualFirstWeek,
+  billingState,
+  isAdmin,
+  loadBillingUser,
+  reportCreditFor,
+} from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
 import {
@@ -22,7 +31,6 @@ import {
   PRODUCTS,
   SwitchDeclinedError,
   addMonths,
-  annualFirstWeek,
   createCheckout,
   grantSession,
   handleInvoicePaid,

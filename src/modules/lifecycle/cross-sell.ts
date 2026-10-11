@@ -26,6 +26,11 @@ export const CROSS_SELL_RULES = {
   editGap: 10 * DAY,
   // Sent in her daytime (utils/timezones.ts), not at night.
   sendHours: { from: 9, to: 20 },
+  // The Pro credit (what an advisor cost counts toward Pro annual) rides in
+  // this many cross-sells after the purchase, never one more email; none
+  // offers a price ending within a day.
+  proCreditEmails: 2,
+  proCreditMinLeft: 24 * HOUR,
 } as const
 
 export type CrossSellKind = Extract<LifecycleEmailKind, `xsell_${string}`>
@@ -47,6 +52,10 @@ export type CrossSellState = {
   // The Edits they can try on; `costume` for costume collections (Halloween).
   edits: { id: string; droppedAt: Date; costume?: boolean }[]
   editEmails: string[]
+  // Their report credit toward Pro annual (billing reportCreditFor): since
+  // the purchase it counts from, until it ends. Null without one (or for
+  // the all-three bundle's buyers, PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE).
+  proCredit?: { since: Date; until: Date } | null
 }
 
 // In order; the first one they want and haven't been sent goes next, `gap`
@@ -87,6 +96,22 @@ export function addonEnding(state: CrossSellState, at: number): 'style' | 'color
   }
 
   return null
+}
+
+// Whether this cross-sell carries the Pro credit too: one of the first two
+// since the purchase it counts from (no extra email), while the credit has a
+// day left, never to Pro. The Pro email offers annual with it instead, and
+// the pair-price reminder and new-Edit emails stay on their own subject.
+export function proCreditDue(state: Pick<CrossSellState, 'proCredit' | 'owns' | 'sent'>, kind: CrossSellKind, at: number) {
+  const credit = state.proCredit
+
+  if (!credit || state.owns.pro || kind === 'xsell_pro' || kind === 'xsell_edit' || kind === 'xsell_addon_last_call') {
+    return false
+  }
+
+  const since = crossSellsSent(state.sent).filter((date) => date.getTime() >= credit.since.getTime()).length
+
+  return since < CROSS_SELL_RULES.proCreditEmails && credit.until.getTime() - at >= CROSS_SELL_RULES.proCreditMinLeft
 }
 
 const newestFirst = (edits: CrossSellState['edits'], at: number) =>

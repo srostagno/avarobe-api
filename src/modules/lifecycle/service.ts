@@ -23,6 +23,7 @@ import {
   editDue,
   latestEdit,
   pickCrossSell,
+  proCreditDue,
   type CrossSellKind,
   type CrossSellState,
 } from './cross-sell.js'
@@ -325,11 +326,53 @@ type Offer = {
   side: 'style' | 'color' | null
 }
 
+// What an advisor they just bought makes Pro annual cost (billing
+// reportCreditFor): in their prices, as checkout charges it, while it has a
+// day left. `since`: the purchase it counts from.
+export type ProCreditOffer = {
+  price: number
+  regular: number
+  credit: number
+  currency: string
+  from: 'color' | 'style' | 'both'
+  since: Date
+  until: Date
+}
+
+export function proCreditOffer(user: UserDocument, now: Date): ProCreditOffer | null {
+  const billing = billingState(user, now.getTime())
+  const credit = billing.reportCredit
+
+  if (!credit || billing.comp || credit.until.getTime() - now.getTime() < CROSS_SELL_RULES.proCreditMinLeft) {
+    return null
+  }
+
+  const regular = regionalAmount('pro_annual', regionForCountry(user.location?.country))
+  const dates = credit.from.map((side) => (side === 'color' ? user.colorReportAt : user.styleReportAt)).filter((date): date is Date => Boolean(date))
+
+  return {
+    price: Math.max(0, regular - credit.amount),
+    regular,
+    credit: credit.amount,
+    currency: credit.currency,
+    from: credit.from.length > 1 ? 'both' : (credit.from[0] ?? 'color'),
+    since: new Date(Math.min(...dates.map((date) => date.getTime()))),
+    until: credit.until,
+  }
+}
+
 // What a cross-sell sells and for how much: the other report at the pair
 // price while it lasts (the same check checkout makes), the rest at theirs,
 // in the prices and currency of where they pay (billing/pricing.ts, as
-// checkout prices it).
-export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Date, side: 'style' | 'color' | null = null): Offer {
+// checkout prices it). Pro: annual with their report credit while it lasts
+// (`credit`), monthly otherwise.
+export function crossSellOffer(
+  kind: CrossSellKind,
+  user: UserDocument,
+  now: Date,
+  side: 'style' | 'color' | null = null,
+  credit: ProCreditOffer | null = proCreditOffer(user, now),
+): Offer {
   const billing = billingState(user, now.getTime())
   const region = regionForCountry(user.location?.country)
   const currency = REGION_CURRENCY[region]
@@ -369,6 +412,9 @@ export function crossSellOffer(kind: CrossSellKind, user: UserDocument, now: Dat
     case 'xsell_guide':
       return once('outfit_guide')
     case 'xsell_pro':
+      return credit
+        ? { product: 'pro_annual', price: credit.price, regular: credit.regular, currency: credit.currency, until: credit.until, side: null }
+        : once('pro_monthly')
     case 'xsell_edit':
       return once('pro_monthly')
   }
@@ -399,7 +445,15 @@ function crossSellPage(kind: CrossSellKind, product: PurchaseProduct, locale?: L
 // picture once it's ready, with what's in it, and the extra links.
 export type CrossSellPersonal = Pick<CrossSellContent, 'heroUrl' | 'gift' | 'cut' | 'edit' | 'occasionUrls'>
 
-export type CrossSellLink = { url: string; side: 'style' | 'color' | null } & CrossSellPersonal
+// `credit`: the report credit the send priced with (null: none, or left
+// out for the bundle's buyers); `proCreditUrl`: the Pro credit block's
+// checkout, when this email carries it (proCreditDue).
+export type CrossSellLink = {
+  url: string
+  side: 'style' | 'color' | null
+  credit?: ProCreditOffer | null
+  proCreditUrl?: string | null
+} & CrossSellPersonal
 
 export function crossSellContentFor(
   kind: CrossSellKind,
@@ -408,9 +462,14 @@ export function crossSellContentFor(
   link?: CrossSellLink,
   now = new Date(),
 ): CrossSellContent {
-  const offer = crossSellOffer(kind, user, now, link?.side ?? null)
+  const credit = link && 'credit' in link ? (link.credit ?? null) : proCreditOffer(user, now)
+  const offer = crossSellOffer(kind, user, now, link?.side ?? null, credit)
   const billing = billingState(user, now.getTime())
   const analysis = avatar?.status === 'ready' ? avatar.colorAnalysis : null
+  const url = link?.url ?? crossSellPage(kind, offer.product, user.locale, link?.edit?.id ?? null)
+  // The Pro email sells annual with the credit; the others carry it as a
+  // block with its own checkout.
+  const proCreditUrl = kind === 'xsell_pro' && offer.product === 'pro_annual' ? url : (link?.proCreditUrl ?? null)
 
   return {
     kind,
@@ -420,7 +479,7 @@ export function crossSellContentFor(
     until: offer.until,
     side: offer.side,
     owns: { color: billing.colorReport, style: billing.styleReport },
-    url: link?.url ?? crossSellPage(kind, offer.product, user.locale, link?.edit?.id ?? null),
+    url,
     season: analysis?.season ?? null,
     // They paid for their colors, so the email can show them.
     colors: billing.colorReport ? (analysis?.bestColors ?? []).slice(0, 4) : [],
@@ -430,6 +489,10 @@ export function crossSellContentFor(
     cut: link?.cut ?? null,
     edit: link?.edit ?? null,
     occasionUrls: link?.occasionUrls ?? [],
+    proCredit:
+      credit && proCreditUrl
+        ? { price: credit.price, regular: credit.regular, credit: credit.credit, from: credit.from, until: credit.until, url: proCreditUrl }
+        : null,
   }
 }
 
@@ -1150,14 +1213,22 @@ function tryableEdits(avatar: Pick<AvatarDocument, 'body' | 'presentation'> | nu
 // made first, whatever the hour (lifecycle/assets.ts); the email goes out in
 // their daytime once the picture is ready, failed or late. Promotional, so
 // never to anyone who opted out or before the postal address is set.
-export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
+// `only`: just these buyers (scripts/pro-credit-e2e.ts, so a check against
+// the development database leaves everyone else's emails alone).
+export async function sendCrossSells(app: FastifyInstance, now = new Date(), only?: ObjectId[]) {
   if (!env.EMAIL_POSTAL_ADDRESS) {
     return 0
   }
 
   const buyers = await app.collections.purchases
     .aggregate<{ _id: ObjectId; lastAt: Date }>([
-      { $match: { createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.editHorizon) }, refundedAt: null } },
+      {
+        $match: {
+          createdAt: { $gte: new Date(now.getTime() - CROSS_SELL_RULES.editHorizon) },
+          refundedAt: null,
+          ...(only ? { userId: { $in: only } } : {}),
+        },
+      },
       { $group: { _id: '$userId', lastAt: { $max: '$createdAt' } } },
     ])
     .toArray()
@@ -1172,12 +1243,18 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
     }
 
     const billing = billingState(user, now.getTime())
-    const [products, magazine, guide, avatar] = await Promise.all([
+    const [products, magazine, guide, avatar, bundle] = await Promise.all([
       app.collections.purchases.distinct('product', { userId: user._id }),
       app.collections.magazines.findOne({ userId: user._id }, { projection: { _id: 1 } }),
       app.collections.guideOrders.findOne({ $or: [{ userId: user._id }, { email: user.email.toLowerCase() }] }, { projection: { _id: 1 } }),
       app.collections.avatars.findOne({ userId: user._id }),
+      env.PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE
+        ? app.collections.purchases.findOne({ userId: user._id, product: 'advisors_bundle', refundedAt: null }, { projection: { _id: 1 } })
+        : null,
     ])
+    // Their report credit toward Pro annual, unless they bought the three
+    // advisors together (PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE).
+    const credit = bundle ? null : proCreditOffer(user, now)
     const state: CrossSellState = {
       lastPurchaseAt: buyer.lastAt,
       owns: {
@@ -1196,6 +1273,7 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
       promotionsAllowed: true,
       edits: tryableEdits(avatar),
       editEmails: user.editEmails ?? [],
+      proCredit: credit ? { since: credit.since, until: credit.until } : null,
     }
     const kind = pickCrossSell(state, now)
 
@@ -1229,7 +1307,7 @@ export async function sendCrossSells(app: FastifyInstance, now = new Date()) {
 
     const side = kind === 'xsell_addon_last_call' ? addonEnding(state, at) : null
 
-    if (await sendCrossSell(app, user, kind, { side, editId, avatar, asset }, now)) {
+    if (await sendCrossSell(app, user, kind, { side, editId, avatar, asset, credit, withProCredit: proCreditDue(state, kind, at) }, now)) {
       sent += 1
     }
   }
@@ -1244,6 +1322,10 @@ type CrossSellContext = {
   avatar: AvatarDocument | null
   // Its picture (users.xsellAssets), when pictures are on.
   asset: EmailAsset | undefined
+  // Their report credit toward Pro annual, and whether this email carries
+  // it as a block (proCreditDue).
+  credit: ProCreditOffer | null
+  withProCredit: boolean
 }
 
 type Personal = {
@@ -1367,30 +1449,33 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
   const sendId = new ObjectId()
 
   try {
-    const offer = crossSellOffer(kind, user, now, context.side)
+    const offer = crossSellOffer(kind, user, now, context.side, context.credit)
     // Signed in from the email, in their own browser (where Apple Pay
     // works): straight to that checkout, to the gift look, or to the Event
-    // Stylist with the event they picked. The book needs no account.
+    // Stylist with the event they picked. The book needs no account. The
+    // Pro credit block opens Pro annual's checkout, its own placement.
     let url = crossSellPage(kind, offer.product, user.locale, edit)
     let gift: CrossSellPersonal['gift'] = null
     let occasionUrls: string[] = []
+    const proNext = context.withProCredit ? [studioPath('/studio', { buy: 'pro_annual', from: `email_${kind}_pro` })] : []
+    let proCreditUrl: string | null = null
 
     if (kind === 'xsell_event') {
-      occasionUrls = await signInLinks(
-        app,
-        user,
-        kind,
-        emailCopy(user.locale).crossSell.event.occasions.map((item) => studioPath('/studio/events', { occasion: item.occasion })),
-      )
+      const occasions = emailCopy(user.locale).crossSell.event.occasions.map((item) => studioPath('/studio/events', { occasion: item.occasion }))
+      const links = await signInLinks(app, user, kind, [...occasions, ...proNext])
+      occasionUrls = links.slice(0, occasions.length)
+      proCreditUrl = proNext.length ? (links[occasions.length] ?? null) : null
     } else if (offer.product !== 'outfit_guide') {
       const target = crossSellTarget(kind, offer.product, edit)
       const giftLook = personal.giftLook
-      const [checkout, look] = await signInLinks(app, user, kind, [
-        studioPath(target.path, target.params),
-        ...(giftLook ? [`/studio/looks/${giftLook.id}`] : []),
-      ])
+      const nexts = [studioPath(target.path, target.params), ...(giftLook ? [`/studio/looks/${giftLook.id}`] : [])]
+      const links = await signInLinks(app, user, kind, [...nexts, ...proNext])
+      const [checkout, look] = links
       url = checkout!
       gift = giftLook && look ? { url: look, color: giftLook.color } : null
+      proCreditUrl = proNext.length ? (links[nexts.length] ?? null) : null
+    } else if (proNext.length) {
+      proCreditUrl = (await signInLinks(app, user, kind, proNext))[0] ?? null
     }
 
     const content = lifecycleContentFor(
@@ -1402,7 +1487,17 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
       undefined,
       undefined,
       undefined,
-      { url, side: context.side, heroUrl: personal.heroUrl, gift, cut: personal.cut, edit: personal.edit, occasionUrls },
+      {
+        url,
+        side: context.side,
+        heroUrl: personal.heroUrl,
+        gift,
+        cut: personal.cut,
+        edit: personal.edit,
+        occasionUrls,
+        credit: context.credit,
+        proCreditUrl,
+      },
       now,
     )
 
@@ -1422,7 +1517,7 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
       content: trackContent(content, sendId),
     })
     app.log.info(
-      { userId: user._id.toString(), kind, product: offer.product, photo: Boolean(personal.heroUrl), edit, delivered },
+      { userId: user._id.toString(), kind, product: offer.product, photo: Boolean(personal.heroUrl), edit, proCredit: Boolean(proCreditUrl), delivered },
       'Cross-sell email',
     )
     return delivered

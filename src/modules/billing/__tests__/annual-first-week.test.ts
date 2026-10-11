@@ -7,7 +7,8 @@ import type Stripe from 'stripe'
 import { fakeApp } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
 import type { ProSubscription } from '../../../types/mongo.js'
-import { annualFirstWeek, handleInvoicePaid, refillAnnualCredits } from '../stripe.js'
+import { annualFirstWeek } from '../entitlements.js'
+import { handleInvoicePaid, refillAnnualCredits } from '../stripe.js'
 
 const DAY = 24 * 60 * 60 * 1000
 

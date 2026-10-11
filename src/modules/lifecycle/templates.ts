@@ -1,8 +1,11 @@
 import { env } from '../../config/env.js'
+import { DAILY_CHECKS } from '../../constants/checks.js'
 import { emailCopy, formatMoney, inPersonPrice, longDate, weekdayName, type EmailCopy } from '../../i18n/emails.js'
+import type { ProLimits } from '../../i18n/emails.en.js'
 import type { ColorSwatch, LifecycleEmailKind, PurchaseProduct } from '../../types/mongo.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
 import { seasonName } from '../../utils/seasons.js'
+import { EVENT_LOOKS, annualFirstWeek } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, type PricingRegion } from '../billing/pricing.js'
 import type { CrossSellKind } from './cross-sell.js'
 
@@ -124,6 +127,38 @@ function paragraph(text: string): Block {
     html: `<p style="margin:0 0 18px 0;font-family:${SANS};font-size:16px;line-height:26px;color:${COLOR.inkSoft};">${esc(text)}</p>`,
     text,
   }
+}
+
+// A section's own heading inside an email (the Pro credit block).
+function subheading(text: string): Block {
+  return {
+    html: `<h2 style="margin:0 0 14px 0;font-family:${SERIF};font-size:26px;line-height:32px;font-weight:normal;color:${COLOR.ink};">${esc(text)}</h2>`,
+    text,
+  }
+}
+
+function divider(): Block {
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 26px 0;"><tr><td style="border-top:1px solid ${COLOR.line};font-size:0;line-height:0;">&nbsp;</td></tr></table>`,
+    text: '---',
+  }
+}
+
+// The numbers in the official Pro list, as the API enforces them.
+const proLimits = (): ProLimits => ({
+  credits: env.PRO_MONTHLY_CREDITS,
+  eventLooks: EVENT_LOOKS,
+  checks: DAILY_CHECKS,
+  avatarRuns: env.PRO_AVATAR_RUNS_PER_MONTH,
+})
+
+// Under the Pro list: the day's fair use, and annual's first week.
+function proFinePrint(c: EmailCopy, annual: boolean) {
+  const week = annual ? annualFirstWeek() : null
+
+  return [week ? c.proIncludes.firstWeek(week.now, env.PRO_MONTHLY_CREDITS, week.days) : null, c.proIncludes.fairUse(env.AI_DAILY_IMAGE_LIMIT)]
+    .filter((line): line is string => Boolean(line))
+    .join(' ')
 }
 
 function small(text: string): Block {
@@ -632,7 +667,8 @@ export function upgradeOfferEmail(
         heading(c.common.styleEveryOccasion),
         greeting(c, input.firstName),
         paragraph(c.offer.proIntro),
-        checklist(c.offer.proFeatures(env.PRO_MONTHLY_CREDITS)),
+        checklist(c.proIncludes.list(proLimits())),
+        small(proFinePrint(c, false)),
         priceBox(c.common.perMonth(monthly), c.offer.proLooks(env.PRO_MONTHLY_CREDITS), c.offer.cancelAnytime),
         button(c.offer.getPro, x.link('/studio', 'upgrade_offer', { upgrade: 'plan' })),
         small(c.common.orPayOnce),
@@ -1155,6 +1191,18 @@ export type CrossSellContent = {
   // xsell_event: a link per occasion (crossSell.event.occasions), signing
   // them in to the Event Stylist with it filled in.
   occasionUrls?: string[]
+  // What they paid for an advisor counts toward Pro annual: today's price
+  // for the first year, the regular annual price, the credit, which advisor
+  // it's from, until when, and its checkout. A block in the first two
+  // cross-sells after buying; the whole offer in the Pro email.
+  proCredit?: {
+    price: number
+    regular: number
+    credit: number
+    from: 'color' | 'style' | 'both'
+    until: Date
+    url: string
+  } | null
 }
 
 // The pair price ends during this day in the US (Pacific: the earliest
@@ -1203,10 +1251,40 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
   // Pro, for the Pro and new-Edit emails: what it gives, monthly, then its
   // checkout over the Edits.
   const proBlocks = () => [
-    checklist(xs.proFeatures(env.PRO_MONTHLY_CREDITS)),
+    checklist(c.proIncludes.list(proLimits())),
     priceBox(c.common.perMonth(price), xs.proDetail, c.common.renewalNote),
     button(xs.pro.button(price), input.url),
     small(c.common.buyNote),
+    small(proFinePrint(c, false)),
+  ]
+  // Pro annual with their report credit: what it includes, today's price for
+  // the first year and the regular one after it, stated plainly.
+  const credit = input.proCredit ?? null
+  const annualBlocks = (pc: NonNullable<CrossSellContent['proCredit']>) => {
+    const today = money(pc.price)
+    const full = money(pc.regular)
+
+    return [
+      checklist(c.proIncludes.list(proLimits())),
+      priceBox(today, xs.proCredit.firstYear, xs.proCredit.renewal(today, full)),
+      button(xs.proCredit.cta(today), pc.url),
+      small(c.common.buyNote),
+      small(proFinePrint(c, true)),
+    ]
+  }
+  // The credit as its own block before the signature, in any cross-sell
+  // that carries it but the Pro email (where it's the offer).
+  const sign = () => [
+    ...(credit && input.kind !== 'xsell_pro'
+      ? [
+          divider(),
+          eyebrow(xs.proCredit.eyebrow[credit.from]),
+          subheading(xs.proCredit.title(money(credit.price))),
+          paragraph(xs.proCredit.body(money(credit.price), money(credit.regular), money(credit.credit), endDay(credit.until))),
+          ...annualBlocks(credit),
+        ]
+      : []),
+    signature(c),
   ]
 
   switch (input.kind) {
@@ -1236,7 +1314,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
             { label: xs.style.mirror, url: x.link('/studio/mirror', input.kind) },
             { label: xs.style.check, url: x.link('/studio/check', input.kind) },
           ]),
-          signature(c),
+          ...sign(),
         ],
       })
     }
@@ -1259,7 +1337,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
             : priceBox(c.common.priceOnce(price), c.common.inPerson(inPersonPrice(x.locale)), c.common.onceNote),
           button(xs.getMy(c.names.colorAdvisor, price), input.url),
           small(c.common.buyNote),
-          signature(c),
+          ...sign(),
         ],
       })
 
@@ -1283,7 +1361,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           checklist(style ? xs.styleFeatures : c.offer.colorAdvisorFeatures.slice(0, 4)),
           button(xs.getMy(name, price), input.url),
           small(c.common.buyNote),
-          signature(c),
+          ...sign(),
         ],
       })
     }
@@ -1308,7 +1386,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           priceBox(c.common.priceOnce(price), xs.hair.detail, c.common.onceNote),
           button(xs.getMy(c.names.hairAdvisor, price), input.url),
           small(c.common.buyNote),
-          signature(c),
+          ...sign(),
         ],
       })
     }
@@ -1320,15 +1398,24 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
       return layout({
         ...base,
         subject: tried ? xs.pro.subjectPhoto(tried) : xs.pro.subject,
-        preheader: xs.pro.preheader(price, env.PRO_MONTHLY_CREDITS),
+        preheader: credit
+          ? xs.proCredit.preheader(money(credit.price), money(credit.regular), endDay(credit.until))
+          : xs.pro.preheader(price, env.PRO_MONTHLY_CREDITS),
         hero: tried ? hero(xs.pro.alt(tried)) : HERO.occasions(c),
         blocks: [
           eyebrow(xs.pro.eyebrow),
           heading(tried ? xs.pro.headingPhoto(tried) : xs.pro.heading),
           greeting(c, input.firstName),
           paragraph(tried ? xs.pro.introPhoto(tried) : xs.pro.intro(edit)),
-          ...proBlocks(),
-          signature(c),
+          ...(credit
+            ? [
+                eyebrow(xs.proCredit.eyebrow[credit.from]),
+                subheading(xs.proCredit.title(money(credit.price))),
+                paragraph(xs.proCredit.body(money(credit.price), money(credit.regular), money(credit.credit), endDay(credit.until))),
+                ...annualBlocks(credit),
+              ]
+            : proBlocks()),
+          ...sign(),
         ],
       })
     }
@@ -1353,7 +1440,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           paragraph(edit.tagline),
           paragraph(photo ? xs.edit.introPhoto : xs.edit.intro),
           ...proBlocks(),
-          signature(c),
+          ...sign(),
         ],
       })
     }
@@ -1375,7 +1462,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           priceBox(c.common.priceOnce(price), xs.magazine.detail, c.common.onceNote),
           button(xs.magazine.button(price), input.url),
           small(c.common.buyNote),
-          signature(c),
+          ...sign(),
         ],
       })
 
@@ -1402,7 +1489,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           priceBox(c.common.perEvent(price), xs.event.detail, c.common.oneTime),
           video('event', 17, '/advisors/event'),
           checklist(xs.eventFeatures),
-          signature(c),
+          ...sign(),
         ],
       })
     }
@@ -1426,7 +1513,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           priceBox(price, xs.guide.detail, xs.guide.delivery),
           button(xs.guide.button(price), input.url),
           ...(xs.guide.language ? [small(xs.guide.language)] : []),
-          signature(c),
+          ...sign(),
         ],
       })
     }

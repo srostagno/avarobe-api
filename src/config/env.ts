@@ -155,6 +155,10 @@ const envSchema = z.object({
   // PRO_MONTHLY_CREDITS turns the hold off.
   PRO_ANNUAL_FIRST_WEEK_CREDITS: z.coerce.number().int().min(0).default(10),
   PRO_ANNUAL_FIRST_WEEK_DAYS: z.coerce.number().int().min(1).max(31).default(7),
+  // The Pro credit in the cross-sell emails leaves out buyers of the three
+  // advisors together (their bundle costs more than the credit can count):
+  // 'on' by default, 'off' offers it to them too.
+  PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE: z.enum(['on', 'off']).optional(),
   // The first-time offer: Pro for a few days at a small price, then monthly.
   // One trial per account, with fewer looks than a paid month.
   PRICE_PRO_TRIAL_CENTS: z.coerce.number().int().min(50).default(100),
@@ -250,6 +254,7 @@ export const env = {
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   PRO_AVATAR_GRANDFATHER: (raw.PRO_AVATAR_GRANDFATHER ?? 'on') === 'on',
+  PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE: (raw.PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE ?? 'on') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
   AI_FAULT: raw.NODE_ENV === 'production' ? undefined : raw.AI_FAULT,
   XSELL_PERSONAL_IMAGES: ['on', 'true'].includes(raw.XSELL_PERSONAL_IMAGES ?? 'on'),

@@ -127,7 +127,13 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     // with their own picture (-photo) and with the stock one.
     ...crossSellPreviews(recipient, region),
     // Purchase deliveries.
-    guide: outfitGuideEmail({ email: recipient.email, firstName: 'Nora', downloadUrl: 'https://api.avarobe.com/api/v1/guide/download/preview', locale }),
+    guide: outfitGuideEmail({
+      email: recipient.email,
+      firstName: 'Nora',
+      downloadUrl: 'https://api.avarobe.com/api/v1/guide/download/preview',
+      refundUrl: 'https://www.avarobe.com/guide/thanks?refund=preview',
+      locale,
+    }),
     magazine: magazineReadyEmail({ email: recipient.email, firstName: 'Nora', url: 'https://www.avarobe.com/studio/magazine/preview', locale }),
     // Account emails (utils/email.ts).
     'auth-verify': verificationEmail({ firstName: 'Nora', url: link, forPasskey: false, locale }),
@@ -183,6 +189,17 @@ function crossSellPreviews(
   const gift = { url: `${url}&look=1`, color: colors[1]!.name }
   const occasionUrls = [1, 2, 3].map((index) => `${url}&occasion=${index}`)
   const pro = { ...owner, price: price('pro_monthly'), regular: null, until: null, edit }
+  // A Color Advisor bought yesterday counts toward Pro annual (billing
+  // reportCreditFor), at the market's prices: the block in the first two
+  // cross-sells, and the Pro email's annual offer.
+  const proCredit = {
+    price: price('pro_annual') - price('color_report'),
+    regular: price('pro_annual'),
+    credit: price('color_report'),
+    from: 'color' as const,
+    until: new Date(now.getTime() + 13 * 24 * 60 * 60 * 1000),
+    url: `${url}&buy=pro_annual`,
+  }
 
   return {
     'xsell-style-pair-price': crossSellEmail({ ...owner, kind: 'xsell_style', price: price('style_addon'), regular: price('style_report'), until }),
@@ -232,6 +249,26 @@ function crossSellPreviews(
       until: null,
       heroUrl: SAMPLE.cut,
       cut: 'Long layers with curtain bangs',
+    }),
+    'xsell-style-pro-credit': crossSellEmail({
+      ...owner,
+      kind: 'xsell_style',
+      price: price('style_addon'),
+      regular: price('style_report'),
+      until,
+      heroUrl: SAMPLE.look,
+      gift,
+      proCredit,
+    }),
+    'xsell-hair-pro-credit': crossSellEmail({ ...owner, kind: 'xsell_hair', price: price('hair_advisor'), regular: null, until: null, proCredit }),
+    'xsell-pro-annual-credit': crossSellEmail({
+      ...pro,
+      kind: 'xsell_pro',
+      price: proCredit.price,
+      regular: proCredit.regular,
+      until: proCredit.until,
+      heroUrl: SAMPLE.edit,
+      proCredit: { ...proCredit, url },
     }),
     'xsell-pro': crossSellEmail({ ...pro, kind: 'xsell_pro' }),
     'xsell-pro-photo': crossSellEmail({ ...pro, kind: 'xsell_pro', heroUrl: SAMPLE.edit }),

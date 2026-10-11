@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { CROSS_SELL_RULES, addonEnding, editDue, latestEdit, pickCrossSell, type CrossSellState } from '../cross-sell.js'
+import { CROSS_SELL_RULES, addonEnding, editDue, latestEdit, pickCrossSell, proCreditDue, type CrossSellState } from '../cross-sell.js'
 import { LIFECYCLE_RULES } from '../schedule.js'
 
 const HOUR = 60 * 60 * 1000
@@ -160,3 +160,41 @@ describe('new-Edit emails', () => {
     assert.equal(on(170, { ...done, xsell_edit: 9 }, { edits }), null)
   })
 })
+
+describe('the Pro credit in cross-sells', () => {
+  // A Color Advisor bought a day ago: its credit lasts 13 more days.
+  const credit = { since: ago(DAY), until: inFuture(13 * DAY) }
+  const due = (sent: Partial<Record<keyof CrossSellState['sent'], number>>, overrides: Partial<CrossSellState> = {}, kind: Parameters<typeof proCreditDue>[1] = 'xsell_style') =>
+    proCreditDue(
+      state({ proCredit: credit, sent: Object.fromEntries(Object.entries(sent).map(([key, days]) => [key, ago(days * HOUR * 24)])), ...overrides }),
+      kind,
+      now.getTime(),
+    )
+
+  it('rides in the first two cross-sells after the purchase, never a third', () => {
+    assert.equal(due({}), true)
+    assert.equal(due({ xsell_style: 0.5 }, {}, 'xsell_hair'), true)
+    assert.equal(due({ xsell_style: 0.9, xsell_hair: 0.5 }, {}, 'xsell_event'), false)
+    // Cross-sells from before this purchase don't count.
+    assert.equal(due({ xsell_style: 30, xsell_hair: 25 }, {}, 'xsell_event'), true)
+  })
+
+  it('leaves the Pro email (which sells annual with it), the reminder and new Edits alone', () => {
+    for (const kind of ['xsell_pro', 'xsell_edit', 'xsell_addon_last_call'] as const) {
+      assert.equal(due({}, {}, kind), false, kind)
+    }
+  })
+
+  it('stops on Pro, without a credit, and with less than a day of it left', () => {
+    assert.equal(due({}, { owns: { ...NOTHING, color: true, pro: true } }), false)
+    assert.equal(due({}, { proCredit: null }), false)
+    assert.equal(due({}, { proCredit: { since: ago(DAY), until: inFuture(CROSS_SELL_RULES.proCreditMinLeft - HOUR) } }), false)
+    assert.equal(due({}, { proCredit: { since: ago(DAY), until: inFuture(CROSS_SELL_RULES.proCreditMinLeft + HOUR) } }), true)
+  })
+
+  it('never adds an email: the steps and their gaps stay as they were', () => {
+    assert.equal(pickCrossSell(state({ proCredit: credit, lastPurchaseAt: ago(19 * HOUR) }), now), null)
+    assert.equal(pickCrossSell(state({ proCredit: credit, lastPurchaseAt: ago(20 * HOUR) }), now), 'xsell_style')
+  })
+})
+
