@@ -16,6 +16,7 @@ import { shortProductName } from '../src/modules/lifecycle/checkout-link.js'
 import { EDITS } from '../src/modules/looks/edits.js'
 import {
   avatarNudgeEmail,
+  colorsReadyEmail,
   crossSellEmail,
   looksNudgeEmail,
   magazineReadyEmail,
@@ -100,6 +101,10 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     'trial-started': trialStartedEmail({ ...recipient, trialEnd: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }),
     'trial-ending': trialEndingEmail({ ...recipient, trialEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), looksLeft: 4 }),
     'checkout-rescue': checkoutRescueEmail({ ...recipient, product: 'color_report', url: link }),
+    // Their read failed because the AI was busy (or out of credits), done
+    // later: a sign-in link to their colors (avatar/retry.ts). Also the
+    // email for the people the 11-Oct-2026 outage left without theirs.
+    'colors-ready': colorsReadyEmail({ ...recipient, season: 'Warm Autumn', url: link }),
     // Tapped Buy inside Instagram on an iPhone (lifecycle/checkout-link.ts).
     'checkout-link': checkoutLinkEmail({
       ...recipient,

@@ -343,6 +343,17 @@ export const ptBrEmails: EmailCopy = {
     expiry: 'O link já entra na sua conta. Funciona uma vez e expira em 3 dias.',
   },
 
+  colorsReady: {
+    subject: 'Suas cores estão prontas',
+    preheader: 'Desculpe a demora. Sua estação já está no seu estúdio.',
+    eyebrow: 'Suas cores',
+    heading: (season: string | null) => (season ? `Sua estação: ${season}.` : 'Suas cores estão prontas.'),
+    intro:
+      'Desculpe a demora. Quando você mandou sua selfie, nosso leitor de cores estava ocupado demais para lê-la. Agora está pronto: sua estação, seu subtom e seu contraste, e a cor que deve ficar longe do seu rosto estão esperando no seu estúdio.',
+    button: 'Ver minhas cores',
+    expiry: 'O link já entra na sua conta. Funciona uma vez e expira em 3 dias.',
+  },
+
   trialStarted: {
     subject: (days: number) => `Seus ${days} dias de Avarobe Pro começam agora`,
     preheader: (end: string, monthly: string) => `Tudo do Pro até ${end}. Depois, ${monthly} por mês, ou cancele quando quiser antes disso.`,

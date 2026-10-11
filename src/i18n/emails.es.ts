@@ -342,6 +342,17 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
   },
 
+  colorsReady: {
+    subject: 'Tus colores están listos',
+    preheader: 'Perdona la espera. Tu estación ya está en tu estudio.',
+    eyebrow: 'Tus colores',
+    heading: (season: string | null) => (season ? `Tu estación: ${season}.` : 'Tus colores están listos.'),
+    intro:
+      'Perdona la espera. Cuando enviaste tu selfie, nuestro lector de color estaba demasiado ocupado para leerla. Ya está: tu estación, tu subtono y tu contraste, y el color que debes alejar de tu cara te esperan en tu estudio.',
+    button: 'Ver mis colores',
+    expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
+  },
+
   trialStarted: {
     subject: (days: number) => `Tus ${days} días de Avarobe Pro empiezan ahora`,
     preheader: (end: string, monthly: string) => `Todo lo de Pro hasta el ${end}. Después, ${monthly} al mes, o cancela cuando quieras antes.`,

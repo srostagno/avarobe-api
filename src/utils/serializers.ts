@@ -6,6 +6,7 @@ import type {
   UserDocument,
 } from '../types/mongo.js'
 import { env } from '../config/env.js'
+import { publicReason } from '../modules/avatar/failures.js'
 import { currentHair } from '../modules/avatar/hair.js'
 import { serializeBilling } from '../modules/billing/entitlements.js'
 import { fixIsFree } from '../modules/looks/fixes.js'
@@ -103,6 +104,16 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
     id: avatar._id.toString(),
     status: avatar.status,
     error: avatar.error,
+    // Why a read failed, for the web's own words (busy, photo, error), and
+    // whether they asked to be emailed when it's done. Always present, so
+    // the web can tell this API from older ones.
+    failure:
+      avatar.status === 'failed'
+        ? {
+            reason: publicReason(avatar.failure?.code),
+            notifyRequested: Boolean(avatar.colorsNotify && !avatar.colorsNotify.sentAt && !avatar.colorsNotify.gaveUpAt),
+          }
+        : null,
     body: avatar.body,
     // How they shop: the body's, or asked before it (colors first).
     presentation: avatar.body?.presentation ?? avatar.presentation ?? null,

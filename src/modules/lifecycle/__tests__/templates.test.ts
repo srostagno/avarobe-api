@@ -11,6 +11,7 @@ import {
   avatarNudgeEmail,
   checkoutLinkEmail,
   checkoutRescueEmail,
+  colorsReadyEmail,
   crossSellEmail,
   looksNudgeEmail,
   priceDropEmail,
@@ -38,6 +39,34 @@ describe('lifecycle templates', () => {
     assert.ok(es.text.includes('Tus colores te están esperando.'))
     for (const email of [en, pt, es]) {
       assert.ok(email.html.includes(url))
+    }
+  })
+
+  it('sends colors read after a busy moment, in their language, with their season and no best colors', () => {
+    const url = 'https://www.avarobe.com/continue?token=x'
+    const en = colorsReadyEmail({ ...recipient, season: 'Soft Autumn', url })
+    const es = colorsReadyEmail({ ...recipient, locale: 'es', season: 'Soft Autumn', url })
+    const pt = colorsReadyEmail({ ...recipient, locale: 'pt-BR', season: 'Soft Autumn', url })
+    assert.equal(en.subject, 'Your colors are ready')
+    assert.ok(en.text.includes('Your season: Soft Autumn.'))
+    assert.ok(en.text.includes('our color reader was too busy'))
+    assert.equal(es.subject, 'Tus colores están listos')
+    assert.ok(es.text.includes('Tu estación: Otoño Suave.'))
+    assert.ok(es.html.includes('Ver mis colores'))
+    assert.equal(pt.subject, 'Suas cores estão prontas')
+    assert.ok(pt.text.includes('Sua estação: Outono Suave.'))
+    assert.ok(pt.html.includes('Ver minhas cores'))
+    assert.ok(colorsReadyEmail({ ...recipient, locale: 'es', season: null, url }).text.includes('Tus colores están listos.'))
+    for (const email of [es, pt]) {
+      for (const english of ['Your ', 'Sorry', 'See my colors', 'Soft Autumn', 'season', 'undertone', 'signs you in', 'Hi ']) {
+        assert.ok(!email.text.includes(english), `"${english}" in ${email.subject}`)
+      }
+    }
+    for (const email of [en, es, pt]) {
+      assert.ok(email.html.includes(url))
+      // No palette: nothing named or shown before they pay.
+      assert.ok(!/#[0-9a-f]{6}/i.test(email.text))
+      assert.ok(!email.text.includes('Olive'))
     }
   })
 

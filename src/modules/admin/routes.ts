@@ -79,6 +79,7 @@ const whySchema = z.object({ days: z.coerce.number().int().min(1).max(90).defaul
 
 const EMAIL_ORDER: LifecycleEmailKind[] = [
   'welcome',
+  'colors_ready',
   'avatar_nudge',
   'looks_nudge',
   'upgrade_offer',

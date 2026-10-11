@@ -36,6 +36,7 @@ import { appUrl, requestLocale } from '../../utils/locale.js'
 import { hashToken } from '../../utils/tokens.js'
 import { signupLocation } from '../analytics/geo.js'
 import { acquisitionSchema, optionalUserId, toAcquisition, trackServerEvent } from '../analytics/service.js'
+import { requestColorsNotice } from '../avatar/service.js'
 import { attributionMetadata, reportRegistration } from '../billing/conversions.js'
 import { recordRegisteredClick } from '../events/service.js'
 import { emailImageUrl } from '../lifecycle/service.js'
@@ -93,6 +94,9 @@ const guestSchema = z.object({ acquisition: signupTracking.acquisition })
 const claimSchema = z.object({
   email: emailField,
   firstName: firstNameField,
+  // Saved from a read the AI couldn't do yet: email them their colors when
+  // it's done (avatar/retry.ts), instead of the "saved" email now.
+  notify: z.literal('colors').optional(),
   ...signupTracking,
 })
 const tokenSchema = z.object({ token: tokenField })
@@ -277,17 +281,23 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const { user } = result
+      // Without colors the "saved" email would say nothing true; theirs
+      // comes with their colors. If the read worked meanwhile, it's the
+      // usual one.
+      const waiting = parsed.data.notify === 'colors' && (await requestColorsNotice(app, user._id, 'guest'))
 
-      try {
-        await sendSaved(request.log, user)
-      } catch (error) {
-        request.log.error({ err: error, email: user.email }, 'Failed to send the saved email')
+      if (!waiting) {
+        try {
+          await sendSaved(request.log, user)
+        } catch (error) {
+          request.log.error({ err: error, email: user.email }, 'Failed to send the saved email')
+        }
       }
 
       await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
       reportSignup(request, parsed.data, 'guest', user._id)
 
-      return reply.send({ user: serializeUser(user) })
+      return reply.send({ user: serializeUser(user), ...(waiting ? { notify: 'colors' } : {}) })
     },
   )
 

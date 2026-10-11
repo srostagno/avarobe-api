@@ -32,7 +32,14 @@ export async function failStaleJobs(app: FastifyInstance) {
   // An interrupted color read (colors first, before the avatar).
   const colorReads = await app.collections.avatars.updateMany(
     { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: cutoff } },
-    { $set: { ...failureFor('colors'), job: null, updatedAt: now } },
+    {
+      $set: {
+        ...failureFor('colors'),
+        job: null,
+        failure: { code: 'internal', at: now, attempts: 1, detail: 'interrupted' },
+        updatedAt: now,
+      },
+    },
   )
   const [refinements, avatars, looks, , pieces] = await Promise.all([
     // An interrupted refinement or haircut leaves the previous avatar usable.

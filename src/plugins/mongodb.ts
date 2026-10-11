@@ -20,6 +20,7 @@ import type {
   StyleEventDocument,
   MagazineDocument,
   GuideOrderDocument,
+  OpsAlertDocument,
   SurveyAnswerDocument,
   TasteDocument,
   UsageCounterDocument,
@@ -47,6 +48,7 @@ export type MongoCollections = {
   styleEvents: Collection<StyleEventDocument>
   magazines: Collection<MagazineDocument>
   guideOrders: Collection<GuideOrderDocument>
+  opsAlerts: Collection<OpsAlertDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -75,6 +77,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     styleEvents: mongoDb.collection<StyleEventDocument>('style_events'),
     magazines: mongoDb.collection<MagazineDocument>('magazines'),
     guideOrders: mongoDb.collection<GuideOrderDocument>('guide_orders'),
+    opsAlerts: mongoDb.collection<OpsAlertDocument>('ops_alerts'),
   }
 }
 
@@ -92,6 +95,11 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.avatars.createIndex({ userId: 1 }, { unique: true }),
     collections.avatars.createIndex({ status: 1, updatedAt: 1 }),
     collections.avatars.createIndex({ createdAt: -1 }),
+    // Color reads waiting to be tried again for a "tell me when ready".
+    collections.avatars.createIndex(
+      { 'colorsNotify.requestedAt': 1 },
+      { partialFilterExpression: { 'colorsNotify.requestedAt': { $exists: true } } },
+    ),
     collections.looks.createIndex({ userId: 1, createdAt: -1 }),
     collections.styleEvents.createIndex({ userId: 1, createdAt: -1 }),
     collections.magazines.createIndex({ userId: 1, createdAt: -1 }),

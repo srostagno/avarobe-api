@@ -12,22 +12,162 @@ type ResponsesPayload = {
     content?: Array<{ type?: string; text?: string; refusal?: string }>
   }>
   incomplete_details?: { reason?: string }
-  error?: { message?: string }
+  error?: OpenAiErrorBody
 }
 
 type ImagesPayload = {
   data?: Array<{ b64_json?: string }>
   usage?: Record<string, unknown>
-  error?: { message?: string }
+  error?: OpenAiErrorBody
 }
+
+// OpenAI's error body: `code` and `type` tell an empty credit balance
+// (429 credit_balance_exhausted / insufficient_quota) from a plain rate limit.
+type OpenAiErrorBody = { message?: string; code?: string | null; type?: string | null }
 
 export class OpenAiRequestError extends Error {
   readonly statusCode: number
+  readonly code: string | null
+  readonly type: string | null
+  // How long OpenAI asked us to wait (retry-after-ms / retry-after).
+  readonly retryAfterMs: number | null
 
-  constructor(message: string, statusCode: number) {
+  constructor(
+    message: string,
+    statusCode: number,
+    details: { code?: string | null; type?: string | null; retryAfterMs?: number | null } = {},
+  ) {
     super(message)
     this.name = 'OpenAiRequestError'
     this.statusCode = statusCode
+    this.code = details.code ?? null
+    this.type = details.type ?? null
+    this.retryAfterMs = details.retryAfterMs ?? null
+  }
+}
+
+// What went wrong with an AI call, for what to do about it: no credits or a
+// bad key need a person (an alert, no retries); a rate limit or OpenAI being
+// down passes (retry with backoff); a rejected request won't change by
+// retrying (a refusal, an image it can't read); anything else is ours.
+export type AiFailure = 'no_credits' | 'account' | 'rate_limited' | 'provider' | 'rejected' | 'internal'
+
+const NO_CREDIT_CODES = new Set(['credit_balance_exhausted', 'insufficient_quota', 'billing_hard_limit_reached'])
+
+export function classifyAiError(error: unknown): AiFailure {
+  if (error instanceof OpenAiRequestError) {
+    const status = error.statusCode
+
+    if (status === 429) {
+      return (error.code && NO_CREDIT_CODES.has(error.code)) || error.type === 'insufficient_quota' ? 'no_credits' : 'rate_limited'
+    }
+
+    if (status === 401 || status === 403 || status === 404) {
+      return 'account'
+    }
+
+    // Includes our own 502 (network), 504 (timeout) and 503 (no key).
+    if (status === 408 || status === 409 || status >= 500) {
+      return 'provider'
+    }
+
+    return status === 400 || status === 422 ? 'rejected' : 'internal'
+  }
+
+  // A reply that wasn't the JSON it promised.
+  return error instanceof SyntaxError ? 'provider' : 'internal'
+}
+
+// For anything stored, logged in alerts or emailed: OpenAI's 401 message
+// carries part of the key.
+export function redactAiMessage(message: string) {
+  const clean = message.replace(/sk-[A-Za-z0-9_\-*.]+/g, 'sk-…')
+
+  return clean.length > 300 ? `${clean.slice(0, 299)}…` : clean
+}
+
+// One listener (modules/ops/alerts.ts) hears every failed call, so an empty
+// credit balance reaches the founder from any feature. It can never break
+// or slow the call.
+let errorListener: ((error: OpenAiRequestError) => void) | null = null
+
+export function onOpenAiError(listener: (error: OpenAiRequestError) => void) {
+  errorListener = listener
+}
+
+function reported(error: OpenAiRequestError) {
+  try {
+    const result = errorListener?.(error) as unknown
+
+    if (result instanceof Promise) {
+      result.catch(() => undefined)
+    }
+  } catch {
+    // The listener's problem, not the caller's.
+  }
+
+  return error
+}
+
+function retryAfterOf(headers: Headers): number | null {
+  const ms = headers.get('retry-after-ms')
+
+  if (ms && Number.isFinite(Number(ms)) && Number(ms) >= 0) {
+    return Number(ms)
+  }
+
+  const raw = headers.get('retry-after')
+
+  if (!raw) {
+    return null
+  }
+
+  if (Number.isFinite(Number(raw))) {
+    return Math.max(0, Number(raw) * 1000)
+  }
+
+  const at = Date.parse(raw)
+
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now())
+}
+
+function responseError(response: Response, body: OpenAiErrorBody | undefined) {
+  return new OpenAiRequestError(body?.message ?? `OpenAI responded with HTTP ${response.status}.`, response.status, {
+    code: body?.code,
+    type: body?.type,
+    retryAfterMs: retryAfterOf(response.headers),
+  })
+}
+
+// Development only (AI_FAULT): every call fails the way OpenAI does, before
+// reaching it, to see the busy state, the retries and the alerts. Ignored in
+// production (config/env.ts, and again here).
+function simulatedFault(): OpenAiRequestError | null {
+  const fault = env.NODE_ENV === 'production' ? undefined : env.AI_FAULT
+
+  switch (fault) {
+    case 'no_credits':
+      // The exact error of 11-Oct-2026.
+      return new OpenAiRequestError('You exceeded your current quota, please check your plan and billing details.', 429, {
+        code: 'credit_balance_exhausted',
+        type: 'insufficient_quota',
+      })
+    case 'rate_limit':
+      return new OpenAiRequestError('Rate limit reached for requests. Please try again in a moment.', 429, {
+        code: 'rate_limit_exceeded',
+        type: 'requests',
+      })
+    case 'server':
+      return new OpenAiRequestError('The server had an error while processing your request.', 500, { type: 'server_error' })
+    case 'timeout':
+      return new OpenAiRequestError('OpenAI request timed out.', 504)
+    case 'rejected':
+      return new OpenAiRequestError('The image data you provided does not represent a valid image.', 400, {
+        code: 'invalid_image',
+        type: 'invalid_request_error',
+      })
+    default:
+      return null
   }
 }
 
@@ -39,18 +179,25 @@ function requireKey() {
   return env.OPENAI_API_KEY
 }
 
-async function postOpenAi<T extends { error?: { message?: string } }>(
+async function postOpenAi<T extends { error?: OpenAiErrorBody }>(
   path: string,
   body: BodyInit,
   options: { json: boolean; timeoutMs: number },
 ): Promise<T> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs)
+  const fault = simulatedFault()
+
+  if (fault) {
+    throw reported(fault)
+  }
+
   const headers: Record<string, string> = { Authorization: `Bearer ${requireKey()}` }
 
   if (options.json) {
     headers['Content-Type'] = 'application/json'
   }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs)
 
   try {
     const response = await fetch(`${OPENAI_BASE_URL}${path}`, {
@@ -62,23 +209,19 @@ async function postOpenAi<T extends { error?: { message?: string } }>(
     const payload = (await response.json().catch(() => ({}))) as T
 
     if (!response.ok) {
-      throw new OpenAiRequestError(
-        payload.error?.message ?? `OpenAI responded with HTTP ${response.status}.`,
-        response.status,
-      )
+      throw responseError(response, payload.error)
     }
 
     return payload
   } catch (error) {
     if (error instanceof OpenAiRequestError) {
-      throw error
+      throw reported(error)
     }
 
     const aborted = error instanceof Error && error.name === 'AbortError'
 
-    throw new OpenAiRequestError(
-      aborted ? 'OpenAI request timed out.' : 'OpenAI request failed.',
-      aborted ? 504 : 502,
+    throw reported(
+      new OpenAiRequestError(aborted ? 'OpenAI request timed out.' : 'OpenAI request failed.', aborted ? 504 : 502),
     )
   } finally {
     clearTimeout(timeout)
@@ -255,7 +398,7 @@ type ImageStreamEvent = {
   type?: string
   b64_json?: string
   partial_image_index?: number
-  error?: { message?: string }
+  error?: OpenAiErrorBody
 }
 
 // Reads the server-sent events of a streamed image edit: partial images
@@ -265,6 +408,12 @@ async function streamImageEdit(
   onPartial: (png: Buffer, index: number) => Promise<void> | void,
   timeoutMs: number,
 ): Promise<Buffer> {
+  const fault = simulatedFault()
+
+  if (fault) {
+    throw reported(fault)
+  }
+
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -278,10 +427,7 @@ async function streamImageEdit(
 
     if (!response.ok || !response.body) {
       const payload = (await response.json().catch(() => ({}))) as ImagesPayload
-      throw new OpenAiRequestError(
-        payload.error?.message ?? `OpenAI responded with HTTP ${response.status}.`,
-        response.status,
-      )
+      throw responseError(response, payload.error)
     }
 
     const reader = response.body.getReader()
@@ -302,8 +448,14 @@ async function streamImageEdit(
 
       const event = JSON.parse(data) as ImageStreamEvent
 
+      // A 502 unless the event names what failed (a 429 with its code).
       if (event.type === 'error' || event.error) {
-        throw new OpenAiRequestError(event.error?.message ?? 'OpenAI image stream failed.', 502)
+        const code = event.error?.code ?? null
+        const status = code && (NO_CREDIT_CODES.has(code) || code === 'rate_limit_exceeded') ? 429 : 502
+        throw new OpenAiRequestError(event.error?.message ?? 'OpenAI image stream failed.', status, {
+          code,
+          type: event.error?.type,
+        })
       }
 
       if (!event.b64_json) {
@@ -348,14 +500,13 @@ async function streamImageEdit(
     return finalImage
   } catch (error) {
     if (error instanceof OpenAiRequestError) {
-      throw error
+      throw reported(error)
     }
 
     const aborted = error instanceof Error && error.name === 'AbortError'
 
-    throw new OpenAiRequestError(
-      aborted ? 'OpenAI request timed out.' : 'OpenAI request failed.',
-      aborted ? 504 : 502,
+    throw reported(
+      new OpenAiRequestError(aborted ? 'OpenAI request timed out.' : 'OpenAI request failed.', aborted ? 504 : 502),
     )
   } finally {
     clearTimeout(timeout)

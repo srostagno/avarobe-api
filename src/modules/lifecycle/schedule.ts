@@ -54,6 +54,9 @@ export type LifecycleState = {
   paid: boolean
   // The offers are promotional: they need a postal address in the footer.
   promotionsAllowed: boolean
+  // Waiting for their colors by email, after a read the AI couldn't do
+  // (avatar/retry.ts): nothing else until that email goes or is given up.
+  colorsPending: boolean
 }
 
 function between(elapsed: number, after: number, window: number) {
@@ -113,7 +116,7 @@ function offerSequence(state: LifecycleState, at: number, anchor: Date, after: n
 export function pickLifecycleEmail(state: LifecycleState, now: Date): LifecycleEmailKind | null {
   const at = now.getTime()
 
-  if (tooSoonAfter(state.lastSentAt, at)) {
+  if (state.colorsPending || tooSoonAfter(state.lastSentAt, at)) {
     return null
   }
 

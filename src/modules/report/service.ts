@@ -16,8 +16,9 @@ import type {
 } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { lockBestPanels, lockBestSide, toStoredWebp } from '../../utils/images.js'
-import { createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
+import { classifyAiError, createStructuredResponse, generateImageFromReferences, toDataUrl } from '../../utils/openai.js'
 import { storage } from '../../utils/storage.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { hairReference } from '../avatar/hair.js'
 import {
   COLOR_REPORT_INSTRUCTIONS,
@@ -263,6 +264,8 @@ async function runDrapePreview(app: FastifyInstance, avatarId: ObjectId) {
   } catch (error) {
     app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Drape preview failed')
     await mark({ 'drapePreview.status': 'failed' })
+    // Out of credits also reaches the founder, through utils/openai.ts.
+    void trackServerEvent(app, { name: 'drape_failed', userId: avatar.userId, props: { reason: classifyAiError(error) } })
   }
 }
 

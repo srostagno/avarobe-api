@@ -1,6 +1,7 @@
 import type { Binary, ObjectId } from 'mongodb'
 
 import type { Locale } from '../utils/locale.js'
+import type { AiFailure } from '../utils/openai.js'
 
 export type UserDocument = {
   _id: ObjectId
@@ -191,6 +192,9 @@ export type LifecycleEmailKind =
   | 'xsell_edit'
   // Bought the Color Advisor and never opened the report: once, an hour on.
   | 'report_unopened'
+  // A color read that failed for the AI provider, done later (they asked to
+  // be told): a sign-in link to their colors.
+  | 'colors_ready'
 
 export type ProSubscription = {
   subscriptionId: string
@@ -407,6 +411,24 @@ export type AvatarJob = {
   hairstyleId?: string | null
 }
 
+// Why the last color read failed (utils/openai.ts classifyAiError), after
+// how many tries. `detail` is OpenAI's message, redacted: internal only, the
+// person sees a reason (busy, photo, error) in their own language.
+export type ColorsFailure = { code: AiFailure; at: Date; attempts: number; detail: string | null }
+
+// "Tell me when my colors are ready", after a read failed because the AI was
+// busy or out of credits (modules/avatar/retry.ts reads it again and emails
+// a sign-in link). Pending while sentAt and gaveUpAt are null, for a day.
+// `attempts` counts the reads that cost something.
+export type ColorsNotify = {
+  requestedAt: Date
+  attempts: number
+  lastTriedAt: Date | null
+  sentAt: Date | null
+  gaveUpAt: Date | null
+  via: 'guest' | 'account' | 'script'
+}
+
 export type AvatarAdjustment =
   | 'more_like_me'
   | 'head_smaller'
@@ -422,6 +444,9 @@ export type AvatarDocument = {
   userId: ObjectId
   status: GenerationStatus
   error: string | null
+  // The last color read's failure (colors first), cleared when one starts.
+  failure?: ColorsFailure | null
+  colorsNotify?: ColorsNotify | null
   selfieKey: string
   // Optional full-body photo; the strongest signal for real proportions.
   bodyPhotoKey?: string | null
@@ -990,4 +1015,14 @@ export type ColorCheckDocument = {
   } | null
   createdAt: Date
   updatedAt: Date
+}
+
+// Operations alerts to the founder (modules/ops/alerts.ts), one document per
+// kind: when it last went out (at most one an hour, across restarts), and
+// since when the trouble is open (null once reads work again).
+export type OpsAlertDocument = {
+  _id: 'openai_account' | 'reads_failing'
+  lastSentAt: Date
+  openSince: Date | null
+  lastError: string | null
 }

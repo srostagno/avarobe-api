@@ -69,7 +69,7 @@ export async function deliverLinkEmail(input: {
   content: EmailContent
 }): Promise<DeliveryResult> {
   if (!shouldDeliver(input.to.email)) {
-    input.log.info({ email: input.to.email, link: input.link }, 'Dev email link (not sent)')
+    input.log.info({ email: input.to.email, subject: input.content.subject, link: input.link }, 'Dev email link (not sent)')
     return { sent: false, devLink: input.link }
   }
 

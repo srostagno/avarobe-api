@@ -159,6 +159,15 @@ const envSchema = z.object({
   FREE_HAIR_RUNS: z.coerce.number().int().min(0).default(1),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
+  // Who gets the operations alerts (OpenAI out of credits, color reads
+  // failing), comma-separated. COMP_EMAILS when empty, testers included.
+  ALERT_EMAILS: z.string().default(''),
+  // Development only: every OpenAI call fails this way (utils/openai.ts),
+  // to try the busy state, the retries and the alerts. Ignored in production.
+  AI_FAULT: z.enum(['no_credits', 'rate_limit', 'server', 'timeout', 'rejected']).optional(),
+  // How often failed color reads with a "tell me when ready" request are
+  // tried again (modules/avatar/retry.ts).
+  COLOR_RETRY_EVERY_MS: z.coerce.number().int().min(10_000).default(300_000),
   // Server-side purchase events (see billing/conversions.ts). The ids are
   // public; each side turns on when its secret is set.
   GA_MEASUREMENT_ID: z.string().default('G-61GY4E48S6'),
@@ -212,6 +221,7 @@ export const env = {
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),
+  AI_FAULT: raw.NODE_ENV === 'production' ? undefined : raw.AI_FAULT,
   XSELL_PERSONAL_IMAGES: ['on', 'true'].includes(raw.XSELL_PERSONAL_IMAGES ?? 'on'),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
     .map((email) => email.trim().toLowerCase())

@@ -19,6 +19,7 @@ function state(overrides: Partial<LifecycleState> = {}): LifecycleState {
     outOfFreeLooks: false,
     paid: false,
     promotionsAllowed: true,
+    colorsPending: false,
     ...overrides,
   }
 }
@@ -150,6 +151,16 @@ describe('pickLifecycleEmail', () => {
     const rescued = lastLifecycleEmailAt({ lifecycleEmails: { checkout_rescue: ago(HOUR) } })
     assert.equal(pickLifecycleEmail(state({ ...colorsFirst, lastSentAt: rescued }), now), null)
     assert.equal(pickLifecycleEmail(state({ ...colorsFirst, lastSentAt: null }), now), 'upgrade_offer')
+  })
+
+  it('sends nothing while they wait for their colors by email', () => {
+    // A guest who left her email when the read failed: no welcome 10 minutes on.
+    const waiting = state({ createdAt: ago(20 * 60 * 1000), colorsPending: true })
+    assert.equal(pickLifecycleEmail(waiting, now), null)
+    assert.equal(pickLifecycleEmail({ ...waiting, colorsPending: false }, now), 'welcome')
+    // Nor the colors offer, should the colors come in before the email goes.
+    const read = state({ createdAt: ago(3 * HOUR), colorsAt: ago(2 * HOUR), colorsPending: true })
+    assert.equal(pickLifecycleEmail(read, now), null)
   })
 })
 

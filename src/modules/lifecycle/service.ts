@@ -4,11 +4,12 @@ import { ObjectId } from 'mongodb'
 import { env } from '../../config/env.js'
 import { emailCopy } from '../../i18n/emails.js'
 import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, PurchaseProduct, UserDocument } from '../../types/mongo.js'
-import { deliverEmail } from '../../utils/email.js'
+import { deliverEmail, deliverLinkEmail } from '../../utils/email.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
 import { withLocale } from '../../utils/request-locale.js'
 import { localHour } from '../../utils/timezones.js'
 import { hmacSign, hmacVerify } from '../../utils/tokens.js'
+import { trackServerEvent } from '../analytics/service.js'
 import { presentationOf } from '../avatar/body.js'
 import { storedAdIds } from '../billing/conversions.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
@@ -30,6 +31,7 @@ import {
   appLink,
   avatarNudgeEmail,
   checkoutRescueEmail,
+  colorsReadyEmail,
   reportUnopenedEmail,
   crossSellEmail,
   looksNudgeEmail,
@@ -187,7 +189,7 @@ export async function recordUnsubscribe(app: FastifyInstance, sendId: string, us
 // ---------------------------------------------------------------- sending
 
 type AvatarFacts = Pick<AvatarDocument, 'userId' | 'status' | 'readyAt' | 'colorAnalysis'> &
-  Partial<Pick<AvatarDocument, 'avatarKey' | 'colorsAt' | 'updatedAt' | 'drapePreview'>>
+  Partial<Pick<AvatarDocument, 'avatarKey' | 'colorsAt' | 'updatedAt' | 'drapePreview' | 'colorsNotify'>>
 type LookFacts = { count: number; lastAt: Date | null }
 
 // Exported for scripts/lifecycle-dry-run.ts.
@@ -216,6 +218,7 @@ export function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, lo
     outOfFreeLooks: billing.credits <= 0 && !billing.proActive,
     paid: billing.paid || billing.comp,
     promotionsAllowed: Boolean(env.EMAIL_POSTAL_ADDRESS),
+    colorsPending: Boolean(avatar?.colorsNotify && !avatar.colorsNotify.sentAt && !avatar.colorsNotify.gaveUpAt),
   }
 }
 
@@ -288,6 +291,8 @@ export function lifecycleContentFor(
       throw new Error('checkout_link emails are built by sendCheckoutLink')
     case 'report_unopened':
       return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
+    case 'colors_ready':
+      return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
     case 'price_drop':
       return priceDropEmail({
         ...recipient,
@@ -829,6 +834,86 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
   } catch (error) {
     app.log.error({ err: error, userId: user._id.toString() }, 'Unopened report email failed; will retry')
     await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+    return false
+  }
+}
+
+// ---------------------------------------------------------------- colors ready
+
+// Their color read failed because the AI was busy or out of credits, they
+// left their email, and it's done now (avatar/retry.ts): a sign-in link to
+// their colors. They asked for it, so it goes out even to people who turned
+// off tips. Marked on the avatar before sending, and on the account like
+// any lifecycle email so the colors offer waits its gap; all of it rolled
+// back if sending fails, for the next run to try again.
+export async function sendColorsReady(
+  app: FastifyInstance,
+  user: UserDocument,
+  avatar: Pick<AvatarDocument, '_id' | 'colorAnalysis' | 'colorsNotify'>,
+  now = new Date(),
+) {
+  const field = 'lifecycleEmails.colors_ready'
+  const claimed = await app.collections.avatars.updateOne(
+    { _id: avatar._id, 'colorsNotify.requestedAt': { $exists: true }, 'colorsNotify.sentAt': null },
+    { $set: { 'colorsNotify.sentAt': now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    await app.collections.users.updateOne({ _id: user._id }, { $set: { [field]: now, lifecycleEmailLastAt: now } })
+
+    const locale = user.locale ?? 'en'
+    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio', ads: storedAdIds(user) })
+    const content = colorsReadyEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      season: avatar.colorAnalysis?.season ?? null,
+      url,
+    })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'colors_ready',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivery = await deliverLinkEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      link: url,
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), sent: delivery.sent }, 'Colors ready email')
+    void trackServerEvent(app, {
+      name: 'colors_notify_sent',
+      userId: user._id,
+      props: avatar.colorsNotify ? { via: avatar.colorsNotify.via } : {},
+    })
+    return true
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Colors ready email failed; will retry')
+    await Promise.all([
+      app.collections.avatars.updateOne({ _id: avatar._id, 'colorsNotify.sentAt': now }, { $set: { 'colorsNotify.sentAt': null } }),
       app.collections.emailSends.deleteOne({ _id: sendId }),
       app.collections.users.updateOne(
         { _id: user._id },
@@ -1392,6 +1477,7 @@ export async function sendDueLifecycleEmails(app: FastifyInstance, now = new Dat
               updatedAt: 1,
               'drapePreview.status': 1,
               'drapePreview.lockedKey': 1,
+              colorsNotify: 1,
             },
           },
         )

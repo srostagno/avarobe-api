@@ -985,6 +985,31 @@ export function reportUnopenedEmail(input: Recipient & { season: string | null; 
   })
 }
 
+// Their color read failed because the AI was busy (or out of credits), they
+// asked to be told, and it's done now: a link that signs them in on their
+// colors. They asked for it, so it goes out even to people who turned off
+// tips. Their season only: no best colors before they pay.
+export function colorsReadyEmail(input: Recipient & { season: string | null; url: string }): EmailContent {
+  const { c, locale } = reader(input)
+  const season = input.season ? seasonName(input.season, locale) : null
+
+  return layout({
+    subject: c.colorsReady.subject,
+    preheader: c.colorsReady.preheader,
+    hero: HERO.drape(c),
+    recipient: input,
+    blocks: [
+      eyebrow(c.colorsReady.eyebrow),
+      heading(c.colorsReady.heading(season)),
+      greeting(c, input.firstName),
+      paragraph(c.colorsReady.intro),
+      button(c.colorsReady.button, input.url),
+      small(c.colorsReady.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // ---------------------------------------------------------------- trial
 // Pro trial notices. Transactional (billing terms), so they go out even to
 // people who turned off tips, and carry no postal address.

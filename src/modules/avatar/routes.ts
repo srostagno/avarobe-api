@@ -19,7 +19,7 @@ import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boa
 import { ensureLockedPreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
-import { startAvatarJob, startColorsJob } from './service.js'
+import { colorsReadReset, newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
@@ -54,10 +54,6 @@ function roundBody(body: AvatarBody): AvatarBody {
     heightCm: Math.round(body.heightCm),
     weightKg: Math.round(body.weightKg),
   }
-}
-
-function newJob(kind: AvatarJob['kind']): AvatarJob {
-  return { kind, startedAt: new Date(), previewKey: null, previewCount: 0 }
 }
 
 // What a busy avatar is doing, for the 409 while it's at it.
@@ -190,6 +186,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           $set: {
             status: 'processing',
             error: null,
+            failure: null,
             body: roundBody(parsedBody.data),
             job: newJob('create'),
             updatedAt: now,
@@ -333,17 +330,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         { userId },
         {
           $set: {
-            status: 'processing',
-            error: null,
-            job: newJob('colors'),
-            updatedAt: now,
-            colorAnalysis: null,
-            colorsAt: null,
-            colorReport: null,
-            drape: null,
-            drapePreview: null,
-            reportBoards: null,
-            hairProfile: null,
+            ...colorsReadReset(now),
             ...(selfieKey ? { selfieKey, consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
           $setOnInsert: {
@@ -384,6 +371,27 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       void trackServerEvent(app, { name: 'colors_started', userId, props: { retry: !selfieKey } })
 
       return reply.code(202).send({ avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) })
+    },
+  )
+
+  // "Tell me when my colors are ready", from an account (guests ask while
+  // saving their email, POST /auth/claim): after a read the AI couldn't do,
+  // it's read again later and they get a sign-in link to their colors.
+  app.post(
+    '/colors/notify',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      // A guest has no address yet: theirs comes with saving (claim).
+      const user = await app.collections.users.findOne({ _id: userId }, { projection: { guest: 1 } })
+
+      if (!user || user.guest || !(await requestColorsNotice(app, userId, 'account'))) {
+        return reply.code(409).send({ code: 'not_waiting', message: 'There is no color read to retry.' })
+      }
+
+      const avatar = await app.collections.avatars.findOne({ userId })
+
+      return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
     },
   )
 
@@ -437,6 +445,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           $set: {
             status: 'processing',
             error: null,
+            failure: null,
             job: newJob('create'),
             updatedAt: new Date(),
             ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),

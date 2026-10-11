@@ -374,6 +374,19 @@ export const enEmails = {
     expiry: 'The link signs you in. It works once and expires in 3 days.',
   },
 
+  // Their color read failed because the AI was busy, and it's done now (they
+  // left their email for it). The season only: no best colors before paying.
+  colorsReady: {
+    subject: 'Your colors are ready',
+    preheader: 'Sorry for the wait. Your season is in your studio.',
+    eyebrow: 'Your colors',
+    heading: (season: string | null) => (season ? `Your season: ${season}.` : 'Your colors are ready.'),
+    intro:
+      'Sorry for the wait. When you sent your selfie, our color reader was too busy to read it. It’s done now: your season, your undertone and contrast, and the color to keep away from your face are waiting in your studio.',
+    button: 'See my colors',
+    expiry: 'The link signs you in. It works once and expires in 3 days.',
+  },
+
   trialStarted: {
     subject: (days: number) => `Your ${days} days of Avarobe Pro start now`,
     preheader: (end: string, monthly: string) => `Everything in Pro until ${end}. Then ${monthly} a month, or cancel anytime before.`,

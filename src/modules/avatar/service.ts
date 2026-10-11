@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
@@ -5,25 +7,33 @@ import type {
   AvatarAdjustment,
   AvatarDocument,
   AvatarHair,
+  AvatarJob,
   AvatarVersion,
   ColorAnalysis,
+  ColorsNotify,
 } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { toPreviewWebp, toStoredWebp } from '../../utils/images.js'
 import {
+  type AiFailure,
+  classifyAiError,
   createStructuredResponse,
   generateImageFromReferences,
   type ImageInput,
+  OpenAiRequestError,
+  redactAiMessage,
   toDataUrl,
 } from '../../utils/openai.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { noteReadFailed, noteReadSucceeded } from '../ops/alerts.js'
 import { startDrapePreview } from '../report/service.js'
 import { buildApplyHairPrompt } from '../hair/prompts.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
 import { bodyOf } from './body.js'
+import { PROVIDER_CODES, retryDelay } from './failures.js'
 import { currentHair, orphanHairKeys } from './hair.js'
 import {
   COHERENCE_RULES,
@@ -58,6 +68,30 @@ export function failureFor(kind: AvatarJobOptions['kind'] | 'colors') {
   }
 
   return kind === 'refine' ? { status: 'ready' as const, error: REFINE_FAILED } : { status: 'failed' as const, error: CREATE_FAILED }
+}
+
+export function newJob(kind: AvatarJob['kind'], now = new Date()): AvatarJob {
+  return { kind, startedAt: now, previewKey: null, previewCount: 0 }
+}
+
+// A color read starting over: everything read from, or drawn with, the
+// selfie goes, and so does the last failure. POST /avatar/colors and the
+// retries for "tell me when ready" (retry.ts).
+export function colorsReadReset(now: Date) {
+  return {
+    status: 'processing' as const,
+    error: null,
+    failure: null,
+    job: newJob('colors', now),
+    updatedAt: now,
+    colorAnalysis: null,
+    colorsAt: null,
+    colorReport: null,
+    drape: null,
+    drapePreview: null,
+    reportBoards: null,
+    hairProfile: null,
+  }
 }
 
 function requestColorAnalysis(selfie: Buffer) {
@@ -295,7 +329,10 @@ export async function runAvatarJob(
 // someone who came for their colors sees them in seconds. The avatar comes
 // later from the same selfie, without reading it again. Starts the free
 // best-vs-worst preview (drawn from the selfie) once the colors are in.
-export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId) {
+// When the AI is busy or down it tries again by itself, briefly
+// (failures.ts); out of credits it fails at once (and the founder hears of
+// it, ops/alerts.ts). `via: 'notify'`: the retry for a "tell me when ready".
+export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, via?: 'notify') {
   const avatar = await app.collections.avatars.findOne({ _id: avatarId })
 
   if (!avatar) {
@@ -303,45 +340,126 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId) {
   }
 
   const selfieKey = avatar.selfieKey
-  let analysis: ColorAnalysis
+  const startedAt = Date.now()
+  let selfie: Buffer
 
   try {
-    analysis = await analyzeColors(await storage.read(selfieKey))
+    selfie = await storage.read(selfieKey)
   } catch (error) {
-    app.log.error({ avatarId: avatarId.toString(), err: errorMessage(error) }, 'Color read failed')
-    // Only if nothing replaced this job meanwhile (a new selfie, the avatar).
-    await app.collections.avatars.updateOne(
-      { _id: avatarId, selfieKey, 'job.kind': 'colors' },
-      { $set: { ...failureFor('colors'), job: null, updatedAt: new Date() } },
-    )
-    await releaseGenerations(app, avatar.userId, 'avatar', 1)
-    await trackServerEvent(app, { name: 'colors_failed', userId: avatar.userId })
+    await failColorsJob(app, avatar, { code: 'internal', attempts: 1, error }, via)
     return
   }
 
+  let analysis: ColorAnalysis | null = null
+  let attempts = 0
+
+  while (!analysis) {
+    attempts += 1
+
+    try {
+      analysis = await analyzeColors(selfie)
+    } catch (error) {
+      const code = classifyAiError(error)
+      const wait = retryDelay(code, attempts, Date.now() - startedAt, error instanceof OpenAiRequestError ? error.retryAfterMs : null)
+
+      if (wait === null) {
+        await failColorsJob(app, avatar, { code, attempts, error }, via)
+        return
+      }
+
+      app.log.warn({ avatarId: avatarId.toString(), code, attempts, waitMs: wait }, 'Color read failed; trying again')
+      await sleep(wait)
+
+      // Replaced meanwhile (a new selfie, the avatar): not ours to finish.
+      if (!(await app.collections.avatars.findOne({ _id: avatarId, selfieKey, 'job.kind': 'colors' }, { projection: { _id: 1 } }))) {
+        await releaseGenerations(app, avatar.userId, 'avatar', 1)
+        return
+      }
+    }
+  }
+
+  void noteReadSucceeded(app)
+
   const saved = await app.collections.avatars.updateOne(
     { _id: avatarId, selfieKey, 'job.kind': 'colors' },
-    { $set: { status: 'ready', error: null, colorAnalysis: analysis, colorsAt: new Date(), job: null, updatedAt: new Date() } },
+    {
+      $set: {
+        status: 'ready',
+        error: null,
+        failure: null,
+        colorAnalysis: analysis,
+        colorsAt: new Date(),
+        job: null,
+        updatedAt: new Date(),
+      },
+    },
   )
 
   if (saved.matchedCount === 0) {
     return
   }
 
-  await trackServerEvent(app, { name: 'colors_ready', userId: avatar.userId, props: { season: analysis.season } })
+  await trackServerEvent(app, {
+    name: 'colors_ready',
+    userId: avatar.userId,
+    props: { season: analysis.season, ...(via ? { via } : {}) },
+  })
   await startDrapePreview(app, avatarId).catch((error: unknown) => {
     app.log.error({ err: error, avatarId: avatarId.toString() }, 'Drape preview did not start')
   })
 }
 
-export function startColorsJob(app: FastifyInstance, avatarId: ObjectId) {
-  void runColorsJob(app, avatarId).catch(async (error: unknown) => {
+async function failColorsJob(
+  app: FastifyInstance,
+  avatar: AvatarDocument,
+  result: { code: AiFailure; attempts: number; error: unknown },
+  via?: 'notify',
+) {
+  const detail = redactAiMessage(errorMessage(result.error))
+  const now = new Date()
+
+  app.log.error({ avatarId: avatar._id.toString(), code: result.code, attempts: result.attempts, err: detail }, 'Color read failed')
+  // Only if nothing replaced this job meanwhile (a new selfie, the avatar).
+  await app.collections.avatars.updateOne(
+    { _id: avatar._id, selfieKey: avatar.selfieKey, 'job.kind': 'colors' },
+    {
+      $set: {
+        ...failureFor('colors'),
+        job: null,
+        failure: { code: result.code, at: now, attempts: result.attempts, detail },
+        updatedAt: now,
+      },
+    },
+  )
+  await releaseGenerations(app, avatar.userId, 'avatar', 1)
+  await trackServerEvent(app, {
+    name: 'colors_failed',
+    userId: avatar.userId,
+    props: { reason: result.code, attempts: result.attempts, ...(via ? { via } : {}) },
+  })
+  void noteReadFailed(app)
+}
+
+// A crash (not a failed read, which runColorsJob records itself): the
+// avatar is failed, like any read that didn't finish.
+export async function runColorsJobSafely(app: FastifyInstance, avatarId: ObjectId, via?: 'notify') {
+  try {
+    await runColorsJob(app, avatarId, via)
+  } catch (error) {
     app.log.error({ err: error, avatarId: avatarId.toString() }, 'Color read crashed')
 
     try {
+      const now = new Date()
       const avatar = await app.collections.avatars.findOneAndUpdate(
         { _id: avatarId, status: 'processing', 'job.kind': 'colors' },
-        { $set: { ...failureFor('colors'), job: null, updatedAt: new Date() } },
+        {
+          $set: {
+            ...failureFor('colors'),
+            job: null,
+            failure: { code: 'internal', at: now, attempts: 1, detail: null },
+            updatedAt: now,
+          },
+        },
       )
 
       if (avatar) {
@@ -350,7 +468,42 @@ export function startColorsJob(app: FastifyInstance, avatarId: ObjectId) {
     } catch {
       // Stale-job recovery on the next boot will catch it.
     }
-  })
+  }
+}
+
+export function startColorsJob(app: FastifyInstance, avatarId: ObjectId) {
+  void runColorsJobSafely(app, avatarId)
+}
+
+const NOTIFY_WINDOW_MS = 24 * 60 * 60 * 1000
+
+// "Tell me when my colors are ready", after a read the AI couldn't do (not
+// a photo it couldn't read): retry.ts reads it again and emails a sign-in
+// link. A request still pending is left as it is. Returns whether one is
+// pending now.
+export async function requestColorsNotice(app: FastifyInstance, userId: ObjectId, via: ColorsNotify['via']) {
+  const now = new Date()
+  const waiting = {
+    userId,
+    status: 'failed' as const,
+    avatarKey: null,
+    colorAnalysis: null,
+    'failure.code': { $in: PROVIDER_CODES },
+  }
+  const pending = {
+    'colorsNotify.sentAt': null,
+    'colorsNotify.gaveUpAt': null,
+    'colorsNotify.requestedAt': { $gte: new Date(now.getTime() - NOTIFY_WINDOW_MS) },
+  }
+  const notify: ColorsNotify = { requestedAt: now, attempts: 0, lastTriedAt: null, sentAt: null, gaveUpAt: null, via }
+  const created = await app.collections.avatars.updateOne({ ...waiting, $nor: [pending] }, { $set: { colorsNotify: notify } })
+
+  if (created.modifiedCount > 0) {
+    void trackServerEvent(app, { name: 'colors_notify_requested', userId, props: { via } })
+    return true
+  }
+
+  return Boolean(await app.collections.avatars.findOne({ ...waiting, ...pending }, { projection: { _id: 1 } }))
 }
 
 export function startAvatarJob(
