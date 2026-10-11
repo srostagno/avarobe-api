@@ -185,17 +185,19 @@ async function refundMoney(purchase: PurchaseDocument, metadata: Record<string, 
 }
 
 // The report credit at work: a report refunded after it counted toward a Pro
-// annual they keep (bought within the credit window after it).
+// annual they keep (bought within the credit window after it). Pro itself
+// unlocks the reports too, but it's what the credit paid for, not a report.
 async function creditUsed(app: FastifyInstance, purchase: PurchaseDocument) {
   const unlocks = PRODUCTS[purchase.product as PurchaseProduct]?.unlocks
 
-  if (!unlocks?.color && !unlocks?.style) {
+  if (isPro(purchase.product) || (!unlocks?.color && !unlocks?.style)) {
     return false
   }
 
   const annual = await app.collections.purchases.findOne(
     {
       userId: purchase.userId,
+      _id: { $ne: purchase._id },
       product: 'pro_annual',
       refundedAt: null,
       createdAt: { $gte: purchase.createdAt, $lte: new Date(purchase.createdAt.getTime() + env.REPORT_CREDIT_WINDOW_DAYS * DAY_MS) },

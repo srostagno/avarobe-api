@@ -50,7 +50,7 @@ export const esEmails: EmailCopy = {
     ],
     fairUse: (images: number) => `Uso justo: hasta ${images} imágenes nuevas al día.`,
     firstWeek: (first: number, credits: number, days: number) =>
-      `Anual: tus primeros ${first} looks al instante y el resto de los ${credits} del mes, ${days} días después de suscribirte.`,
+      `Anual: tus primeros ${first} looks llegan al instante; el resto de los ${credits} del mes llega ${days} ${days === 1 ? 'día' : 'días'} después de suscribirte.`,
   },
 
   common: {

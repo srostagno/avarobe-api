@@ -129,6 +129,8 @@ describe('asking for a refund in the app', () => {
     assert.equal(user().hairAdvisorAt, undefined)
     // The payment is noted for Stripe's own refund event.
     assert.equal(purchases()[1]?.stripePaymentIntentId, 'pi_of_in_annual')
+    // Pro is what a credit paid for, not a report whose credit was used.
+    assert.deepEqual((purchases()[1] as { refund: { flags: string[] } }).refund.flags, [])
   })
 
   it('shows the refund on Pro’s first week only, never on a renewal', async () => {

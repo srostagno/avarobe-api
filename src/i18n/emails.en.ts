@@ -63,7 +63,7 @@ export const enEmails = {
     ],
     fairUse: (images: number) => `Fair use: up to ${images} new pictures a day.`,
     firstWeek: (first: number, credits: number, days: number) =>
-      `Annual: your first ${first} looks right away, the rest of the month’s ${credits} ${days} days after you subscribe.`,
+      `Annual: your first ${first} looks come right away; the rest of the month’s ${credits} arrive ${days} ${days === 1 ? 'day' : 'days'} after you subscribe.`,
   },
 
   common: {

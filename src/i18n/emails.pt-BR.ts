@@ -49,7 +49,7 @@ export const ptBrEmails: EmailCopy = {
     ],
     fairUse: (images: number) => `Uso justo: até ${images} imagens novas por dia.`,
     firstWeek: (first: number, credits: number, days: number) =>
-      `Anual: seus primeiros ${first} looks na hora, e o restante dos ${credits} do mês ${days} dias depois da assinatura.`,
+      `Anual: seus primeiros ${first} looks chegam na hora; o restante dos ${credits} do mês chega ${days} ${days === 1 ? 'dia' : 'dias'} depois da assinatura.`,
   },
 
   common: {

@@ -247,7 +247,7 @@ describe('the Pro credit in cross-sells', () => {
     assert.ok(mail.text.includes('Pro for 12 months for $25.00'))
     assert.ok(mail.text.includes('$25.00 instead of $29.99: the $4.99 you paid counts toward your first year. Good until Saturday, October 24.'))
     assert.ok(mail.text.includes('$25.00 today for your first year, then $29.99 a year until you cancel. Cancel anytime in your account.'))
-    assert.ok(mail.text.includes('Annual: your first 10 looks right away, the rest of the month’s 30 7 days after you subscribe.'))
+    assert.ok(mail.text.includes('Annual: your first 10 looks come right away; the rest of the month’s 30 arrive 7 days after you subscribe.'))
     assert.ok(mail.text.includes('Fair use: up to 15 new pictures a day.'))
     assert.ok(mail.html.includes('Get Pro for a year · $25.00'))
     // Without it, none of that.
