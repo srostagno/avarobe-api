@@ -200,7 +200,7 @@ export function serializeBilling(user: BillingFields) {
   }
 }
 
-const BILLING_PROJECTION = {
+export const BILLING_PROJECTION = {
   email: 1,
   credits: 1,
   colorReportAt: 1,

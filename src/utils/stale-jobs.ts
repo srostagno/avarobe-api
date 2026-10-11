@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
-import { failureFor } from '../modules/avatar/service.js'
+import { settleFailure } from '../modules/avatar/service.js'
 import { refundCredits } from '../modules/billing/entitlements.js'
 import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
@@ -14,21 +14,30 @@ const STALE_AFTER_MS = 10 * 60 * 1000
 // start of each pass of the color read retries (modules/avatar/retry.ts): a
 // restart minutes after a read started leaves it here past the boot's
 // check, and the studio would show its progress forever (and a "tell me
-// when ready" would never be read again).
+// when ready" would never be read again). Like any failed read: colors
+// someone had stay (ready, the failure kept) and the photo it held goes;
+// without colors it's failed.
 export async function failStaleColorReads(app: FastifyInstance, now = new Date()) {
-  const result = await app.collections.avatars.updateMany(
-    { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: new Date(now.getTime() - STALE_AFTER_MS) } },
-    {
-      $set: {
-        ...failureFor('colors'),
-        job: null,
-        failure: { code: 'internal', at: now, attempts: 1, detail: 'interrupted' },
-        updatedAt: now,
-      },
-    },
-  )
+  const stuck = await app.collections.avatars
+    .find(
+      { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: new Date(now.getTime() - STALE_AFTER_MS) } },
+      { projection: { _id: 1, job: 1, updatedAt: 1 } },
+    )
+    .toArray()
+  let count = 0
 
-  return result.modifiedCount
+  for (const avatar of stuck) {
+    const readId = avatar.job?.readId
+    // A read started before reads had ids: as it was listed.
+    const where = readId
+      ? { _id: avatar._id, 'job.readId': readId }
+      : { _id: avatar._id, status: 'processing', 'job.kind': 'colors', updatedAt: avatar.updatedAt }
+    const settled = await settleFailure(app, where, { code: 'internal', at: now, attempts: 1, detail: 'interrupted' }, { via: 'colors' })
+
+    count += Number(settled !== null)
+  }
+
+  return count
 }
 
 export async function failStaleJobs(app: FastifyInstance) {

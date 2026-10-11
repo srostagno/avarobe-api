@@ -96,6 +96,93 @@ export const COLOR_ANALYSIS_INSTRUCTIONS = [
   'Write in plain, warm American English.',
 ].join(' ')
 
+// The scored read, step 1 (measure.ts): what the photo shows, scored on four
+// traits with fixed settings, in English whatever their language, so the
+// same face gets the same scores. The model never names a season: code
+// derives it from the scores (seasons.ts).
+const trait = (description: string) => ({ type: 'integer', description })
+
+export const colorMeasureSchema = {
+  type: 'object',
+  additionalProperties: false,
+  // Generated in this order: what it sees, the light, then the scores.
+  required: ['coloring', 'lightingQuality', 'olive', 'scores'],
+  properties: {
+    coloring: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['skin', 'hair', 'eyes', 'lighting'],
+      properties: {
+        skin: { type: 'string', description: 'Skin depth and undertone cues, a few words.' },
+        hair: { type: 'string', description: 'Natural hair color and depth, a few words.' },
+        eyes: { type: 'string', description: 'Eye color and clarity, a few words.' },
+        lighting: { type: 'string', description: 'How the light or white balance tints the photo, a few words.' },
+      },
+    },
+    lightingQuality: {
+      type: 'string',
+      enum: ['good', 'tinted', 'poor'],
+      description:
+        'good: even light, true colors. tinted: a cast you can correct for. poor: too dark, a heavy filter or colored light hides the true coloring.',
+    },
+    olive: { type: 'boolean', description: 'True only if the skin has a green or grey-green undertone.' },
+    scores: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['warmth', 'depth', 'chroma', 'contrast'],
+      properties: {
+        warmth: trait('-5 icy cool .. 0 neutral .. +5 golden warm, after correcting for the photo tint'),
+        depth: trait('-5 very light .. +5 very deep, the whole coloring, hair weighed most'),
+        chroma: trait('-5 very soft, muted, greyed .. +5 very clear, bright, saturated'),
+        contrast: trait('-5 very low contrast between hair, skin and eyes .. +5 very high'),
+      },
+    },
+  },
+}
+
+export const COLOR_MEASURE_INSTRUCTIONS = [
+  'You are an expert color analyst.',
+  "Read the person's skin undertone, hair color, eye color and overall contrast from the photo.",
+  'Work in this order. First describe the skin, natural hair and eyes, and how the light tints the photo.',
+  'Judge the undertone from relative cues (skin against hair, eyes and any white in the frame), never from the overall tint of the photo.',
+  'Then rate the light, and score four traits on integer scales from -5 to +5: warmth (cool to warm), depth (light to deep), chroma (soft to clear) and contrast (between hair, skin and eyes).',
+  'Score what you see; the same face must always get the same scores.',
+  'Never comment on attractiveness, age, weight or ethnicity. Only color.',
+  'Write in plain American English.',
+].join(' ')
+
+// The scored read, step 2: the palette for the season the code decided, in
+// their language. It never judges the season again.
+export const colorPaletteSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'bestColors', 'neutrals', 'avoidColors', 'photoNote'],
+  properties: {
+    summary: colorAnalysisSchema.properties.summary,
+    bestColors: colorAnalysisSchema.properties.bestColors,
+    neutrals: colorAnalysisSchema.properties.neutrals,
+    avoidColors: {
+      type: 'array',
+      description: '4 colors to keep away from the face: common choices that fight this coloring, never one of the best colors or neutrals.',
+      items: swatchSchema,
+    },
+    photoNote: {
+      type: ['string', 'null'],
+      description: 'Only if the light is tinted or poor: one sentence of advice for a truer photo. Otherwise null.',
+    },
+  },
+}
+
+export function colorPaletteInstructions(season: string) {
+  return [
+    'You are an expert color analyst using the 12-season system.',
+    `The season is decided: ${season}. Do not judge it again.`,
+    'Write this person’s palette within that season: specific, named shades a person can recognize in stores, suited to the skin, hair and eyes described and seen in the photo.',
+    'Never comment on attractiveness, age, weight or ethnicity. Only color.',
+    'Write in plain, warm American English.',
+  ].join(' ')
+}
+
 function neutralOutfit(body: AvatarBody) {
   if (body.presentation === 'womenswear') {
     return 'a plain fitted white crew-neck t-shirt, straight mid-grey trousers and white minimalist sneakers'

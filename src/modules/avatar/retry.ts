@@ -10,7 +10,8 @@ import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { sendColorsReady } from '../lifecycle/service.js'
 import { PROVIDER_CODES } from './failures.js'
-import { colorsReadReset, runColorsJobSafely } from './service.js'
+import { colorsReadStart, newReadId } from './reads.js'
+import { runColorsJobSafely } from './service.js'
 
 // "Tell me when my colors are ready": people whose read failed because the
 // AI was busy or out of credits, and who left their email. Every few
@@ -68,6 +69,14 @@ export function afterFailedRead(avatar: Pick<AvatarDocument, 'status' | 'failure
   }
 
   return code && PROVIDER_CODES.includes(code) ? 'stop' : 'next'
+}
+
+// Colors read after they asked to be told (colorsAt), so old colors are
+// never emailed as ready.
+export function readSinceRequest(avatar: Pick<AvatarDocument, 'colorsAt' | 'colorsNotify'>) {
+  const requestedAt = avatar.colorsNotify?.requestedAt
+
+  return Boolean(avatar.colorsAt && requestedAt && avatar.colorsAt.getTime() >= requestedAt.getTime())
 }
 
 export type ReadOutcome = 'ready' | 'failed' | 'skipped'
@@ -128,7 +137,7 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
 
   try {
     const since = new Date(now.getTime() - NOTIFY_RULES.window)
-    const projection = { userId: 1, colorAnalysis: 1, colorsNotify: 1 } as const
+    const projection = { userId: 1, selfieKey: 1, colorAnalysis: 1, colorsAt: 1, colorsNotify: 1 } as const
     let gaveUp = 0
     let sent = 0
 
@@ -162,18 +171,22 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
     }
 
     // 2. Colors in and the email still owed, whichever read brought them
-    // (this job's, or one they started themselves).
-    const owed = await app.collections.avatars
-      .find(
-        {
-          'colorsNotify.requestedAt': { $gte: since },
-          'colorsNotify.sentAt': null,
-          'colorsNotify.gaveUpAt': null,
-          colorAnalysis: { $ne: null },
-        },
-        { projection, limit: 50 },
-      )
-      .toArray()
+    // (this job's, or one they started themselves). Only colors read since
+    // they asked: colors from before (kept through a failure, restored by
+    // hand) are never emailed as ready.
+    const owed = (
+      await app.collections.avatars
+        .find(
+          {
+            'colorsNotify.requestedAt': { $gte: since },
+            'colorsNotify.sentAt': null,
+            'colorsNotify.gaveUpAt': null,
+            colorAnalysis: { $ne: null },
+          },
+          { projection, limit: 50 },
+        )
+        .toArray()
+    ).filter((avatar) => readSinceRequest(avatar))
 
     for (const avatar of owed) {
       const user = await recipientOf(app, avatar)
@@ -220,8 +233,8 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
       const startedAt = new Date()
       const claimed = await app.collections.avatars.updateOne(
         // As listed: not if they (or another instance's pass) tried since.
-        { _id: avatar._id, status: 'failed', avatarKey: null, 'colorsNotify.lastTriedAt': avatar.colorsNotify?.lastTriedAt ?? null },
-        { $set: { ...colorsReadReset(startedAt), 'colorsNotify.lastTriedAt': startedAt } },
+        { _id: avatar._id, status: 'failed', avatarKey: null, colorAnalysis: null, 'colorsNotify.lastTriedAt': avatar.colorsNotify?.lastTriedAt ?? null },
+        { $set: { ...colorsReadStart(startedAt, { readId: newReadId(), selfieKey: avatar.selfieKey }), 'colorsNotify.lastTriedAt': startedAt } },
       )
 
       // They tried again themselves meanwhile.
@@ -234,7 +247,7 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
 
       const after = await app.collections.avatars.findOne({ _id: avatar._id }, { projection: { ...projection, status: 1, failure: 1 } })
 
-      if (after?.colorAnalysis) {
+      if (after?.colorAnalysis && readSinceRequest(after)) {
         if (await sendColorsReady(app, user, after, new Date())) {
           sent += 1
         }

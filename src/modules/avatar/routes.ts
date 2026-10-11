@@ -1,11 +1,11 @@
-import type { FastifyPluginAsync, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { PHOTO_CONSENT_NOTICE_VERSION, PHOTO_CONSENT_VERSION } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
-import type { AvatarBody, AvatarJob } from '../../types/mongo.js'
+import type { AvatarBody, AvatarDocument, AvatarJob, ColorReadLog } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { InvalidImageError, normalizeBodyPhoto, normalizeSelfie } from '../../utils/images.js'
 import { serializeAvatar } from '../../utils/serializers.js'
@@ -15,11 +15,12 @@ import { requestGeo, type Geo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, paletteAccess, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
-import { BOARD_KINDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
-import { ensureLockedPreview } from '../report/service.js'
+import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
+import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
-import { colorsReadReset, newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
+import { colorsLocked, colorsReadStart, imageHash, newReadId, readEntry, replacedKeys, withRead } from './reads.js'
+import { newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
@@ -33,6 +34,13 @@ const bodySchema = z.object({
 const regenerateSchema = z.object({
   body: bodySchema.optional(),
 })
+
+const choiceSchema = z.object({
+  readId: z.string().min(1).max(64),
+  keep: z.enum(['paid', 'new']),
+})
+
+const NO_CANDIDATE = { code: 'no_candidate', message: 'There is no new color read to choose.' }
 
 const adjustmentKeys = Object.keys(AVATAR_ADJUSTMENTS) as [
   keyof typeof AVATAR_ADJUSTMENTS,
@@ -180,6 +188,12 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       const now = new Date()
       const avatarId = existing?._id ?? new ObjectId()
       const newPhotos = Boolean(selfie || bodyPhoto)
+      // A new selfie no longer wipes the colors: they stay until a read of
+      // it succeeds (a buyer's aren't read again at all: her colors, report,
+      // drape test, preview and color boards stay as they are).
+      const hasColors = Boolean(existing?.colorAnalysis)
+      const locked = existing ? await colorsLocked(app, existing) : false
+      const wipe = Boolean(selfieKey) && !hasColors
 
       // What it replaces comes from the document as it was right before, so
       // a report image that finished rendering meanwhile goes too.
@@ -197,36 +211,41 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             avatarKey: existing?.avatarKey ?? null,
             styleProfile: null,
             ...(selfieKey
-              ? {
-                  selfieKey,
-                  colorAnalysis: null,
-                  colorsAt: null,
-                  colorReport: null,
-                  drape: null,
-                  drapePreview: null,
-                  reportBoards: null,
-                  hairProfile: null,
-                }
+              ? wipe
+                ? {
+                    selfieKey,
+                    colorAnalysis: null,
+                    colorsAt: null,
+                    colorReport: null,
+                    drape: null,
+                    drapePreview: null,
+                    reportBoards: null,
+                    hairProfile: null,
+                  }
+                : { selfieKey, hairProfile: null }
               : {}),
             ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
             ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
-          // A new selfie clears every board (above); the body, the style ones.
-          ...(selfieKey ? {} : { $unset: unsetBoards(STYLE_BOARDS) }),
+          // A new selfie without colors clears every board (above); the body,
+          // or a selfie while there are colors, the style ones.
+          ...(wipe ? {} : { $unset: unsetBoards(STYLE_BOARDS) }),
           $inc: { generations: 1 },
           $setOnInsert: { _id: avatarId, userId, createdAt: now },
         },
         { upsert: true, returnDocument: 'before' },
       )
 
+      // The free preview of a selfie with colors goes only once a read of the
+      // new one succeeds (the job); a waiting candidate keeps its photo.
       const replaced = [
         selfieKey ? previous?.selfieKey : null,
-        selfieKey ? previous?.drape?.key : null,
-        selfieKey ? previous?.drapePreview?.key : null,
-        selfieKey ? previous?.drapePreview?.lockedKey : null,
+        wipe ? previous?.drape?.key : null,
+        wipe ? previous?.drapePreview?.key : null,
+        wipe ? previous?.drapePreview?.lockedKey : null,
         bodyPhotoKey ? previous?.bodyPhotoKey : null,
-        ...boardKeys(previous?.reportBoards, selfieKey ? BOARD_KINDS : STYLE_BOARDS),
-      ].filter((key): key is string => Boolean(key))
+        ...boardKeys(previous?.reportBoards, wipe ? BOARD_KINDS : STYLE_BOARDS),
+      ].filter((key): key is string => Boolean(key) && key !== previous?.colorCandidate?.selfieKey)
 
       await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
 
@@ -237,7 +256,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       startAvatarJob(app, avatarId, {
         kind: 'create',
-        analyze: Boolean(selfieKey) || !existing?.colorAnalysis,
+        analyze: (Boolean(selfieKey) && !locked) || !hasColors,
         keepHair: !selfieKey,
       })
       void trackServerEvent(app, { name: 'avatar_started', userId, props: { kind: 'create' } })
@@ -252,7 +271,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
   // seconds and before any measurements. Only before the avatar exists;
   // without a new selfie it reads the stored one again (the retry after a
   // failure). Doesn't spend a free avatar render: the avatar comes later
-  // from the same selfie, through POST /.
+  // from the same selfie, through POST /. Someone with colors who sends no
+  // photo, or the same one, gets them back as they are (`reused`); a new
+  // photo is read while their colors stay (service.ts runColorsJob).
   app.post(
     '/colors',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -318,53 +339,53 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
+      const hash = selfie ? imageHash(selfie) : null
+
+      // The same photo again (or no photo) while they have colors: the
+      // stored result, without reading it again (the same photo read twice
+      // used to flip seasons, and a "read again" wiped a buyer's report).
+      if (existing?.colorAnalysis && (!hash || (await samePhoto(existing, hash)))) {
+        await reuseColors(app, existing, hash)
+        return reply.code(202).send({ avatar: await serializeAvatar(existing, await paletteAccess(app, userId)), reused: true })
+      }
+
       if (!(await reserveGenerations(app, userId, 'avatar', 1))) {
         return limitReached(reply)
       }
 
       const now = new Date()
-      const selfieKey = selfie ? `users/${userId.toString()}/selfie-${Date.now()}.jpg` : null
+      // A new selfie waits in the job until the read succeeds; their colors
+      // and selfie stay as they are meanwhile.
+      const heldKey = selfie ? `users/${userId.toString()}/selfie-${Date.now()}.jpg` : null
 
-      if (selfie && selfieKey) {
-        await storage.put(selfieKey, selfie, 'image/jpeg')
+      if (selfie && heldKey) {
+        await storage.put(heldKey, selfie, 'image/jpeg')
       }
 
-      const previous = await app.collections.avatars.findOneAndUpdate(
+      const photoKey = heldKey ?? existing!.selfieKey
+      const locked = existing ? await colorsLocked(app, existing) : false
+      const avatar = await app.collections.avatars.findOneAndUpdate(
         { userId },
         {
           $set: {
-            ...colorsReadReset(now),
-            ...(selfieKey ? { selfieKey, consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+            ...colorsReadStart(now, { readId: newReadId(), selfieKey: photoKey }),
+            ...(heldKey ? { consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
           },
+          // Their first selfie: nothing to protect, it's theirs at once.
           $setOnInsert: {
             _id: new ObjectId(),
             userId,
+            selfieKey: photoKey,
             avatarKey: null,
             body: null,
+            colorAnalysis: null,
             readyAt: null,
             generations: 0,
             createdAt: now,
           },
         },
-        { upsert: true, returnDocument: 'before' },
+        { upsert: true, returnDocument: 'after' },
       )
-
-      // Everything read from, or drawn with, the selfie it replaces.
-      const replaced = [
-        selfieKey ? previous?.selfieKey : null,
-        previous?.drape?.key,
-        previous?.drapePreview?.key,
-        previous?.drapePreview?.lockedKey,
-        ...boardKeys(previous?.reportBoards, BOARD_KINDS),
-      ].filter((key): key is string => Boolean(key))
-
-      await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
-
-      if (selfieKey && previous) {
-        await deleteHairstyles(app, userId)
-      }
-
-      const avatar = await app.collections.avatars.findOne({ userId })
 
       if (!avatar) {
         return reply.code(500).send({ message: 'Could not start. Please try again.' })
@@ -375,7 +396,13 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       void trackServerEvent(app, {
         name: 'colors_started',
         userId,
-        props: { retry: !selfieKey, ...(fields.trigger === 'auto' ? { trigger: 'auto' } : {}) },
+        props: {
+          retry: !heldKey,
+          ...(fields.trigger === 'auto' ? { trigger: 'auto' } : {}),
+          hasColors: Boolean(existing?.colorAnalysis),
+          locked,
+          newPhoto: Boolean(heldKey),
+        },
       })
 
       return reply.code(202).send({ avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) })
@@ -398,6 +425,106 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const avatar = await app.collections.avatars.findOne({ userId })
+
+      return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
+    },
+  )
+
+  // A buyer's choice after a new photo read clearly differently: keep the
+  // colors she paid for (the report stays), or switch to the new read (the
+  // report is written again for it from /report/color, under its daily
+  // limit). Until she chooses, everything stays on the paid read.
+  app.post(
+    '/colors/choice',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const userId = requireUserId(request)
+      const parsed = parseBody(choiceSchema, request.body)
+
+      if (!parsed.ok) {
+        return reply.code(400).send({ message: parsed.message })
+      }
+
+      const existing = await app.collections.avatars.findOne({ userId })
+
+      if (existing?.status === 'processing') {
+        return reply.code(409).send({ message: busyMessage(existing.job) })
+      }
+
+      const candidate = existing?.colorCandidate
+
+      if (!existing || !candidate || candidate.readId !== parsed.data.readId) {
+        return reply.code(404).send(NO_CANDIDATE)
+      }
+
+      const now = new Date()
+      const paid = existing.colorAnalysis?.season ?? null
+      const keepNew = parsed.data.keep === 'new'
+      const entry = readEntry({
+        id: newReadId(),
+        at: now,
+        selfieKey: candidate.selfieKey,
+        imageHash: candidate.source.imageHash,
+        method: candidate.source.method,
+        outcome: keepNew ? 'switched' : 'kept_paid',
+        season: candidate.analysis.season,
+        undertone: candidate.analysis.undertone,
+        contrast: candidate.analysis.contrast,
+        scores: candidate.source.scores,
+        lighting: candidate.source.lighting,
+        shown: keepNew ? candidate.analysis.season : paid,
+        ...(keepNew ? { from: paid } : {}),
+      })
+      // Switching: the new read and its photo; the report, drape test, free
+      // preview, hair read and color boards were of the paid one. The style
+      // boards stay.
+      const set: Record<string, unknown> = keepNew
+        ? {
+            colorAnalysis: candidate.analysis,
+            colorsAt: candidate.at,
+            colorsSource: candidate.source,
+            selfieKey: candidate.selfieKey,
+            colorCandidate: null,
+            colorReport: null,
+            drape: null,
+            drapePreview: null,
+            hairProfile: null,
+            colorReads: withRead(existing.colorReads, entry),
+            updatedAt: now,
+          }
+        : { colorCandidate: null, colorReads: withRead(existing.colorReads, entry) }
+      const saved = await app.collections.avatars.updateOne(
+        { _id: existing._id, 'colorCandidate.readId': candidate.readId, ...(keepNew ? { status: { $ne: 'processing' } } : {}) },
+        keepNew ? { $set: set, $unset: unsetBoards(COLOR_BOARDS) } : { $set: set },
+      )
+
+      if (saved.matchedCount === 0) {
+        return reply.code(404).send(NO_CANDIDATE)
+      }
+
+      const after = { ...existing, ...set, reportBoards: keepNew ? null : existing.reportBoards } as AvatarDocument
+
+      await Promise.all(replacedKeys(existing, after).map((key) => storage.remove(key).catch(() => undefined)))
+
+      if (keepNew) {
+        await deleteHairstyles(app, userId)
+        await startDrapePreview(app, existing._id).catch((error: unknown) => {
+          request.log.error({ err: error }, 'Drape preview did not start')
+        })
+      }
+
+      void trackServerEvent(app, {
+        name: 'colors_choice',
+        userId,
+        props: {
+          choice: parsed.data.keep,
+          ...(paid ? { paid } : {}),
+          candidate: candidate.analysis.season,
+          ageHours: Math.round(((now.getTime() - candidate.at.getTime()) / 3_600_000) * 10) / 10,
+        },
+      })
+
+      const avatar = await app.collections.avatars.findOne({ _id: existing._id })
 
       return { avatar: avatar ? await serializeAvatar(avatar, await paletteAccess(app, userId)) : null }
     },
@@ -619,6 +746,8 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
           existing.bodyPhotoKey,
           existing.avatarKey,
           existing.job?.previewKey,
+          existing.job?.selfieKey,
+          existing.colorCandidate?.selfieKey,
           existing.drape?.key,
           existing.drapePreview?.key,
           existing.drapePreview?.lockedKey,
@@ -657,6 +786,49 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 }
 
 export default avatarRoutes
+
+// Whether an upload is the photo their colors were read from (same bytes
+// after normalizing). Before reads kept their source, colors always came
+// from the stored selfie.
+async function samePhoto(avatar: AvatarDocument, hash: string) {
+  if (avatar.colorsSource) {
+    return avatar.colorsSource.imageHash === hash
+  }
+
+  try {
+    return imageHash(await storage.read(avatar.selfieKey)) === hash
+  } catch {
+    return false
+  }
+}
+
+// The colors they have, given back for the same photo: a line in the
+// history, no AI call, nothing else changes.
+async function reuseColors(app: FastifyInstance, avatar: AvatarDocument, hash: string | null) {
+  const analysis = avatar.colorAnalysis!
+  const source = avatar.colorsSource
+  const entry: ColorReadLog = readEntry({
+    id: newReadId(),
+    at: new Date(),
+    selfieKey: source?.selfieKey ?? avatar.selfieKey,
+    imageHash: source?.imageHash ?? hash,
+    method: source?.method ?? 'classic',
+    outcome: 'reused',
+    season: analysis.season,
+    undertone: analysis.undertone,
+    contrast: analysis.contrast,
+    scores: source?.scores ?? null,
+    lighting: source?.lighting ?? null,
+    shown: analysis.season,
+    via: 'colors',
+  })
+
+  await app.collections.avatars.updateOne(
+    { _id: avatar._id, status: { $ne: 'processing' } },
+    { $set: { colorReads: withRead(avatar.colorReads, entry) } },
+  )
+  void trackServerEvent(app, { name: 'colors_reused', userId: avatar.userId, props: { scope: 'current' } })
+}
 
 // Where a photo's consent has to be a written release (a checkbox), not the
 // act of uploading after a notice: Illinois (BIPA). Unknown places get the

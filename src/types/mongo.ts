@@ -261,6 +261,9 @@ export type PurchaseDocument = {
   // Stripe's dashboard. What the purchase unlocked is taken away.
   refundedAt?: Date | null
   refund?: PurchaseRefund | null
+  // What she paid for, for products that unlock her colors (the Color
+  // Advisor, the mirror): her season then, and the read it came from.
+  colorRead?: { season: string; readId: string | null } | null
 }
 
 export type RefundReason = 'not_accurate' | 'not_expected' | 'technical' | 'mistake' | 'other'
@@ -413,12 +416,90 @@ export type AvatarJob = {
   previewCount: number
   // 'hair': the hairstyle being put on the avatar.
   hairstyleId?: string | null
+  // 'colors': this read's id (every write of the read is guarded by it) and
+  // the photo it reads: a new selfie held here until the read succeeds, or
+  // the stored one. The avatar's own selfieKey moves only then.
+  readId?: string | null
+  selfieKey?: string | null
 }
 
 // Why the last color read failed (utils/openai.ts classifyAiError), after
 // how many tries. `detail` is OpenAI's message, redacted: internal only, the
 // person sees a reason (busy, photo, error) in their own language.
 export type ColorsFailure = { code: AiFailure; at: Date; attempts: number; detail: string | null }
+
+// How a photo measures on four traits, -5 to +5 (an average of two
+// measurements may end in .5). The season follows from them in code
+// (modules/avatar/seasons.ts), never from the model.
+export type ColorScores = { warmth: number; depth: number; chroma: number; contrast: number }
+
+export type ColorLighting = 'good' | 'tinted' | 'poor'
+
+// What a color read did: the first colors; a new photo that read the same
+// season (confirmed), leaned elsewhere without clearly differing (anchored),
+// clearly differed (changed, or a candidate for a buyer to choose); the same
+// photo again (reused, no AI call); a failure that kept the colors. Then the
+// buyer's choice (kept_paid, switched) and an admin restore.
+export type ColorReadOutcome =
+  | 'first'
+  | 'confirmed'
+  | 'anchored'
+  | 'changed'
+  | 'candidate'
+  | 'reused'
+  | 'failed'
+  | 'kept_paid'
+  | 'switched'
+  | 'restored'
+
+// The way a season moved, for what the person is told (modules/avatar/seasons.ts).
+export type ColorChangeDirection = 'cooler' | 'warmer' | 'deeper' | 'lighter' | 'softer' | 'brighter'
+
+// One line of the per-avatar history (newest first, at most 12): for support and admin.
+export type ColorReadLog = {
+  // The read id (ObjectId hex).
+  id: string
+  at: Date
+  // The photo read (it may have been deleted since).
+  selfieKey: string
+  // sha256 of the normalized JPEG.
+  imageHash: string | null
+  method: 'scored' | 'classic' | 'restored'
+  outcome: ColorReadOutcome
+  // What this photo read as (null when failed).
+  season: string | null
+  undertone: ColorAnalysis['undertone'] | null
+  contrast: ColorAnalysis['contrast'] | null
+  scores: ColorScores | null
+  lighting: ColorLighting | null
+  // fit(top1) - fit(top2).
+  margin: number | null
+  // fit(new) - fit(current), when there was a current season.
+  lead: number | null
+  // The season the person has after this read.
+  shown: string | null
+  // 'changed' and 'switched': the season before, and which way it moved.
+  from?: string | null
+  direction?: ColorChangeDirection | null
+  failure?: ColorsFailure | null
+  via?: 'colors' | 'avatar' | 'notify'
+}
+
+// Which read the current colorAnalysis came from (for a confirmed or
+// anchored read of a new photo, that photo: the colors stay, the photo is
+// theirs now).
+export type ColorsSource = {
+  readId: string
+  at: Date
+  selfieKey: string
+  imageHash: string | null
+  method: ColorReadLog['method']
+  scores: ColorScores | null
+  lighting: ColorLighting | null
+}
+
+// A read that clearly differs from a locked (paid) one, waiting for her choice.
+export type ColorCandidate = { readId: string; at: Date; selfieKey: string; analysis: ColorAnalysis; source: ColorsSource }
 
 // "Tell me when my colors are ready", after a read failed because the AI was
 // busy or out of credits (modules/avatar/retry.ts reads it again and emails
@@ -451,6 +532,7 @@ export type AvatarDocument = {
   status: GenerationStatus
   error: string | null
   // The last color read's failure (colors first), cleared when one starts.
+  // Also a failed re-read that kept the colors (status 'ready').
   failure?: ColorsFailure | null
   colorsNotify?: ColorsNotify | null
   selfieKey: string
@@ -470,8 +552,15 @@ export type AvatarDocument = {
   colorAnalysis: ColorAnalysis | null
   // When the colors were read (the palette offer email is timed from it).
   colorsAt?: Date | null
-  // Style Kit reports. The color report and drape test follow the selfie
-  // (cleared when it changes); the style profile follows the body.
+  // The last 12 color reads, newest first (support and admin; never sent to
+  // the web), which read the colors came from, and a read waiting for a
+  // buyer's choice (modules/avatar/reads.ts).
+  colorReads?: ColorReadLog[] | null
+  colorsSource?: ColorsSource | null
+  colorCandidate?: ColorCandidate | null
+  // Style Kit reports. The color report, drape and color boards follow the
+  // accepted read (for buyers, not the selfie: a new selfie keeps them); the
+  // style profile follows the body.
   colorReport?: { data: ColorReport; createdAt: Date } | null
   drape?: DrapeTest | null
   // Free: their face in their best color next to their worst one, from the

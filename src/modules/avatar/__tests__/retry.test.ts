@@ -9,7 +9,8 @@ import type { ColorsFailure, ColorsNotify } from '../../../types/mongo.js'
 import type { AiFailure } from '../../../utils/openai.js'
 import { guestEmail } from '../../../utils/guests.js'
 import { storage } from '../../../utils/storage.js'
-import { afterFailedRead, countsAsAttempt, pendingNotice, readInTurn, retryColorReads, shouldGiveUp } from '../retry.js'
+import { colorsReadStart } from '../reads.js'
+import { afterFailedRead, countsAsAttempt, pendingNotice, readInTurn, readSinceRequest, retryColorReads, shouldGiveUp } from '../retry.js'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -66,6 +67,27 @@ describe('pending notices', () => {
   })
 })
 
+describe('a read starting, and the email after it', () => {
+  it('clears nothing: the colors, report, preview and hair read stay until a read succeeds', () => {
+    const start = colorsReadStart(now, { readId: 'read-1', selfieKey: 'users/x/selfie-2.jpg' })
+
+    assert.deepEqual(Object.keys(start).sort(), ['error', 'failure', 'job', 'status', 'updatedAt'])
+    assert.equal(start.status, 'processing')
+    assert.equal(start.job.kind, 'colors')
+    assert.equal(start.job.readId, 'read-1')
+    assert.equal(start.job.selfieKey, 'users/x/selfie-2.jpg')
+  })
+
+  it('emails only colors read since they asked', () => {
+    const asked = notify({ requestedAt: ago(HOUR) })
+
+    assert.equal(readSinceRequest({ colorsAt: ago(30 * MINUTE), colorsNotify: asked }), true)
+    assert.equal(readSinceRequest({ colorsAt: ago(2 * HOUR), colorsNotify: asked }), false)
+    assert.equal(readSinceRequest({ colorsAt: null, colorsNotify: asked }), false)
+    assert.equal(readSinceRequest({ colorsAt: now, colorsNotify: null }), false)
+  })
+})
+
 describe('readInTurn', () => {
   it('stops at the first failure, so the first read is the probe', async () => {
     const read: string[] = []
@@ -90,6 +112,7 @@ describe('retryColorReads', () => {
     key: env.OPENAI_API_KEY,
     allow: env.EMAIL_DEV_ALLOWLIST,
     fetch: globalThis.fetch,
+    method: env.COLOR_READ_METHOD,
   }
   const { app, collection, logs } = fakeApp()
   const people: Record<string, { userId: ObjectId; avatarId: ObjectId }> = {}
@@ -160,6 +183,9 @@ describe('retryColorReads', () => {
     people[name] = { userId, avatarId }
   }
 
+  // Who's least recently tried goes by the real time of each try: passes a
+  // millisecond apart would tie (and fall back to who asked first).
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 3))
   const avatarOf = (name: string) => collection('avatars').findOne({ _id: people[name]!.avatarId })
   const userOf = (name: string) => collection('users').findOne({ _id: people[name]!.userId })
   const notifyOf = async (name: string) => (await avatarOf(name))?.colorsNotify as ColorsNotify
@@ -182,6 +208,8 @@ describe('retryColorReads', () => {
     }
     env.OPENAI_API_KEY = 'sk-test-not-a-key'
     env.EMAIL_DEV_ALLOWLIST = []
+    // The classic read: one call per try, in their language.
+    env.COLOR_READ_METHOD = 'classic'
     Object.assign(app.jwt, {
       sign: async (payload: { typ?: string; nx?: string }) => {
         signed.push(payload)
@@ -222,6 +250,7 @@ describe('retryColorReads', () => {
     env.AI_FAULT = saved.fault
     env.OPENAI_API_KEY = saved.key
     env.EMAIL_DEV_ALLOWLIST = saved.allow
+    env.COLOR_READ_METHOD = saved.method
     globalThis.fetch = saved.fetch
   })
 
@@ -244,17 +273,19 @@ describe('retryColorReads', () => {
     // Bea wasn't tried: the pass stopped at the first failure.
     assert.equal((await notifyOf('bea')).lastTriedAt, null)
     const failed = await collection('analyticsEvents').findOne({ name: 'colors_failed' })
-    assert.deepEqual(failed?.props, { reason: 'no_credits', attempts: 1, via: 'notify' })
+    assert.deepEqual(failed?.props, { reason: 'no_credits', attempts: 1, via: 'notify', kept: false })
     assert.deepEqual(await collection('analyticsEvents').distinct('name', { name: 'colors_notify_gave_up' }), ['colors_notify_gave_up'])
   })
 
   it('takes turns: the next pass probes whoever waited longest since their last try', async () => {
+    await tick()
     const result = await retryColorReads(app, later(5 * MINUTE))
     assert.deepEqual(result.outcomes, ['failed'])
     assert.ok((await notifyOf('bea')).lastTriedAt)
   })
 
   it('counts a read that cost something, after the server’s own 3 tries', async () => {
+    await tick()
     env.AI_FAULT = undefined
     mode = 'server'
     const result = await retryColorReads(app, later(10 * MINUTE))
@@ -266,6 +297,7 @@ describe('retryColorReads', () => {
   })
 
   it('counts no rate limit, however long it lasts (only the day ends the wait)', async () => {
+    await tick()
     mode = 'rate'
     const result = await retryColorReads(app, later(15 * MINUTE))
     assert.deepEqual(result.outcomes, ['failed'])
@@ -275,6 +307,7 @@ describe('retryColorReads', () => {
   })
 
   it('gives up a photo the AI refuses, without counting it, and goes on to the next', async () => {
+    await tick()
     mode = 'server'
     // Dora's read is refused; Eve's own new selfie was, since she asked.
     await person('dora', { locale: 'en' }, { colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }) })
@@ -296,6 +329,7 @@ describe('retryColorReads', () => {
   })
 
   it('counts a selfie gone from storage, and goes on to the next', async () => {
+    await tick()
     await person('finn', { locale: 'en' }, { colorsNotify: notify({ requestedAt: ago(20 * MINUTE) }) })
     missing.add('finn')
     const result = await retryColorReads(app, later(25 * MINUTE))
@@ -316,6 +350,7 @@ describe('retryColorReads', () => {
       status: 'ready',
       failure: null,
       colorAnalysis: { season: 'Deep Winter', bestColors: [], neutrals: [], avoidColors: [] },
+      colorsAt: ago(10 * MINUTE),
       colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }),
     })
     // His read was cut off by a restart a quarter of an hour ago: still
@@ -369,6 +404,25 @@ describe('retryColorReads', () => {
     assert.ok(ready.every((event) => (event.props as { via?: string }).via === 'notify'))
   })
 
+  it('never emails colors from before they asked (kept through a failure, or restored)', async () => {
+    await person('ines', { locale: 'en' }, {
+      status: 'ready',
+      failure: null,
+      colorAnalysis: { season: 'Deep Autumn', bestColors: [], neutrals: [], avoidColors: [] },
+      colorsAt: ago(3 * HOUR),
+      colorsNotify: notify({ requestedAt: ago(HOUR) }),
+    })
+    const result = await retryColorReads(app, later(32 * MINUTE))
+
+    assert.equal(result.sent, 0)
+    assert.equal((await notifyOf('ines')).sentAt, null)
+    assert.equal(await collection('emailSends').countDocuments({ userId: people.ines!.userId }), 0)
+    // Given up with the rest once the day is over, never emailed.
+    await retryColorReads(app, later(25 * HOUR))
+    assert.ok((await notifyOf('ines')).gaveUpAt)
+    assert.equal(await collection('emailSends').countDocuments({ userId: people.ines!.userId }), 0)
+  })
+
   it('sends nothing more on the next pass', async () => {
     const result = await retryColorReads(app, later(35 * MINUTE))
     assert.deepEqual(result, { gaveUp: 0, sent: 0, outcomes: [] })
@@ -380,6 +434,7 @@ describe('retryColorReads', () => {
       status: 'ready',
       failure: null,
       colorAnalysis: { season: 'Light Spring', bestColors: [], neutrals: [], avoidColors: [] },
+      colorsAt: ago(10 * MINUTE),
       colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }),
     })
     const sign = app.jwt.sign.bind(app.jwt)

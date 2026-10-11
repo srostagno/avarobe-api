@@ -101,6 +101,7 @@ export const ptBrMessages: MessageTable = {
   'There is no avatar to refine.': 'Não há avatar para ajustar.',
   'There is no color read to retry.': 'Não há nenhuma leitura de cores para tentar de novo.',
   'There is no drape test to retry.': 'Não há teste de tecidos para tentar de novo.',
+  'There is no new color read to choose.': 'Não há nenhuma nova leitura de cores para escolher.',
   'There is no full-body photo to remove.': 'Não há foto de corpo inteiro para remover.',
   'There is nothing to retry here.': 'Não há nada para tentar de novo aqui.',
   'This confirmation link is invalid, expired or already used.': 'Este link de confirmação é inválido, expirou ou já foi usado.',

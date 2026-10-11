@@ -593,6 +593,13 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
 
   const config = PRODUCTS[grant.product]
   const credits = config.credits()
+  // What she paid for, for products that unlock her colors: her season now
+  // and the read it came from (a later read can't silently replace it).
+  const avatar =
+    config.unlocks?.color || config.unlocks?.mirror
+      ? await app.collections.avatars.findOne({ userId: grant.userId }, { projection: { colorAnalysis: 1, colorsSource: 1 } })
+      : null
+  const colorRead = avatar?.colorAnalysis ? { season: avatar.colorAnalysis.season, readId: avatar.colorsSource?.readId ?? null } : null
   const mongoSession = app.mongoClient.startSession()
 
   try {
@@ -611,6 +618,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           amountUsd: toUsdCents(grant.amount, grant.currency),
           credits,
           createdAt: new Date(),
+          ...(config.unlocks?.color || config.unlocks?.mirror ? { colorRead } : {}),
         },
         { session: mongoSession },
       )

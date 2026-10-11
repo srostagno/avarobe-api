@@ -11,12 +11,13 @@ import { requestColorsNotice, runColorsJob } from '../service.js'
 
 // A color read and its own retries (runColorsJob), and "tell me when my
 // colors are ready" (requestColorsNotice), against in-memory collections
-// and a stubbed OpenAI.
+// and a stubbed OpenAI (the classic read: one call per try; the scored one
+// is in colors-keep.test.ts).
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
 
-const saved = { read: storage.read.bind(storage), key: env.OPENAI_API_KEY, fault: env.AI_FAULT, fetch: globalThis.fetch }
+const saved = { read: storage.read.bind(storage), key: env.OPENAI_API_KEY, fault: env.AI_FAULT, fetch: globalThis.fetch, method: env.COLOR_READ_METHOD }
 // What OpenAI answers, call after call (the last one again when they run out).
 let replies: (() => Response)[] = []
 let calls = 0
@@ -46,6 +47,7 @@ before(() => {
   storage.read = async () => Buffer.from('selfie')
   env.OPENAI_API_KEY = 'sk-test-not-a-key'
   env.AI_FAULT = undefined
+  env.COLOR_READ_METHOD = 'classic'
   globalThis.fetch = async (url: string | URL | Request) => {
     const target = url instanceof Request ? url.url : url.toString()
 
@@ -63,6 +65,7 @@ after(() => {
   storage.read = saved.read
   env.OPENAI_API_KEY = saved.key
   env.AI_FAULT = saved.fault
+  env.COLOR_READ_METHOD = saved.method
   globalThis.fetch = saved.fetch
 })
 
@@ -92,7 +95,7 @@ function reading() {
     avatarKey: null,
     colorAnalysis: null,
     failure: null,
-    job: { kind: 'colors', startedAt: new Date(), previewKey: null, previewCount: 0 },
+    job: { kind: 'colors', startedAt: new Date(), previewKey: null, previewCount: 0, readId: 'read-1', selfieKey: `users/${userId.toString()}/selfie-1.jpg` },
     updatedAt: new Date(),
   })
   // The read reserved one of the day's generations.
@@ -116,7 +119,7 @@ describe('runColorsJob', () => {
     assert.deepEqual(failureOf(failed), { code: 'provider', attempts: 3 })
     assert.equal(failed?.job, null)
     const event = await collection('analyticsEvents').findOne({ name: 'colors_failed' })
-    assert.deepEqual(event?.props, { reason: 'provider', attempts: 3 })
+    assert.deepEqual(event?.props, { reason: 'provider', attempts: 3, kept: false })
   })
 
   it('gets the colors when a later try works', async () => {
@@ -136,7 +139,7 @@ describe('runColorsJob', () => {
     const { app, collection, avatarId, avatar } = reading()
     onCall = async (call) => {
       if (call === 1) {
-        await collection('avatars').updateOne({ _id: avatarId }, { $set: { selfieKey: 'users/other/selfie-2.jpg' } })
+        await collection('avatars').updateOne({ _id: avatarId }, { $set: { 'job.readId': 'read-2', 'job.selfieKey': 'users/other/selfie-2.jpg' } })
       }
     }
     await runColorsJob(app, avatarId)
@@ -221,6 +224,22 @@ describe('requestColorsNotice', () => {
       assert.equal((await notify())?.sentAt, null)
       assert.equal(await requested(), 1)
     }
+  })
+
+  it('refuses while the colors were kept through the failure (nothing to wait for)', async () => {
+    const { app, collection } = fakeApp()
+    const userId = new ObjectId()
+    collection('avatars').docs.push({
+      _id: new ObjectId(),
+      userId,
+      status: 'ready',
+      avatarKey: null,
+      colorAnalysis: { season: 'Deep Autumn', bestColors: [], neutrals: [], avoidColors: [] },
+      failure: busy,
+    })
+
+    assert.equal(await requestColorsNotice(app, userId, 'account'), false)
+    assert.equal((await collection('avatars').findOne({ userId }))?.colorsNotify, undefined)
   })
 
   it('refuses a photo the AI refused, our own errors, and reads with no reason kept', async () => {

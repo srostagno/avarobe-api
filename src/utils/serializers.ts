@@ -74,6 +74,29 @@ function serializeColorAnalysis(analysis: AvatarDocument['colorAnalysis'], full:
   }
 }
 
+const LAST_READ_DAYS = 7
+
+// The last color read, for the web's one-time notice (confirmed, anchored,
+// changed, a failure that kept the colors): a week at most, and never the
+// same photo given back (reused). The history itself stays on the server.
+function serializeLastRead(reads: AvatarDocument['colorReads']) {
+  const read = reads?.[0]
+
+  if (!read || read.outcome === 'reused' || Date.now() - read.at.getTime() > LAST_READ_DAYS * 24 * 60 * 60 * 1000) {
+    return null
+  }
+
+  return {
+    id: read.id,
+    outcome: read.outcome,
+    at: read.at.toISOString(),
+    season: read.shown,
+    ...(read.outcome === 'changed' || read.outcome === 'switched' ? { from: read.from ?? null, to: read.shown } : {}),
+    ...(read.direction ? { direction: read.direction } : {}),
+    ...(read.outcome === 'failed' ? { reason: publicReason(read.failure?.code) } : {}),
+  }
+}
+
 export async function serializeAvatar(avatar: AvatarDocument, options: { fullPalette: boolean; mirror?: boolean }) {
   // Before they unlock their colors (the Color Advisor, or the color mirror,
   // which shows their #1 live), the photo shows only their worst color (the
@@ -81,7 +104,8 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
   const bestLocked = env.LOCK_BEST_COLOR && !options.fullPalette && !options.mirror
   const layout = avatar.drapePreview?.layout ?? 'pair'
   const drapeKey = bestLocked ? (avatar.drapePreview?.lockedKey ?? null) : (avatar.drapePreview?.key ?? null)
-  const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions] = await Promise.all([
+  const candidate = avatar.colorCandidate ?? null
+  const [avatarUrl, selfieUrl, bodyPhotoUrl, previewUrl, drapePreviewUrl, versions, candidateSelfieUrl] = await Promise.all([
     signedUrlOrNull(avatar.avatarKey),
     signedUrlOrNull(avatar.selfieKey),
     signedUrlOrNull(avatar.bodyPhotoKey ?? null),
@@ -98,6 +122,7 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
         current: version.key === avatar.avatarKey,
       })),
     ),
+    signedUrlOrNull(candidate?.selfieKey ?? null),
   ])
 
   return {
@@ -114,6 +139,26 @@ export async function serializeAvatar(avatar: AvatarDocument, options: { fullPal
             notifyRequested: Boolean(avatar.colorsNotify && !avatar.colorsNotify.sentAt && !avatar.colorsNotify.gaveUpAt),
           }
         : null,
+    // This API keeps colors through reads (a new selfie waits until it's
+    // read; a failure keeps them): the web's sign for what it can offer.
+    readsKept: true,
+    // A buyer's colors change only through her choice (POST /colors/choice).
+    colorsLocked: Boolean(avatar.colorAnalysis) && (options.fullPalette || Boolean(avatar.colorReport)),
+    lastRead: serializeLastRead(avatar.colorReads),
+    // A new photo that read clearly differently from her paid colors,
+    // waiting for her choice. Its colors only with the Color Advisor.
+    colorCandidate: candidate
+      ? {
+          readId: candidate.readId,
+          at: candidate.at.toISOString(),
+          season: candidate.analysis.season,
+          undertone: candidate.analysis.undertone,
+          contrast: candidate.analysis.contrast,
+          summary: candidate.analysis.summary,
+          ...(options.fullPalette ? { bestColors: candidate.analysis.bestColors } : {}),
+          selfieUrl: candidateSelfieUrl,
+        }
+      : null,
     body: avatar.body,
     // How they shop: the body's, or asked before it (colors first).
     presentation: avatar.body?.presentation ?? avatar.presentation ?? null,

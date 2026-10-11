@@ -1,4 +1,4 @@
-import type { AvatarDocument, ColorSwatch, LookDocument, Presentation, StyleProfile } from '../../types/mongo.js'
+import type { AvatarDocument, ColorScores, ColorSwatch, LookDocument, Presentation, StyleProfile } from '../../types/mongo.js'
 import { describePalette } from '../avatar/prompts.js'
 import { bodyOf } from '../avatar/body.js'
 
@@ -247,6 +247,14 @@ export const COLOR_REPORT_INSTRUCTIONS = [
   'Write in warm, concise American English, second person.',
 ].join(' ')
 
+// The traits measured from the selfie (-5 to +5), so the report's 0-100
+// scales agree with the read.
+function measuredLine(scores: ColorScores) {
+  const signed = (value: number) => (value > 0 ? `+${value}` : `${value}`)
+
+  return `Measured from this selfie on a -5 to +5 scale: warmth ${signed(scores.warmth)}, depth ${signed(scores.depth)}, chroma ${signed(scores.chroma)}, contrast ${signed(scores.contrast)}. Keep the report's scales consistent with these.`
+}
+
 // Someone who came for their colors may have no body yet: how they shop is
 // asked on its own then.
 export function buildColorReportRequest(avatar: AvatarDocument, presentation: Presentation) {
@@ -258,6 +266,7 @@ export function buildColorReportRequest(avatar: AvatarDocument, presentation: Pr
     `Hair test: ${presentation === 'menswear' ? 'facial hair styles' : 'hair colors'}.`,
     'Earlier analysis:',
     describePalette(avatar.colorAnalysis),
+    ...(avatar.colorsSource?.scores ? [measuredLine(avatar.colorsSource.scores)] : []),
     '',
     'Write their advanced color report from the attached selfie.',
   ].join('\n')

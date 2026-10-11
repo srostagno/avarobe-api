@@ -291,9 +291,12 @@ export async function createStructuredResponse<T>(input: {
   schemaName: string
   schema: Record<string, unknown>
   timeoutMs?: number
-  // Default to AI_TEXT_MODEL / AI_TEXT_REASONING_EFFORT.
+  // Default to AI_TEXT_MODEL / AI_TEXT_REASONING_EFFORT. 'none' (with
+  // temperature 0) for a measurement that must come out the same each time.
   model?: string
-  reasoningEffort?: 'low' | 'medium' | 'high'
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high'
+  // Sent only when set.
+  temperature?: number
   // The person's language: what they read comes back in it (utils/locale).
   locale?: Locale | null
 }): Promise<T> {
@@ -302,6 +305,7 @@ export async function createStructuredResponse<T>(input: {
     JSON.stringify({
       model: input.model ?? env.AI_TEXT_MODEL,
       reasoning: { effort: input.reasoningEffort ?? env.AI_TEXT_REASONING_EFFORT },
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       instructions: localizeInstructions(input.instructions, input.locale ?? currentLocale()),
       input: [{ role: 'user', content: input.content }],
       text: {

@@ -318,6 +318,13 @@ export class FakeCollection {
     return { deletedCount: doc ? 1 : 0 }
   }
 
+  async deleteMany(filter: Doc) {
+    const before = this.docs.length
+    this.docs = this.docs.filter((doc) => !matches(doc, filter))
+
+    return { deletedCount: before - this.docs.length }
+  }
+
   async updateOne(filter: Doc, update: Doc | Doc[], options: { upsert?: boolean } = {}) {
     const doc = this.select(filter)[0]
 

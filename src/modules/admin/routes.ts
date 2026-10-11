@@ -10,7 +10,8 @@ import { daysBetween } from '../../utils/pacific.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
 import { CHANNELS } from '../analytics/service.js'
 import { analyticsReport } from '../analytics/report.js'
-import { adminUserIds, isAdmin } from '../billing/entitlements.js'
+import { isColorsLocked } from '../avatar/reads.js'
+import { BILLING_PROJECTION, adminUserIds, isAdmin } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
 import { refundsReport } from '../billing/refunds.js'
 import { recentCheckouts } from '../billing/stripe.js'
@@ -270,11 +271,19 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       app.collections.avatars.distinct('userId', { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } }),
     ])
     const page = found.slice(0, limit)
-    const [bought, owners] = await Promise.all([
+    const [bought, owners, reported] = await Promise.all([
       purchasesByUser(app, page.map((avatar) => avatar.userId)),
-      app.collections.users.find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { location: 1 } }).toArray(),
+      app.collections.users
+        .find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { ...BILLING_PROJECTION, location: 1 } })
+        .toArray(),
+      // The report itself stays out of the listing; only whether it's there.
+      app.collections.avatars
+        .find({ _id: { $in: page.map((avatar) => avatar._id) }, colorReport: { $ne: null } }, { projection: { _id: 1 } })
+        .toArray(),
     ])
     const locationByUser = new Map(owners.map((owner) => [owner._id.toString(), owner.location ?? null]))
+    const ownerByUser = new Map(owners.map((owner) => [owner._id.toString(), owner]))
+    const withReport = new Set(reported.map((avatar) => avatar._id.toString()))
     const looks = await app.collections.looks
       .aggregate<LookStats>([
         { $match: { avatarId: { $in: page.map((avatar) => avatar._id) }, status: { $ne: 'locked' } } },
@@ -336,6 +345,35 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
                 colors: avatar.colorAnalysis.bestColors.slice(0, 6),
               }
             : null,
+          // A buyer's colors change only through her choice; a new read
+          // waiting for it; and the last 12 reads (support), with the photo's
+          // file name only.
+          locked: isColorsLocked(ownerByUser.get(avatar.userId.toString()) ?? null, {
+            colorAnalysis: avatar.colorAnalysis,
+            colorReport: withReport.has(avatar._id.toString()),
+          }),
+          candidate: avatar.colorCandidate
+            ? {
+                season: avatar.colorCandidate.analysis.season,
+                undertone: avatar.colorCandidate.analysis.undertone,
+                contrast: avatar.colorCandidate.analysis.contrast,
+                at: avatar.colorCandidate.at,
+              }
+            : null,
+          reads: (avatar.colorReads ?? []).map((read) => ({
+            at: read.at,
+            outcome: read.outcome,
+            season: read.season,
+            shown: read.shown,
+            undertone: read.undertone,
+            contrast: read.contrast,
+            scores: read.scores,
+            margin: read.margin,
+            lead: read.lead,
+            method: read.method,
+            failure: read.failure ? { code: read.failure.code, attempts: read.failure.attempts } : null,
+            selfie: read.selfieKey.split('/').pop() ?? null,
+          })),
           looks: {
             total: lookStats?.total ?? 0,
             ready: lookStats?.ready ?? 0,

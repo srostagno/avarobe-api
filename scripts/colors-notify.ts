@@ -3,8 +3,10 @@
 // a "tell me when my colors are ready" for each: the scheduler
 // (modules/avatar/retry.ts) reads their selfie again within minutes and
 // emails them a sign-in link to their colors (colors_ready), in their
-// language. Guests (no real email) are left out. A dry run by default:
-// it only reads.
+// language. Guests (no real email) are left out, and so are buyers (the
+// Color Advisor, the mirror, live Pro): a new read could land on another
+// season while their report is gone, so they're listed to restore by hand
+// (scripts/restore-colors.ts). A dry run by default: it only reads.
 //
 //   corepack pnpm exec tsx scripts/colors-notify.ts                     -> who it would be (the 11-Oct window)
 //   corepack pnpm exec tsx scripts/colors-notify.ts --from 2026-10-11T11:40:00Z --to 2026-10-11T13:45:00Z
@@ -17,6 +19,7 @@ import { MongoClient } from 'mongodb'
 
 import { env } from '../src/config/env.js'
 import type { AnalyticsEventDocument, AvatarDocument, ColorsNotify, UserDocument } from '../src/types/mongo.js'
+import { proIsLive } from '../src/modules/billing/entitlements.js'
 import { isGuestEmail } from '../src/utils/guests.js'
 import { storage } from '../src/utils/storage.js'
 
@@ -54,14 +57,16 @@ try {
   const users = (
     await db
       .collection<UserDocument>('users')
-      .find({ _id: { $in: failedIds }, guest: { $ne: true } }, { projection: { email: 1, locale: 1 } })
+      .find({ _id: { $in: failedIds }, guest: { $ne: true } }, { projection: { email: 1, locale: 1, colorReportAt: 1, colorMirrorAt: 1, pro: 1 } })
       .toArray()
   ).filter((user) => !isGuestEmail(user.email))
+  const isBuyer = (user: (typeof users)[number]) => Boolean(user.colorReportAt || user.colorMirrorAt || proIsLive(user.pro))
+  const buyers = users.filter(isBuyer)
   const avatars = await db
     .collection<AvatarDocument>('avatars')
     .find(
       {
-        userId: { $in: users.map((user) => user._id) },
+        userId: { $in: users.filter((user) => !isBuyer(user)).map((user) => user._id) },
         status: 'failed',
         colorAnalysis: null,
         avatarKey: null,
@@ -74,8 +79,16 @@ try {
 
   console.log(
     `${env.MONGODB_DB}: ${failedIds.length} people failed a color read between ${from.toISOString()} and ${to.toISOString()}; ` +
-      `${users.length} have an account; ${avatars.length} still without colors.`,
+      `${users.length} have an account (${buyers.length} buyers, left out); ${avatars.length} still without colors.`,
   )
+
+  if (buyers.length > 0) {
+    console.log('buyers: restore by hand (scripts/restore-colors.ts), never read again:')
+
+    for (const user of buyers) {
+      console.log(`  ${user._id.toString()}  ${user.locale ?? 'en'}`)
+    }
+  }
 
   for (const avatar of avatars) {
     const user = userBy.get(avatar.userId.toString())!

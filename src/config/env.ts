@@ -31,6 +31,17 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   AI_TEXT_MODEL: z.string().default('gpt-5.4-mini'),
   AI_TEXT_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  // How a color read finds the season (modules/avatar/measure.ts): 'scored'
+  // measures four traits with fixed settings and derives the season in code,
+  // then writes the palette for it; 'classic' asks the model for the whole
+  // read at once, and then an existing season never changes by itself.
+  // Classic by default: on 11-Oct-2026 the scored read gave 2 of 4
+  // fictional faces the same season 3 times out of 3 and one 3 different
+  // seasons, 83% of reads were close calls (evals/colors/consistency.ts).
+  COLOR_READ_METHOD: z.enum(['scored', 'classic']).default('classic'),
+  // The measuring call is pinned to the model it was tested with (Oct 2026),
+  // not to AI_TEXT_MODEL.
+  COLOR_MEASURE_MODEL: z.string().default('gpt-5.4-mini'),
   // The stylist that plans looks: brief-following matters more than speed here.
   AI_STYLIST_MODEL: z.string().default('gpt-5.5'),
   AI_STYLIST_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
