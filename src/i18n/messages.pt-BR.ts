@@ -115,6 +115,9 @@ export const ptBrMessages: MessageTable = {
   'This look is not available right now. Try another one.': 'Este look não está disponível agora. Tente outro.',
   'This look’s avatar was deleted.': 'O avatar deste look foi excluído.',
   'This needs the avatar (and its measurements) first.': 'Para isso, primeiro é preciso ter o avatar (e as medidas dele).',
+  'This order can no longer be refunded here. Write to us at hello@avarobe.com.':
+    'Este pedido não pode mais ser reembolsado por aqui. Escreva para hello@avarobe.com.',
+  'This order was already refunded.': 'Este pedido já foi reembolsado.',
   'This passkey is already saved.': 'Esta passkey já está salva.',
   'This piece is still being prepared.': 'Esta peça ainda está sendo preparada.',
   'This purchase can no longer be refunded here. Write to us at hello@avarobe.com.':

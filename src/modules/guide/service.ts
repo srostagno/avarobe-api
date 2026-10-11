@@ -8,7 +8,7 @@ import { env } from '../../config/env.js'
 import type { GuideOrderDocument } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { errorMessage } from '../../utils/http.js'
-import { toLocale } from '../../utils/locale.js'
+import { appUrl, toLocale, type Locale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { reportPurchase } from '../billing/conversions.js'
@@ -20,6 +20,12 @@ import { outfitGuideEmail } from '../lifecycle/templates.js'
 
 export function guideDownloadUrl(order: Pick<GuideOrderDocument, 'token'>) {
   return `${env.API_PUBLIC_URL}/api/v1/guide/download/${order.token}`
+}
+
+// The 7-day refund for an order, from its email: the web's thank-you page
+// with the order's token (it asks before refunding).
+export function guideRefundUrl(order: Pick<GuideOrderDocument, 'token'>, locale?: Locale) {
+  return `${appUrl(locale, '/guide/thanks')}?refund=${encodeURIComponent(order.token)}`
 }
 
 export function isGuideSession(session: Stripe.Checkout.Session) {
@@ -83,6 +89,10 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     downloads: 0,
     lastDownloadAt: null,
     createdAt: now,
+    // For the 7-day refund from the email's link, and the terms ticked at checkout.
+    paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : (session.payment_intent?.id ?? null),
+    terms: session.consent?.terms_of_service === 'accepted' ? 'accepted' : null,
+    refundedAt: null,
   }
   let order: GuideOrderDocument | null = fresh
 
@@ -128,7 +138,13 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
         await deliverEmail({
           log: app.log,
           to: { email: order.email },
-          content: outfitGuideEmail({ email: order.email, firstName: name, downloadUrl: guideDownloadUrl(order), locale }),
+          content: outfitGuideEmail({
+            email: order.email,
+            firstName: name,
+            downloadUrl: guideDownloadUrl(order),
+            refundUrl: order.amount > 0 ? guideRefundUrl(order, locale) : undefined,
+            locale,
+          }),
         })
       } catch (error) {
         app.log.error({ err: errorMessage(error), order: order._id.toString() }, 'Guide email failed')

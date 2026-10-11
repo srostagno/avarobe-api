@@ -49,18 +49,30 @@ function fakeApp(user: Partial<UserDocument>, purchases: PurchaseDocument[]) {
   return { app, updates }
 }
 
-describe('the 7-day money-back guarantee', () => {
-  it('covers a one-time advisor for 7 days after paying', () => {
-    assert.ok(refundableUntil(purchase({ createdAt: new Date(now - 6 * DAY) }), now))
-    assert.equal(refundableUntil(purchase({ createdAt: new Date(now - 8 * DAY) }), now), null)
+describe('the 7-day refund', () => {
+  it('covers every purchase for 7 days after paying', () => {
+    for (const product of ['color_report', 'advisors_bundle', 'look_pack', 'outfit_guide', 'event_pass', 'magazine', 'pro_monthly', 'pro_annual', 'pro_trial'] as const) {
+      assert.ok(refundableUntil(purchase({ product, createdAt: new Date(now - 6 * DAY) }), {}, now), product)
+      assert.equal(refundableUntil(purchase({ product, createdAt: new Date(now - 8 * DAY) }), {}, now), null, product)
+    }
   })
 
-  it('leaves out Pro, look packs, free purchases and ones already refunded', () => {
-    assert.equal(refundableUntil(purchase({ product: 'pro_monthly' }), now), null)
-    assert.equal(refundableUntil(purchase({ product: 'look_pack' }), now), null)
-    assert.equal(refundableUntil(purchase({ amountTotal: 0 }), now), null)
-    assert.equal(refundableUntil(purchase({ refundedAt: new Date(now) }), now), null)
-    assert.equal(refundableUntil(purchase({ stripePaymentIntentId: null }), now), null)
+  it('leaves out free purchases, ones already refunded and ones with no payment to give back', () => {
+    assert.equal(refundableUntil(purchase({ amountTotal: 0 }), {}, now), null)
+    assert.equal(refundableUntil(purchase({ refundedAt: new Date(now) }), {}, now), null)
+    assert.equal(refundableUntil(purchase({ stripePaymentIntentId: null }), {}, now), null)
+    // Pro payments from before purchases kept the payment go back through their invoice.
+    assert.ok(refundableUntil(purchase({ product: 'pro_annual', stripePaymentIntentId: null, stripeSessionId: 'in_123' }), {}, now))
+    assert.equal(refundableUntil(purchase({ product: 'pro_annual', stripePaymentIntentId: null, stripeSessionId: 'cs_123' }), {}, now), null)
+  })
+
+  it('covers Pro only in the first week of their first Pro, never a renewal', () => {
+    const firstProAt = new Date(now - 40 * DAY)
+    // The monthly renewal from 2 days ago is past the first week.
+    assert.equal(refundableUntil(purchase({ product: 'pro_monthly', createdAt: new Date(now - 2 * DAY) }), { firstProAt }, now), null)
+    // A switch to annual 3 days into the first week of Pro.
+    const first = new Date(now - 5 * DAY)
+    assert.ok(refundableUntil(purchase({ product: 'pro_annual', createdAt: new Date(now - 2 * DAY) }), { firstProAt: first }, now))
   })
 
   it('takes the Color Advisor back, and the paid mark when nothing else was bought', async () => {

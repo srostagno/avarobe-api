@@ -183,6 +183,28 @@ function stripe() {
 
 const priceIds = new Map<string, string>()
 
+// What card statements say for Pro (Oct 2026). The account is Trimry's, so
+// without it a subscription charge would only carry the account's name;
+// one-time payments add the suffix instead (`TRIMRY* AVAROBE`). Stripe takes
+// a subscription invoice's descriptor from its first item's product.
+const PRO_DESCRIPTOR = 'AVAROBE'
+const describedProducts = new Set<string>()
+
+// Recurring products (Pro) found from before get the descriptor once per run.
+async function ensureDescriptor(productId: string) {
+  if (describedProducts.has(productId)) {
+    return
+  }
+
+  const product = await stripe().products.retrieve(productId)
+
+  if (product.statement_descriptor !== PRO_DESCRIPTOR) {
+    await stripe().products.update(productId, { statement_descriptor: PRO_DESCRIPTOR })
+  }
+
+  describedProducts.add(productId)
+}
+
 // The product's name and description in the buyer's language.
 export function productCopy(product: PurchaseProduct, locale: Locale = 'en') {
   const config = PRODUCTS[product]
@@ -198,12 +220,18 @@ const LOCALE_KEY: Record<Exclude<Locale, 'en'>, string> = { 'pt-BR': 'ptbr', es:
 async function localizedProduct(product: PurchaseProduct, locale: Exclude<Locale, 'en'>) {
   const id = `${PRODUCTS[product].lookupKey}_${LOCALE_KEY[locale]}`
   const copy = PRODUCT_COPY[locale][product]
+  const descriptor = PRODUCTS[product].recurring ? { statement_descriptor: PRO_DESCRIPTOR } : {}
 
   try {
     const existing = await stripe().products.retrieve(id)
 
-    if (existing.name !== copy.name || existing.description !== copy.description || !existing.active) {
-      await stripe().products.update(id, { name: copy.name, description: copy.description, active: true })
+    if (
+      existing.name !== copy.name ||
+      existing.description !== copy.description ||
+      !existing.active ||
+      (PRODUCTS[product].recurring && existing.statement_descriptor !== PRO_DESCRIPTOR)
+    ) {
+      await stripe().products.update(id, { name: copy.name, description: copy.description, active: true, ...descriptor })
     }
 
     return id
@@ -213,7 +241,7 @@ async function localizedProduct(product: PurchaseProduct, locale: Exclude<Locale
     }
   }
 
-  await stripe().products.create({ id, ...copy, metadata: { app: APP, product, locale } })
+  await stripe().products.create({ id, ...copy, ...descriptor, metadata: { app: APP, product, locale } })
   return id
 }
 
@@ -238,6 +266,12 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us', 
   const existing = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
   const current = existing.data[0]
 
+  // Pro's products from before the descriptor get it now (localized ones
+  // above).
+  if (config.recurring && !localized && typeof current?.product === 'string') {
+    await ensureDescriptor(current.product)
+  }
+
   if (current && current.unit_amount === amount && current.currency === currency) {
     priceIds.set(cacheKey, current.id)
     return current.id
@@ -251,12 +285,18 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us', 
   const knownProduct =
     localized ??
     (typeof current?.product === 'string' ? current.product : typeof usPrice?.product === 'string' ? usPrice.product : null)
+
+  if (config.recurring && !localized && !current && typeof usPrice?.product === 'string') {
+    await ensureDescriptor(usPrice.product)
+  }
+
   const productId =
     knownProduct ??
     (
       await stripe().products.create({
         name: config.name,
         description: config.description,
+        ...(config.recurring ? { statement_descriptor: PRO_DESCRIPTOR } : {}),
         metadata: { app: APP, product },
       })
     ).id
@@ -329,7 +369,7 @@ const EMBEDDED_BRANDING = Object.fromEntries(Object.entries(BRANDING).filter(([k
 // What checkout says next to the pay button: how a subscription renews and
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
-function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en') {
+export function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en') {
   const config = PRODUCTS[product]
   const currency = REGION_CURRENCY[region]
   const price = (item: PurchaseProduct) => money(regionalAmount(item, region), currency, locale)
@@ -369,12 +409,56 @@ function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', l
   return { en: 'One-time payment. No subscription.', 'pt-BR': 'Pagamento único. Sem assinatura.', es: 'Pago único. Sin suscripción.' }[locale]
 }
 
-// Beside Pay for a guest, whose email Stripe asks for: what our own email
-// step said before (they agree to the terms and privacy policy).
-const GUEST_TERMS: Record<Locale, string> = {
+// Every checkout asks them to accept our terms (Oct 2026): a required
+// checkbox with Stripe's consent_collection, worded and linked here. The
+// wording is required for it too: without it Stripe wants a terms URL in the
+// account's dashboard, which is Trimry's (tested in test mode, hosted,
+// embedded and subscription checkouts alike).
+export function termsAcceptance(locale: Locale) {
+  const terms = appUrl(locale, '/terms')
+  const privacy = appUrl(locale, '/privacy')
+
+  return {
+    en: `I agree to Avarobe’s [Terms](${terms}) and [Privacy Policy](${privacy}).`,
+    'pt-BR': `Concordo com os [Termos](${terms}) e a [Política de Privacidade](${privacy}) do Avarobe.`,
+    es: `Acepto los [Términos](${terms}) y la [Política de Privacidad](${privacy}) de Avarobe.`,
+  }[locale]
+}
+
+// The sentence beside Pay when Stripe ever refuses the checkbox (the
+// fallback in openSession): what a guest's checkout said before it.
+const PAY_TERMS: Record<Locale, string> = {
   en: 'By paying, you agree to Avarobe’s terms and privacy policy.',
   'pt-BR': 'Ao pagar, você concorda com os termos e a política de privacidade do Avarobe.',
   es: 'Al pagar, aceptas los términos y la política de privacidad de Avarobe.',
+}
+
+// Opens a checkout with the terms checkbox. If Stripe refuses that one
+// setting (it shouldn't, see termsAcceptance), it's logged and the checkout
+// opens anyway, with the sentence beside Pay instead: a checkout never fails
+// over it.
+async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: Locale, log?: { error: (obj: unknown, msg: string) => void }) {
+  const text = params.custom_text?.submit
+  const submit = text ? text.message : ''
+
+  try {
+    return await stripe().checkout.sessions.create({
+      ...params,
+      consent_collection: { terms_of_service: 'required' },
+      custom_text: { ...params.custom_text, terms_of_service_acceptance: { message: termsAcceptance(locale) } },
+    })
+  } catch (error) {
+    if (!(error instanceof Stripe.errors.StripeInvalidRequestError) || !/consent|terms of service|terms_of_service/i.test(`${error.param ?? ''} ${error.message}`)) {
+      throw error
+    }
+
+    ;(log ?? console).error({ err: error.message }, 'Stripe refused the terms checkbox; checkout opened with the sentence instead')
+
+    return stripe().checkout.sessions.create({
+      ...params,
+      custom_text: { ...params.custom_text, submit: { message: `${submit} ${PAY_TERMS[locale]}`.trim() } },
+    })
+  }
 }
 
 export async function createCheckout(input: {
@@ -430,7 +514,7 @@ export async function createCheckout(input: {
       : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
         ? { allow_promotion_codes: true }
         : {}),
-    custom_text: { submit: { message: guest ? `${submitMessage(input.product, region, locale)} ${GUEST_TERMS[locale]}` : submitMessage(input.product, region, locale) } },
+    custom_text: { submit: { message: submitMessage(input.product, region, locale) } },
     // The embedded form comes back to the same success page; closing it is
     // the way back, so it has no cancel link.
     ...(input.embedded
@@ -471,7 +555,7 @@ export async function createCheckout(input: {
         // would only say the account's name.
         payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
       }
-  const session = await stripe().checkout.sessions.create(params)
+  const session = await openSession(params, locale)
 
   if (input.embedded ? !session.client_secret : !session.url) {
     throw new Error('Stripe returned a checkout session without a URL or client secret.')
@@ -514,7 +598,7 @@ export async function createGuideCheckout(input: {
     success_url: `${appUrl(input.locale, '/guide/thanks')}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl(input.locale, '/guide')}?checkout=cancelled`,
   }
-  const session = await stripe().checkout.sessions.create(params)
+  const session = await openSession(params, input.locale ?? 'en')
 
   if (!session.url) {
     throw new Error('Stripe returned a checkout session without a URL.')
@@ -566,6 +650,32 @@ export async function refundPayment(paymentIntentId: string, metadata: Record<st
   return refund.id
 }
 
+// The payment behind a paid invoice (a Pro payment), as API 2025-08-27.basil
+// has it: through the invoice's payments.
+async function invoicePaymentIntent(invoiceId: string) {
+  const payments = await stripe().invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 1 })
+  return readId(payments.data[0]?.payment.payment_intent)
+}
+
+// A Pro payment given back in full: its invoice's payment, refunded like any
+// other (tested in test mode). Returns the refund and the payment it found.
+export async function refundInvoice(invoiceId: string, metadata: Record<string, string>) {
+  const paymentIntentId = await invoicePaymentIntent(invoiceId)
+
+  if (!paymentIntentId) {
+    throw new Error(`Invoice ${invoiceId} has no paid payment to refund.`)
+  }
+
+  return { refundId: await refundPayment(paymentIntentId, metadata), paymentIntentId }
+}
+
+// The invoice a payment paid, for a refund made in Stripe on a Pro payment
+// recorded before purchases kept their payment (charge.refunded).
+export async function invoiceOfPayment(paymentIntentId: string) {
+  const payments = await stripe().invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: paymentIntentId }, limit: 1 })
+  return readId(payments.data[0]?.invoice)
+}
+
 export function verifyWebhook(payload: string, signature: string) {
   if (!env.STRIPE_WEBHOOK_SECRET) {
     throw new BillingNotConfiguredError('The Stripe webhook secret is not set.')
@@ -610,6 +720,8 @@ type Grant = {
   // Credits this payment grants, when not the product's usual (annual's
   // first payment holds some back).
   credits?: number
+  // The terms accepted at checkout (session.consent), when known.
+  terms?: 'accepted' | null
 }
 
 // Records one payment and applies it to the user in a transaction: credits,
@@ -649,6 +761,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           createdAt: new Date(),
           ...(config.unlocks?.color || config.unlocks?.mirror ? { colorRead } : {}),
           ...(grant.placement ? { placement: grant.placement } : {}),
+          ...(grant.terms ? { terms: grant.terms } : {}),
         },
         { session: mongoSession },
       )
@@ -756,10 +869,13 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
         amount: session.amount_total ?? 0,
         currency: session.currency ?? 'usd',
         placement: session.metadata?.placement ?? null,
+        terms: termsOf(session),
       })
 
       if (applied) {
         void reportSession(app, session, product)
+      } else {
+        await noteTerms(app, readId(session.invoice) ?? session.id, session)
       }
 
       return userId
@@ -780,10 +896,14 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
       currency: session.currency ?? 'usd',
       first: true,
       placement: session.metadata?.placement ?? null,
+      terms: termsOf(session),
     })
 
     if (applied) {
       void reportSession(app, session, product)
+    } else {
+      // invoice.paid granted it first: the checkbox is only on the session.
+      await noteTerms(app, readId(session.invoice) ?? session.id, session)
     }
 
     return userId
@@ -797,6 +917,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
     amount: session.amount_total ?? 0,
     currency: session.currency ?? 'usd',
     placement: session.metadata?.placement ?? null,
+    terms: termsOf(session),
   })
 
   if (applied) {
@@ -804,6 +925,19 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
   }
 
   return userId
+}
+
+// Whether they ticked the terms at checkout (consent_collection).
+function termsOf(session: Stripe.Checkout.Session) {
+  return session.consent?.terms_of_service === 'accepted' ? ('accepted' as const) : null
+}
+
+async function noteTerms(app: FastifyInstance, paymentKey: string, session: Stripe.Checkout.Session) {
+  const terms = termsOf(session)
+
+  if (terms) {
+    await app.collections.purchases.updateOne({ stripeSessionId: paymentKey, terms: null }, { $set: { terms } })
+  }
 }
 
 // Once per purchase, whichever of the success page or the webhooks grants
@@ -861,6 +995,9 @@ async function grantProPayment(
     // The subscription's first payment (not a renewal or a plan switch).
     first?: boolean
     placement?: string | null
+    terms?: 'accepted' | null
+    // The invoice's payment, when the invoice carries it (for refunds).
+    paymentIntentId?: string | null
   },
 ) {
   const interval = input.product === 'pro_annual' ? 'year' : 'month'
@@ -870,10 +1007,11 @@ async function grantProPayment(
     userId: input.userId,
     product: input.product,
     paymentKey: input.paymentKey,
-    paymentIntentId: null,
+    paymentIntentId: input.paymentIntentId ?? null,
     amount: input.amount,
     currency: input.currency,
     placement: input.placement ?? null,
+    terms: input.terms ?? null,
     ...(firstWeek ? { credits: firstWeek.now } : {}),
     set: (user) => ({
       pro: {
@@ -891,15 +1029,27 @@ async function grantProPayment(
   })
 
   // Already granted (the success page and the webhook both report it); still
-  // keep the period end current.
+  // keep the period end current, and the payment the other one didn't have.
   if (!applied) {
     await app.collections.users.updateOne(
       { _id: input.userId, 'pro.subscriptionId': input.subscriptionId },
       { $max: { 'pro.periodEnd': input.periodEnd } },
     )
+    await notePayment(app, input.paymentKey, input.paymentIntentId)
   }
 
   return applied
+}
+
+async function notePayment(app: FastifyInstance, paymentKey: string, paymentIntentId: string | null | undefined) {
+  if (paymentIntentId) {
+    await app.collections.purchases.updateOne({ stripeSessionId: paymentKey, stripePaymentIntentId: null }, { $set: { stripePaymentIntentId: paymentIntentId } })
+  }
+}
+
+// The payment an invoice.paid event carries, when it carries its payments.
+function paidIntent(invoice: Stripe.Invoice) {
+  return readId(invoice.payments?.data.find((payment) => payment.status === 'paid')?.payment.payment_intent)
 }
 
 // The trial's first invoice (the trial fee): the trial looks, and Pro in
@@ -916,6 +1066,8 @@ async function grantProTrial(
     amount: number
     currency: string
     placement?: string | null
+    terms?: 'accepted' | null
+    paymentIntentId?: string | null
   },
 ) {
   const now = new Date()
@@ -923,10 +1075,11 @@ async function grantProTrial(
     userId: input.userId,
     product: 'pro_trial',
     paymentKey: input.paymentKey,
-    paymentIntentId: null,
+    paymentIntentId: input.paymentIntentId ?? null,
     amount: input.amount,
     currency: input.currency,
     placement: input.placement ?? null,
+    terms: input.terms ?? null,
     set: (user) => ({
       proTrialAt: user.proTrialAt ?? now,
       pro: {
@@ -947,6 +1100,8 @@ async function grantProTrial(
     void sendTrialStartedEmail(app, input.userId).catch((error: unknown) => {
       app.log.error({ err: error, userId: input.userId.toString() }, 'Trial email failed')
     })
+  } else {
+    await notePayment(app, input.paymentKey, input.paymentIntentId)
   }
 
   return applied
@@ -979,6 +1134,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
       amount: invoice.amount_paid,
       currency: invoice.currency,
       placement: details?.metadata?.placement ?? null,
+      paymentIntentId: paidIntent(invoice),
     })
 
     if (applied) {
@@ -1010,6 +1166,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     first,
     // Only the first payment came from an offer.
     placement: first ? (details?.metadata?.placement ?? null) : null,
+    paymentIntentId: paidIntent(invoice),
   })
 
   if (applied && first) {

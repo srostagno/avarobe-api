@@ -1067,7 +1067,8 @@ export function trialEndingEmail(input: Recipient & { trialEnd: Date; looksLeft:
 // ---------------------------------------------------------------- products
 
 // The Outfit Formula Book's delivery: the download link, for good.
-export function outfitGuideEmail(input: { email: string; firstName: string; downloadUrl: string; locale?: Locale }): EmailContent {
+// `refundUrl`: the 7-day refund page for this order (no account needed).
+export function outfitGuideEmail(input: { email: string; firstName: string; downloadUrl: string; refundUrl?: string; locale?: Locale }): EmailContent {
   const recipient: Recipient = { firstName: input.firstName, email: input.email, unsubscribeUrl: '', locale: input.locale }
   const { c, locale } = reader(recipient)
 
@@ -1086,6 +1087,7 @@ export function outfitGuideEmail(input: { email: string; firstName: string; down
       small(c.guide.keep),
       paragraph(c.guide.colors),
       button(c.common.findMyColors, `${appUrl(locale, '/color-analysis')}?utm_source=guide&utm_medium=email&utm_campaign=outfit_formula_book`),
+      ...(input.refundUrl ? [textLink(c.guide.refund, input.refundUrl)] : []),
       signature(c),
     ],
   })

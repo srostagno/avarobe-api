@@ -12,7 +12,9 @@ import { pricingRegion } from '../billing/pricing.js'
 import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
 import { billingState, isAdmin, loadBillingUser } from '../billing/entitlements.js'
+import { REFUND_REASONS, RefundError, guideRefundableUntil, refundGuideOrder } from '../billing/refunds.js'
 import { createGuideCheckout, retrieveSession, stripeConfigured } from '../billing/stripe.js'
+import type { GuideOrderDocument, RefundReason } from '../../types/mongo.js'
 import { compGuideOrder, fulfillGuide, guideDownloadUrl, guideSettled, isGuideSession } from './service.js'
 
 // Meta's _fbc can be long; attributionMetadata drops what Stripe can't keep.
@@ -24,6 +26,27 @@ const checkoutSchema = z.object({
 })
 
 const sessionSchema = z.object({ session_id: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/) })
+
+const TOKEN = /^[A-Za-z0-9_-]{20,64}$/
+
+const refundSchema = z.object({
+  token: z.string().regex(TOKEN),
+  reason: z.enum(REFUND_REASONS as [RefundReason, ...RefundReason[]]).optional(),
+})
+
+// What the thank-you page and the refund page show of an order: its link,
+// and the 7-day refund while it lasts.
+function orderView(order: GuideOrderDocument) {
+  return {
+    downloadUrl: order.refundedAt ? null : guideDownloadUrl(order),
+    email: order.email,
+    token: order.token,
+    amount: order.amount,
+    currency: order.currency,
+    refundableUntil: guideRefundableUntil(order)?.toISOString() ?? null,
+    refundedAt: order.refundedAt?.toISOString() ?? null,
+  }
+}
 
 function pdfPath() {
   return path.isAbsolute(env.OUTFIT_GUIDE_PDF) ? env.OUTFIT_GUIDE_PDF : path.resolve(process.cwd(), env.OUTFIT_GUIDE_PDF)
@@ -89,7 +112,44 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(502).send({ message: 'We could not prepare your download. Please refresh.' })
     }
 
-    return { downloadUrl: guideDownloadUrl(order), email: order.email }
+    return orderView(order)
+  })
+
+  // The refund page the guide email links to (the web's /guide/thanks with
+  // ?refund=<token>): the order behind the link.
+  app.get('/order/:token', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const token = (request.params as { token?: string }).token ?? ''
+    const order = TOKEN.test(token) ? await app.collections.guideOrders.findOne({ token }) : null
+
+    if (!order) {
+      return reply.code(404).send({ message: 'We could not find this order.' })
+    }
+
+    return orderView(order)
+  })
+
+  // The 7-day refund, guests included: the order's token is the key (it's
+  // in their email and on the thank-you page).
+  app.post('/refund', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const parsed = parseBody(refundSchema, request.body ?? {})
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    try {
+      await refundGuideOrder(app, { token: parsed.data.token, reason: parsed.data.reason ?? null })
+    } catch (error) {
+      if (error instanceof RefundError) {
+        return reply.code(409).send({ message: error.message })
+      }
+
+      request.log.error({ err: errorMessage(error) }, 'Guide refund failed')
+      return reply.code(502).send({ message: 'The refund didn’t go through. Try again in a moment, or write to hello@avarobe.com.' })
+    }
+
+    const order = await app.collections.guideOrders.findOne({ token: parsed.data.token })
+    return order ? orderView(order) : { refundedAt: new Date().toISOString() }
   })
 
   // Whether the signed-in person has the guide (bought with this account, or
@@ -108,7 +168,8 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
     // A guest purchase counts only once the account has proven that email;
     // otherwise anyone could sign up with a buyer's address and take the link.
     const match = account?.emailVerifiedAt ? [{ userId }, { email: user.email.toLowerCase() }] : [{ userId }]
-    let order = await app.collections.guideOrders.findOne({ $or: match }, { sort: { createdAt: 1 } })
+    // A refunded order no longer counts.
+    let order = await app.collections.guideOrders.findOne({ $or: match, refundedAt: null }, { sort: { createdAt: 1 } })
 
     if (!order && billingState(user).comp) {
       order = await compGuideOrder(app, userId, user.email)
@@ -119,10 +180,14 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/download/:token', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const token = (request.params as { token?: string }).token ?? ''
-    const order = /^[A-Za-z0-9_-]{20,64}$/.test(token) ? await app.collections.guideOrders.findOne({ token }) : null
+    const order = TOKEN.test(token) ? await app.collections.guideOrders.findOne({ token }) : null
 
     if (!order) {
       return reply.code(404).type('text/plain').send('This download link is not valid. Write to hello@avarobe.com and we will send you a new one.')
+    }
+
+    if (order.refundedAt) {
+      return reply.code(404).type('text/plain').send('This order was refunded, so its download link no longer works.')
     }
 
     const file = pdfPath()

@@ -276,6 +276,8 @@ export type PurchaseDocument = {
   // The offer the checkout was opened from (e.g. purchase_success_pro_credit,
   // email_xsell_style_pro), when the checkout said.
   placement?: string | null
+  // The terms accepted at checkout (Stripe's consent checkbox), since Oct 2026.
+  terms?: 'accepted' | null
 }
 
 export type RefundReason = 'not_accurate' | 'not_expected' | 'technical' | 'mistake' | 'other'
@@ -287,7 +289,15 @@ export type PurchaseRefund = {
   note: string | null
   amount: number
   stripeRefundId: string | null
+  // For the admin's review, never a reason to refuse one (Oct 2026: the
+  // 7-day refund is unconditional): 'repeat' when they had refunds before
+  // (`priorRefunds`), 'credit_used' when this report's credit paid part of a
+  // Pro annual they keep.
+  flags?: RefundFlag[]
+  priorRefunds?: number
 }
+
+export type RefundFlag = 'repeat' | 'credit_used'
 
 // A visit from a Meta ad, counted by us to see where clicks get lost:
 // 'arrived' when the request reaches the web server, 'loaded' when the page
@@ -1046,6 +1056,12 @@ export type GuideOrderDocument = {
   downloads: number
   lastDownloadAt: Date | null
   createdAt: Date
+  // Since Oct 2026: the payment (for the 7-day refund, guests included), the
+  // terms accepted at checkout, and the refund, after which the link stops.
+  paymentIntentId?: string | null
+  terms?: 'accepted' | null
+  refundedAt?: Date | null
+  refund?: { source: 'app' | 'stripe'; reason: RefundReason | null; amount: number; stripeRefundId: string | null } | null
 }
 
 export type CollectionDocument = {

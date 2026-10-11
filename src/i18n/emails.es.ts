@@ -389,6 +389,7 @@ export const esEmails: EmailCopy = {
       'Gracias por tu compra. Tu ejemplar de El Libro de Fórmulas de Outfits está listo: 120 combinaciones que siempre funcionan, el método Color, Forma y Acabado, una guía rápida de pares de colores y planificadores para imprimir.',
     button: 'Descargar mi guía (PDF)',
     keep: 'Guárdala en tu celular o imprímela. Este enlace es tuyo y funciona siempre, así que conserva este correo.',
+    refund: '¿Cambiaste de opinión? Pide tu reembolso dentro de los 7 días',
     colors: '¿Quieres saber cuáles de estos colores son los tuyos? Avarobe descubre tu estación de color con una selfie, gratis.',
   },
 

@@ -116,6 +116,9 @@ export const esMessages: MessageTable = {
   'This look is not available right now. Try another one.': 'Este look no está disponible en este momento. Prueba otro.',
   'This look’s avatar was deleted.': 'El avatar de este look se eliminó.',
   'This needs the avatar (and its measurements) first.': 'Para esto primero necesitas el avatar (y sus medidas).',
+  'This order can no longer be refunded here. Write to us at hello@avarobe.com.':
+    'Este pedido ya no se puede reembolsar aquí. Escríbenos a hello@avarobe.com.',
+  'This order was already refunded.': 'Este pedido ya fue reembolsado.',
   'This passkey is already saved.': 'Esta passkey ya está guardada.',
   'This piece is still being prepared.': 'Esta prenda aún se está preparando.',
   'This purchase can no longer be refunded here. Write to us at hello@avarobe.com.':

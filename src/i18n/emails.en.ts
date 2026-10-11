@@ -424,6 +424,8 @@ export const enEmails = {
       'Thank you for your order. Your copy of The Outfit Formula Book is ready: 120 combinations that always work, the Color, Shape and Finish method, a color pairs cheat sheet and printable planners.',
     button: 'Download my guide (PDF)',
     keep: 'Save it to your phone or print it. This link is yours and works anytime, so keep this email.',
+    // The 7-day refund, from this email (no account needed).
+    refund: 'Changed your mind? Get a refund within 7 days',
     colors: 'Curious which of these colors are yours? Avarobe finds your color season from one selfie, free.',
   },
 

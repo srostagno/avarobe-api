@@ -390,6 +390,7 @@ export const ptBrEmails: EmailCopy = {
       'Obrigado pelo seu pedido. Seu exemplar de O Livro de Fórmulas de Looks está pronto: 120 combinações que sempre funcionam, o método Cor, Forma e Acabamento, um guia rápido de pares de cores e planners para imprimir.',
     button: 'Baixar meu guia (PDF)',
     keep: 'Salve no celular ou imprima. Este link é seu e funciona sempre, então guarde este e-mail.',
+    refund: 'Mudou de ideia? Peça o reembolso em até 7 dias',
     colors: 'Quer saber quais dessas cores são suas? O Avarobe descobre sua estação de cores a partir de uma selfie, grátis.',
   },
 
