@@ -23,6 +23,15 @@ export const ALERT_RULES = {
   every: HOUR,
   readsWindow: 10 * MINUTE,
   readsAtLeast: 3,
+  // An alert that couldn't be delivered (MailerSend down, a bad key) is
+  // tried again this often, not on every failed call.
+  retryUndelivered: 10 * MINUTE,
+  // Out of credits or a refused key is over once no call has said so for
+  // this long (another feature may still be hitting it).
+  accountQuiet: 2 * MINUTE,
+  // After "funcionan de nuevo", a new outage alerts this soon at the
+  // earliest (not an hour after the last alert).
+  afterRecovery: 10 * MINUTE,
 } as const
 
 const BILLING_URL = 'https://platform.openai.com/settings/organization/billing/overview'
@@ -47,6 +56,37 @@ export function shouldAlertReads(count: number, lastReadsAt: Date | null, lastAc
   const recent = (at: Date | null) => at !== null && now.getTime() - at.getTime() < ALERT_RULES.every
 
   return count >= ALERT_RULES.readsAtLeast && !recent(lastReadsAt) && !recent(lastAccountAt)
+}
+
+// Whether an open alert is over, on a successful read: the credits one once
+// OpenAI has stopped saying so for a moment, the reads one once fewer than
+// 3 people failed in the last 10 minutes (a rate limit lets some reads
+// through while others keep failing).
+export function alertIsOver(
+  id: OpsAlertDocument['_id'],
+  facts: { lastAccountErrorAt: Date | null; failingPeople: number },
+  now: Date,
+) {
+  if (id === 'openai_account') {
+    return facts.lastAccountErrorAt === null || now.getTime() - facts.lastAccountErrorAt.getTime() >= ALERT_RULES.accountQuiet
+  }
+
+  return facts.failingPeople < ALERT_RULES.readsAtLeast
+}
+
+// Whether the founder was told of this trouble (an alert went out since it
+// began), so "funcionan de nuevo" means something to him. Trouble that came
+// back within the hour, held back by the throttle and over before the next
+// alert, ends quietly.
+export function alertWasSent(alert: Pick<OpsAlertDocument, 'lastSentAt' | 'openSince'>) {
+  return alert.openSince !== null && alert.lastSentAt.getTime() >= alert.openSince.getTime()
+}
+
+// When a claimed alert that couldn't be delivered may be claimed again:
+// in 10 minutes, not at the next failed call (one email each, if the
+// delivery did go out after all), nor in an hour.
+export function undeliveredLastSentAt(now: Date) {
+  return new Date(now.getTime() - ALERT_RULES.every + ALERT_RULES.retryUndelivered)
 }
 
 const CHILE = new Intl.DateTimeFormat('es-CL', {
@@ -107,10 +147,14 @@ function recipients(log: FastifyBaseLogger) {
 
 // An alert may be open: worth a look on the next successful read.
 let maybeOpen = true
+// The last time OpenAI said no credits or refused the key (any feature).
+let lastAccountErrorAt: Date | null = null
 
 // Takes the alert for this hour, atomically: false if it already went out
 // (another process, or a few seconds ago). `openSince` keeps the start of
-// the trouble across hourly alerts. Returns the alert as it was.
+// the trouble across hourly alerts, and is set even when the alert is held
+// back, so trouble that starts again within the hour still gets its "funcionan
+// de nuevo". Returns the alert as it was.
 async function claimAlert(app: FastifyInstance, id: OpsAlertDocument['_id'], lastError: string | null, now: Date) {
   try {
     const before = await app.collections.opsAlerts.findOneAndUpdate(
@@ -119,10 +163,17 @@ async function claimAlert(app: FastifyInstance, id: OpsAlertDocument['_id'], las
       { upsert: true, returnDocument: 'before' },
     )
 
+    maybeOpen = true
     return { claimed: true as const, before }
   } catch (error) {
     // The upsert found the alert sent within the hour.
     if (isDuplicateKeyError(error)) {
+      const reopened = await app.collections.opsAlerts.updateOne({ _id: id, openSince: null }, { $set: { openSince: now, lastError } })
+
+      if (reopened.modifiedCount > 0) {
+        maybeOpen = true
+      }
+
       return { claimed: false as const, before: null }
     }
 
@@ -130,12 +181,13 @@ async function claimAlert(app: FastifyInstance, id: OpsAlertDocument['_id'], las
   }
 }
 
-// A claimed alert that couldn't be delivered: free it, so the next failure
-// tries again instead of waiting an hour.
-async function releaseAlert(app: FastifyInstance, id: OpsAlertDocument['_id'], before: OpsAlertDocument | null, now: Date) {
-  await app.collections.opsAlerts.updateOne({ _id: id, lastSentAt: now }, { $set: { lastSentAt: before?.lastSentAt ?? new Date(0) } })
+// A claimed alert that couldn't be delivered: tried again in 10 minutes.
+async function deferAlert(app: FastifyInstance, id: OpsAlertDocument['_id'], now: Date) {
+  await app.collections.opsAlerts.updateOne({ _id: id, lastSentAt: now }, { $set: { lastSentAt: undeliveredLastSentAt(now) } })
 }
 
+// Whether it reached anyone (always, with no one to send it to: there's
+// nothing to try again).
 async function send(app: FastifyInstance, kind: string, content: ReturnType<typeof alertContent>) {
   const to = recipients(app.log)
   let delivered = 0
@@ -152,8 +204,9 @@ async function send(app: FastifyInstance, kind: string, content: ReturnType<type
     }
   }
 
-  maybeOpen = true
-  void trackServerEvent(app, { name: 'ops_alert_sent', userId: null, props: { kind } })
+  if (delivered > 0) {
+    void trackServerEvent(app, { name: 'ops_alert_sent', userId: null, props: { kind } })
+  }
 
   return to.length === 0 || delivered > 0
 }
@@ -226,22 +279,27 @@ export async function alertAccount(
 
     const hourAgo = new Date(now.getTime() - HOUR)
     const [failed, pending] = await Promise.all([failedSince(app, hourAgo), pendingNotices(app, now)])
-    const subject =
-      failure === 'no_credits'
+    // Our own config: the server has no key at all.
+    const missingKey = error.code === 'missing_api_key'
+    const subject = missingKey
+      ? 'Avarobe: falta OPENAI_API_KEY en el servidor — las lecturas de color están fallando'
+      : failure === 'no_credits'
         ? 'Avarobe: OpenAI sin créditos — las lecturas de color están fallando'
         : 'Avarobe: OpenAI rechaza la clave o la configuración — las lecturas de color están fallando'
     const content = alertContent(subject, [
-      `OpenAI respondió HTTP ${error.statusCode} (${error.code ?? 'sin código'} / ${error.type ?? 'sin tipo'}). Mientras siga así fallan las lecturas de color, la foto en tus colores y todo lo que usa IA.`,
+      missingKey
+        ? 'avarobe-api no tiene OPENAI_API_KEY (revisa su .env y reinícialo). Mientras siga así fallan las lecturas de color, la foto en tus colores y todo lo que usa IA.'
+        : `OpenAI respondió HTTP ${error.statusCode} (${error.code ?? 'sin código'} / ${error.type ?? 'sin tipo'}). Mientras siga así fallan las lecturas de color, la foto en tus colores y todo lo que usa IA.`,
       `Desde: ${chileTime(claim.before?.openSince ?? now)}`,
       `Personas con la lectura fallida en la última hora: ${failed.count} (${failed.guests} invitados)`,
       `Esperando aviso por email: ${pending}`,
       `Último error: ${detail}`,
-      `Recargar créditos: ${BILLING_URL}`,
+      ...(missingKey ? [] : [`Recargar créditos: ${BILLING_URL}`]),
       FOOTER,
     ])
 
     if (!(await send(app, 'openai_account', content))) {
-      await releaseAlert(app, 'openai_account', claim.before, now)
+      await deferAlert(app, 'openai_account', now)
     }
   } catch (alertError) {
     app.log.error({ err: alertError }, 'OpenAI account alert failed')
@@ -254,17 +312,44 @@ export function watchOpenAi(app: FastifyInstance) {
     const failure = classifyAiError(error)
 
     if (failure === 'no_credits' || failure === 'account') {
+      lastAccountErrorAt = new Date()
       void alertAccount(app, error, failure)
     }
   })
 }
 
+// Color reads that failed in the last 10 minutes, and still have. Photos
+// the AI refused don't count: bad photos aren't an outage.
+function failedRecently(app: FastifyInstance, now: Date) {
+  const since = new Date(now.getTime() - ALERT_RULES.readsWindow)
+
+  return app.collections.avatars.countDocuments({
+    status: 'failed',
+    updatedAt: { $gte: since },
+    'failure.at': { $gte: since },
+    'failure.code': { $ne: 'rejected' },
+  })
+}
+
+// People whose color read failed in the last 10 minutes, by the events (an
+// avatar being read again isn't "failed" for those seconds), photos aside.
+async function failingPeople(app: FastifyInstance, now: Date) {
+  const ids = await app.collections.analyticsEvents.distinct('userId', {
+    name: 'colors_failed',
+    origin: 'server',
+    at: { $gte: new Date(now.getTime() - ALERT_RULES.readsWindow) },
+    'props.reason': { $ne: 'rejected' },
+  })
+
+  return ids.filter(Boolean).length
+}
+
 // After each failed color read: several people failing within minutes,
-// whatever the reason, is worth a look. Never throws.
+// for anything but their photo, is worth a look. Never throws.
 export async function noteReadFailed(app: FastifyInstance, now = new Date()) {
   try {
     const since = new Date(now.getTime() - ALERT_RULES.readsWindow)
-    const count = await app.collections.avatars.countDocuments({ status: 'failed', updatedAt: { $gte: since }, 'failure.at': { $gte: since } })
+    const count = await failedRecently(app, now)
 
     if (count < ALERT_RULES.readsAtLeast) {
       return
@@ -299,37 +384,60 @@ export async function noteReadFailed(app: FastifyInstance, now = new Date()) {
     ])
 
     if (!(await send(app, 'reads_failing', content))) {
-      await releaseAlert(app, 'reads_failing', claim.before, now)
+      await deferAlert(app, 'reads_failing', now)
     }
   } catch (error) {
     app.log.error({ err: error }, 'Reads failing alert failed')
   }
 }
 
-// After each successful color read: if an alert is open, close it and say
-// so, once. Skips the database while nothing has been sent since boot.
+// After each successful color read: if an alert is open and its trouble is
+// over (alertIsOver), close it and say so, once. A new outage may then
+// alert 10 minutes later at the earliest, not an hour after the last
+// alert. Skips the database while nothing has been opened since boot.
 export async function noteReadSucceeded(app: FastifyInstance, now = new Date()) {
   if (!maybeOpen) {
     return
   }
 
   try {
+    const open = await app.collections.opsAlerts.find({ openSince: { $ne: null } }).toArray()
+
+    if (open.length === 0) {
+      maybeOpen = false
+      return
+    }
+
+    const facts = {
+      lastAccountErrorAt,
+      failingPeople: open.some((alert) => alert._id === 'reads_failing') ? await failingPeople(app, now) : 0,
+    }
     const closed: Date[] = []
 
-    for (const id of ['openai_account', 'reads_failing'] as const) {
+    for (const alert of open) {
+      if (!alertIsOver(alert._id, facts, now)) {
+        continue
+      }
+
       const before = await app.collections.opsAlerts.findOneAndUpdate(
-        { _id: id, openSince: { $ne: null } },
-        { $set: { openSince: null } },
+        { _id: alert._id, openSince: { $ne: null } },
+        [
+          {
+            $set: {
+              openSince: null,
+              lastSentAt: { $min: ['$lastSentAt', new Date(now.getTime() - ALERT_RULES.every + ALERT_RULES.afterRecovery)] },
+            },
+          },
+        ],
         { returnDocument: 'before' },
       )
 
-      if (before?.openSince) {
+      if (before?.openSince && alertWasSent(before)) {
         closed.push(before.openSince)
       }
     }
 
     if (closed.length === 0) {
-      maybeOpen = false
       return
     }
 

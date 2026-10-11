@@ -10,6 +10,27 @@ import { BOARD_KINDS } from '../modules/report/boards.js'
 // marked failed and the person can retry.
 const STALE_AFTER_MS = 10 * 60 * 1000
 
+// An interrupted color read (colors first, before the avatar). Also at the
+// start of each pass of the color read retries (modules/avatar/retry.ts): a
+// restart minutes after a read started leaves it here past the boot's
+// check, and the studio would show its progress forever (and a "tell me
+// when ready" would never be read again).
+export async function failStaleColorReads(app: FastifyInstance, now = new Date()) {
+  const result = await app.collections.avatars.updateMany(
+    { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: new Date(now.getTime() - STALE_AFTER_MS) } },
+    {
+      $set: {
+        ...failureFor('colors'),
+        job: null,
+        failure: { code: 'internal', at: now, attempts: 1, detail: 'interrupted' },
+        updatedAt: now,
+      },
+    },
+  )
+
+  return result.modifiedCount
+}
+
 export async function failStaleJobs(app: FastifyInstance) {
   const cutoff = new Date(Date.now() - STALE_AFTER_MS)
   const now = new Date()
@@ -29,18 +50,7 @@ export async function failStaleJobs(app: FastifyInstance) {
       await refundCredits(app, look.userId, 1)
     }
   }
-  // An interrupted color read (colors first, before the avatar).
-  const colorReads = await app.collections.avatars.updateMany(
-    { status: 'processing', 'job.kind': 'colors', updatedAt: { $lt: cutoff } },
-    {
-      $set: {
-        ...failureFor('colors'),
-        job: null,
-        failure: { code: 'internal', at: now, attempts: 1, detail: 'interrupted' },
-        updatedAt: now,
-      },
-    },
-  )
+  const colorReads = await failStaleColorReads(app, now)
   const [refinements, avatars, looks, , pieces] = await Promise.all([
     // An interrupted refinement or haircut leaves the previous avatar usable.
     app.collections.avatars.updateMany(
@@ -124,10 +134,10 @@ export async function failStaleJobs(app: FastifyInstance) {
     )
   }
 
-  if (colorReads.modifiedCount || refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount || pieces.modifiedCount) {
+  if (colorReads || refinements.modifiedCount || avatars.modifiedCount || looks.modifiedCount || pieces.modifiedCount) {
     app.log.warn(
       {
-        colorReads: colorReads.modifiedCount,
+        colorReads,
         refinements: refinements.modifiedCount,
         avatars: avatars.modifiedCount,
         looks: looks.modifiedCount,

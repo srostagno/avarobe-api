@@ -13,8 +13,10 @@ import { generateSecureToken, hashToken } from './tokens.js'
 // phone's own (where Apple Pay and saved cards work), and from the email
 // that brings back an unfinished checkout. 'checkout' is the link emailed
 // the moment they tap Buy inside those browsers: its own nonce, so the
-// other emails' sign-in links (offers, rescue) don't void it.
-export type LinkPurpose = 'verify_email' | 'reset_password' | 'handoff' | 'sign_in' | 'checkout'
+// other emails' sign-in links (offers, rescue) don't void it. 'colors' is
+// the link to their colors after a read the AI did late, its own for the
+// same reason: the colors offer follows it within a day.
+export type LinkPurpose = 'verify_email' | 'reset_password' | 'handoff' | 'sign_in' | 'checkout' | 'colors'
 
 const LINKS = {
   verify_email: {
@@ -44,6 +46,12 @@ const LINKS = {
   checkout: {
     nonceField: 'checkoutLinkNonceHash',
     sentAtField: 'checkoutLinkSentAt',
+    ttl: () => env.SIGN_IN_LINK_TTL,
+    path: '/continue',
+  },
+  colors: {
+    nonceField: 'colorsLinkNonceHash',
+    sentAtField: 'colorsLinkSentAt',
     ttl: () => env.SIGN_IN_LINK_TTL,
     path: '/continue',
   },

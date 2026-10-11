@@ -3,7 +3,7 @@
 // collections understand the small part of MongoDB those jobs use: filters
 // with dotted paths, null matching a missing field, $exists, $ne, $in, $nin,
 // $lt/$lte/$gt/$gte, $or, $nor and $and; updates with $set, $unset, $inc and
-// $setOnInsert, pipeline $set with $ifNull, upserts (and their duplicate-key
+// $setOnInsert, pipeline $set with $ifNull and $min, upserts (and their duplicate-key
 // error) and sort/limit. Anything else throws, so a test never passes on a
 // query the fake didn't understand.
 import type { FastifyInstance } from 'fastify'
@@ -169,6 +169,12 @@ function evaluate(doc: Doc, expression: unknown): unknown {
     const resolved = evaluate(doc, value)
 
     return resolved === null || resolved === undefined ? evaluate(doc, fallback) : resolved
+  }
+
+  if (isPlain(expression) && Array.isArray(expression.$min)) {
+    const values = (expression.$min as unknown[]).map((value) => evaluate(doc, value)).filter((value) => value !== null && value !== undefined)
+
+    return values.length > 0 ? values.reduce((least, value) => (order(value, least) < 0 ? value : least)) : null
   }
 
   return expression

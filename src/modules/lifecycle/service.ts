@@ -848,12 +848,16 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
 
 // ---------------------------------------------------------------- colors ready
 
+const COLORS_READY_SEND_TRIES = 3
+
 // Their color read failed because the AI was busy or out of credits, they
 // left their email, and it's done now (avatar/retry.ts): a sign-in link to
 // their colors. They asked for it, so it goes out even to people who turned
 // off tips. Marked on the avatar before sending, and on the account like
 // any lifecycle email so the colors offer waits its gap; all of it rolled
-// back if sending fails, for the next run to try again.
+// back if sending fails, for the next run to try again (given up after 3).
+// The link has its own nonce ('colors'): the offer's sign-in link, a day
+// later, doesn't void it within the 3 days the email promises.
 export async function sendColorsReady(
   app: FastifyInstance,
   user: UserDocument,
@@ -876,7 +880,7 @@ export async function sendColorsReady(
     await app.collections.users.updateOne({ _id: user._id }, { $set: { [field]: now, lifecycleEmailLastAt: now } })
 
     const locale = user.locale ?? 'en'
-    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio', ads: storedAdIds(user) })
+    const url = await createLink(app, user, 'colors', undefined, { next: '/studio', ads: storedAdIds(user) })
     const content = colorsReadyEmail({
       firstName: user.firstName,
       email: user.email,
@@ -911,9 +915,30 @@ export async function sendColorsReady(
     })
     return true
   } catch (error) {
-    app.log.error({ err: error, userId: user._id.toString() }, 'Colors ready email failed; will retry')
+    const failures = (avatar.colorsNotify?.sendFailures ?? 0) + 1
+    const giveUp = failures >= COLORS_READY_SEND_TRIES
+
+    app.log.error(
+      { err: error, userId: user._id.toString(), failures },
+      giveUp ? 'Colors ready email failed; given up' : 'Colors ready email failed; will retry',
+    )
+
+    if (giveUp) {
+      void trackServerEvent(app, {
+        name: 'colors_notify_gave_up',
+        userId: user._id,
+        props: { attempts: avatar.colorsNotify?.attempts ?? 0, reason: 'delivery' },
+      })
+    }
+
     await Promise.all([
-      app.collections.avatars.updateOne({ _id: avatar._id, 'colorsNotify.sentAt': now }, { $set: { 'colorsNotify.sentAt': null } }),
+      app.collections.avatars.updateOne(
+        { _id: avatar._id, 'colorsNotify.sentAt': now },
+        {
+          $set: { 'colorsNotify.sentAt': null, ...(giveUp ? { 'colorsNotify.gaveUpAt': now } : {}) },
+          $inc: { 'colorsNotify.sendFailures': 1 },
+        },
+      ),
       app.collections.emailSends.deleteOne({ _id: sendId }),
       app.collections.users.updateOne(
         { _id: user._id },

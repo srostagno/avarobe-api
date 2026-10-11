@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
 import { ObjectId } from 'mongodb'
 
 import { fakeApp, type Doc } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
-import type { ColorsNotify } from '../../../types/mongo.js'
+import type { ColorsFailure, ColorsNotify } from '../../../types/mongo.js'
+import type { AiFailure } from '../../../utils/openai.js'
 import { guestEmail } from '../../../utils/guests.js'
-import { countsAsAttempt, pendingNotice, readInTurn, retryColorReads, shouldGiveUp } from '../retry.js'
+import { storage } from '../../../utils/storage.js'
+import { afterFailedRead, countsAsAttempt, pendingNotice, readInTurn, retryColorReads, shouldGiveUp } from '../retry.js'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -44,12 +43,26 @@ describe('pending notices', () => {
     assert.equal(shouldGiveUp(notify({ attempts: 6, sentAt: now }), now), false)
   })
 
-  it('count every failed read except no credits and a refused key, which cost nothing', () => {
-    assert.equal(countsAsAttempt('no_credits'), false)
-    assert.equal(countsAsAttempt('account'), false)
-    for (const code of ['provider', 'rate_limited', 'rejected', 'internal'] as const) {
+  it('count every failed read except no credits, a refused key and a rate limit, which cost nothing', () => {
+    for (const code of ['no_credits', 'account', 'rate_limited'] as const) {
+      assert.equal(countsAsAttempt(code), false, code)
+    }
+    for (const code of ['provider', 'rejected', 'internal'] as const) {
       assert.equal(countsAsAttempt(code), true, code)
     }
+  })
+
+  it('stop the pass only when the AI fails, and give up a refused photo', () => {
+    const failed = (code: AiFailure | null) => ({ status: 'failed' as const, failure: code ? { code, at: now, attempts: 1, detail: null } : null })
+    for (const code of ['no_credits', 'account', 'rate_limited', 'provider'] as const) {
+      assert.equal(afterFailedRead(failed(code)), 'stop', code)
+    }
+    assert.equal(afterFailedRead(failed('rejected')), 'give_up')
+    assert.equal(afterFailedRead(failed('internal')), 'next')
+    assert.equal(afterFailedRead(failed(null)), 'next')
+    // Replaced by a read they started themselves.
+    assert.equal(afterFailedRead({ status: 'processing', failure: null }), 'next')
+    assert.equal(afterFailedRead(null), 'next')
   })
 })
 
@@ -66,28 +79,64 @@ describe('readInTurn', () => {
   })
 })
 
-// The whole pass, against in-memory collections, a selfie on disk and the
-// AI faked (AI_FAULT, then a stubbed fetch): 11-Oct-2026 again, then the
-// credits back.
-describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
+// The whole pass, against in-memory collections, the selfies in memory and
+// the AI faked (AI_FAULT, then a stubbed fetch that answers each person in
+// turn): 11-Oct-2026 again, the other ways a read fails, then the credits
+// back.
+describe('retryColorReads', () => {
   const saved = {
-    dir: env.STORAGE_LOCAL_DIR,
+    read: storage.read.bind(storage),
     fault: env.AI_FAULT,
     key: env.OPENAI_API_KEY,
     allow: env.EMAIL_DEV_ALLOWLIST,
     fetch: globalThis.fetch,
   }
-  let dir = ''
   const { app, collection, logs } = fakeApp()
   const people: Record<string, { userId: ObjectId; avatarId: ObjectId }> = {}
-  const requests: { url: string; instructions: string }[] = []
+  const requests: { name: string; instructions: string }[] = []
+  const signed: { typ?: string; nx?: string }[] = []
+  // Whose selfie each storage key is, and the ones gone from storage.
+  const selfies = new Map<string, string>()
+  const missing = new Set<string>()
+  // What OpenAI answers: everyone (mode), or one person (answers).
+  type Answer = 'colors' | 'server' | 'rate' | 'refuse'
+  let mode: Answer = 'colors'
+  const answers: Record<string, Answer> = {}
+
+  const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
+  // Retried at once (retry-after-ms 1), so the server's own 3 tries take no time.
+  const replies: Record<Answer, () => Response> = {
+    colors: () =>
+      json(200, {
+        output_text: JSON.stringify({
+          season: 'Soft Autumn',
+          undertone: 'warm',
+          contrast: 'medium',
+          summary: 'Warm and soft.',
+          bestColors: [
+            { name: 'Olive', hex: '#5B5A2C' },
+            { name: 'Rust', hex: '#A0482A' },
+            { name: 'Teal', hex: '#1F5C5B' },
+          ],
+          neutrals: [{ name: 'Camel', hex: '#C19A6B' }],
+          // No color to avoid: no free preview starts (an image call).
+          avoidColors: [],
+          metals: 'gold',
+          confidence: 'high',
+          photoNote: null,
+        }),
+      }),
+    server: () => json(500, { error: { message: 'The server had an error.', type: 'server_error' } }, { 'retry-after-ms': '1' }),
+    rate: () => json(429, { error: { message: 'Rate limit reached.', code: 'rate_limit_exceeded' } }, { 'retry-after-ms': '1' }),
+    refuse: () => json(400, { error: { message: 'Invalid image.', code: 'invalid_image', type: 'invalid_request_error' } }),
+  }
 
   async function person(name: string, user: Doc, avatar: Doc) {
     const userId = new ObjectId()
     const avatarId = new ObjectId()
     const selfieKey = `users/${userId.toString()}/selfie-1.jpg`
-    await mkdir(path.join(dir, 'users', userId.toString()), { recursive: true })
-    await writeFile(path.join(dir, selfieKey), Buffer.from('fake selfie'))
+    selfies.set(selfieKey, name)
     collection('users').docs.push({
       _id: userId,
       email: `${name}@example.test`,
@@ -114,43 +163,47 @@ describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
   const avatarOf = (name: string) => collection('avatars').findOne({ _id: people[name]!.avatarId })
   const userOf = (name: string) => collection('users').findOne({ _id: people[name]!.userId })
   const notifyOf = async (name: string) => (await avatarOf(name))?.colorsNotify as ColorsNotify
+  const failureOf = async (name: string) => {
+    const failure = (await avatarOf(name))?.failure as ColorsFailure | null
+
+    return failure ? { code: failure.code, attempts: failure.attempts } : null
+  }
+  const readsOf = (name: string) => requests.filter((request) => request.name === name).length
 
   before(async () => {
-    dir = await mkdtemp(path.join(tmpdir(), 'avarobe-retry-'))
-    env.STORAGE_LOCAL_DIR = dir
+    storage.read = async (key: string) => {
+      const name = selfies.get(key)
+
+      if (!name || missing.has(name)) {
+        throw new Error(`ENOENT: no such file, open '${key}'`)
+      }
+
+      return Buffer.from(`selfie:${name}`)
+    }
     env.OPENAI_API_KEY = 'sk-test-not-a-key'
     env.EMAIL_DEV_ALLOWLIST = []
+    Object.assign(app.jwt, {
+      sign: async (payload: { typ?: string; nx?: string }) => {
+        signed.push(payload)
+        return `test-token-${signed.length}`
+      },
+    })
     globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
       const target = url instanceof Request ? url.url : url.toString()
 
       if (!target.endsWith('/responses')) {
         // The free preview that follows a read: not part of this test.
-        return new Response(JSON.stringify({ error: { message: 'no' } }), { status: 500 })
+        return json(500, { error: { message: 'no' } })
       }
 
-      requests.push({ url: target, instructions: (JSON.parse(init?.body as string) as { instructions: string }).instructions })
-      return new Response(
-        JSON.stringify({
-          output_text: JSON.stringify({
-            season: 'Soft Autumn',
-            undertone: 'warm',
-            contrast: 'medium',
-            summary: 'Warm and soft.',
-            bestColors: [
-              { name: 'Olive', hex: '#5B5A2C' },
-              { name: 'Rust', hex: '#A0482A' },
-              { name: 'Teal', hex: '#1F5C5B' },
-            ],
-            neutrals: [{ name: 'Camel', hex: '#C19A6B' }],
-            // No color to avoid: no free preview starts (an image call).
-            avoidColors: [],
-            metals: 'gold',
-            confidence: 'high',
-            photoNote: null,
-          }),
-        }),
-        { status: 200 },
-      )
+      const body = JSON.parse(init?.body as string) as {
+        instructions: string
+        input: { content: { type: string; image_url?: string }[] }[]
+      }
+      const image = body.input[0]!.content.find((part) => part.type === 'input_image')!.image_url!
+      const name = Buffer.from(image.split(',')[1]!, 'base64').toString().replace('selfie:', '')
+      requests.push({ name, instructions: body.instructions })
+      return replies[answers[name] ?? mode]()
     }
 
     // A guest who never saved (only a placeholder address), the first to
@@ -164,13 +217,12 @@ describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
     await person('tried', {}, { colorsNotify: notify({ attempts: 6, lastTriedAt: ago(10 * MINUTE) }) })
   })
 
-  after(async () => {
-    env.STORAGE_LOCAL_DIR = saved.dir
+  after(() => {
+    storage.read = saved.read
     env.AI_FAULT = saved.fault
     env.OPENAI_API_KEY = saved.key
     env.EMAIL_DEV_ALLOWLIST = saved.allow
     globalThis.fetch = saved.fetch
-    await rm(dir, { recursive: true, force: true })
   })
 
   it('while OpenAI has no credits: one probe, no attempt counted, the rest given up or left waiting', async () => {
@@ -202,15 +254,63 @@ describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
     assert.ok((await notifyOf('bea')).lastTriedAt)
   })
 
-  it('counts a read that cost something', async () => {
-    env.AI_FAULT = 'rejected'
-    await retryColorReads(app, later(10 * MINUTE))
+  it('counts a read that cost something, after the server’s own 3 tries', async () => {
+    env.AI_FAULT = undefined
+    mode = 'server'
+    const result = await retryColorReads(app, later(10 * MINUTE))
+    assert.deepEqual(result.outcomes, ['failed'])
+    assert.equal(readsOf('ana'), 3)
+    assert.deepEqual(await failureOf('ana'), { code: 'provider', attempts: 3 })
     assert.equal((await notifyOf('ana')).attempts, 1)
     assert.equal((await notifyOf('bea')).attempts, 0)
   })
 
+  it('counts no rate limit, however long it lasts (only the day ends the wait)', async () => {
+    mode = 'rate'
+    const result = await retryColorReads(app, later(15 * MINUTE))
+    assert.deepEqual(result.outcomes, ['failed'])
+    assert.equal(readsOf('bea'), 3)
+    assert.equal((await failureOf('bea'))?.code, 'rate_limited')
+    assert.equal((await notifyOf('bea')).attempts, 0)
+  })
+
+  it('gives up a photo the AI refuses, without counting it, and goes on to the next', async () => {
+    mode = 'server'
+    // Dora's read is refused; Eve's own new selfie was, since she asked.
+    await person('dora', { locale: 'en' }, { colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }) })
+    answers.dora = 'refuse'
+    await person('eve', { locale: 'en' }, {
+      failure: { code: 'rejected', at: ago(5 * MINUTE), attempts: 1, detail: null },
+      colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }),
+    })
+    const result = await retryColorReads(app, later(20 * MINUTE))
+
+    // Dora once (no retry for a refusal), then Ana, still failing: the probe.
+    assert.deepEqual(result.outcomes, ['skipped', 'failed'])
+    assert.equal(readsOf('dora'), 1)
+    assert.equal(readsOf('eve'), 0)
+    assert.ok((await notifyOf('dora')).gaveUpAt)
+    assert.equal((await notifyOf('dora')).attempts, 0)
+    assert.ok((await notifyOf('eve')).gaveUpAt)
+    assert.equal((await notifyOf('ana')).attempts, 2)
+  })
+
+  it('counts a selfie gone from storage, and goes on to the next', async () => {
+    await person('finn', { locale: 'en' }, { colorsNotify: notify({ requestedAt: ago(20 * MINUTE) }) })
+    missing.add('finn')
+    const result = await retryColorReads(app, later(25 * MINUTE))
+
+    assert.deepEqual(result.outcomes, ['skipped', 'failed'])
+    assert.equal((await failureOf('finn'))?.code, 'internal')
+    assert.equal((await notifyOf('finn')).attempts, 1)
+    assert.equal((await notifyOf('finn')).gaveUpAt, null)
+    // Bea was next, and the server still failing stopped the pass.
+    assert.equal((await notifyOf('bea')).attempts, 1)
+  })
+
   it('once reads work: each one in their language, and a sign-in link to their colors', async () => {
-    env.AI_FAULT = undefined
+    mode = 'colors'
+    missing.delete('finn')
     // She retried by herself and got her colors: only the email is owed.
     await person('cleo', { locale: 'pt-BR' }, {
       status: 'ready',
@@ -218,16 +318,28 @@ describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
       colorAnalysis: { season: 'Deep Winter', bestColors: [], neutrals: [], avoidColors: [] },
       colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }),
     })
-    const result = await retryColorReads(app, later(15 * MINUTE))
+    // His read was cut off by a restart a quarter of an hour ago: still
+    // "processing", past the boot's check.
+    await person('gus', { locale: 'es' }, {
+      status: 'processing',
+      failure: null,
+      job: { kind: 'colors', startedAt: ago(15 * MINUTE), previewKey: null, previewCount: 0 },
+      updatedAt: ago(15 * MINUTE),
+      colorsNotify: notify({ requestedAt: ago(40 * MINUTE), lastTriedAt: ago(15 * MINUTE) }),
+    })
+    const before = requests.length
+    const result = await retryColorReads(app, later(30 * MINUTE))
 
-    assert.deepEqual(result.outcomes, ['ready', 'ready'])
-    assert.equal(result.sent, 3)
-    // Bea first (her last try is older than Ana's), in Spanish; Ana's in English.
-    assert.equal(requests.length, 2)
-    assert.ok(requests[0]!.instructions.includes('Latin American Spanish'))
-    assert.ok(!requests[1]!.instructions.includes('Language:'))
+    assert.deepEqual(result.outcomes, ['ready', 'ready', 'ready', 'ready'])
+    assert.equal(result.sent, 5)
+    // Each in their language: Bea and Gus in Spanish, Ana and Finn in English.
+    const done = requests.slice(before)
+    assert.deepEqual(done.map((request) => request.name).sort(), ['ana', 'bea', 'finn', 'gus'])
+    for (const request of done) {
+      assert.equal(request.instructions.includes('Latin American Spanish'), ['bea', 'gus'].includes(request.name), request.name)
+    }
 
-    for (const name of ['ana', 'bea', 'cleo']) {
+    for (const name of ['ana', 'bea', 'cleo', 'finn', 'gus']) {
       const avatar = await avatarOf(name)
       assert.ok((avatar?.colorsNotify as ColorsNotify).sentAt, name)
       // The colors offer waits its gap after this email.
@@ -239,18 +351,60 @@ describe('retryColorReads', { skip: env.STORAGE_DRIVER !== 'local' }, () => {
     assert.equal((await avatarOf('ana'))?.status, 'ready')
     assert.equal((await avatarOf('ana'))?.failure, null)
     const subjects = (await collection('emailSends').find({ kind: 'colors_ready' }).toArray()).map((send) => send.subject)
-    assert.deepEqual(subjects.sort(), ['Suas cores estão prontas', 'Tus colores están listos', 'Your colors are ready'])
-    // In development the link is logged, never sent.
+    assert.deepEqual(subjects.sort(), [
+      'Suas cores estão prontas',
+      'Tus colores están listos',
+      'Tus colores están listos',
+      'Your colors are ready',
+      'Your colors are ready',
+    ])
+    // In development the link is logged, never sent. Its own kind of link
+    // ('colors'), so the offer's sign-in link a day later doesn't void it.
     const links = logs.filter((line) => line.msg === 'Dev email link (not sent)')
-    assert.equal(links.length, 3)
+    assert.equal(links.length, 5)
     assert.ok(links.every((line) => String((line.obj as { link: string }).link).includes('/continue?token=')))
+    assert.ok(signed.length >= 5)
+    assert.ok(signed.every((payload) => payload.typ === 'colors' && payload.nx === '/studio'))
     const ready = await collection('analyticsEvents').find({ name: 'colors_ready' }).toArray()
     assert.ok(ready.every((event) => (event.props as { via?: string }).via === 'notify'))
   })
 
   it('sends nothing more on the next pass', async () => {
-    const result = await retryColorReads(app, later(20 * MINUTE))
+    const result = await retryColorReads(app, later(35 * MINUTE))
     assert.deepEqual(result, { gaveUp: 0, sent: 0, outcomes: [] })
-    assert.equal((await collection('emailSends').find({ kind: 'colors_ready' }).toArray()).length, 3)
+    assert.equal((await collection('emailSends').find({ kind: 'colors_ready' }).toArray()).length, 5)
+  })
+
+  it('tries an email that can’t go 3 times, then gives up, leaving no trace of it', async () => {
+    await person('hana', { locale: 'en' }, {
+      status: 'ready',
+      failure: null,
+      colorAnalysis: { season: 'Light Spring', bestColors: [], neutrals: [], avoidColors: [] },
+      colorsNotify: notify({ requestedAt: ago(30 * MINUTE) }),
+    })
+    const sign = app.jwt.sign.bind(app.jwt)
+    Object.assign(app.jwt, {
+      sign: async () => {
+        throw new Error('signing is down')
+      },
+    })
+
+    try {
+      for (const [pass, minutes] of [40, 45, 50].entries()) {
+        const result = await retryColorReads(app, later(minutes * MINUTE))
+        assert.equal(result.sent, 0)
+        const hana = await notifyOf('hana')
+        assert.equal(hana.sentAt, null)
+        assert.equal(hana.sendFailures, pass + 1)
+        assert.equal(Boolean(hana.gaveUpAt), pass === 2, `pass ${pass + 1}`)
+      }
+    } finally {
+      Object.assign(app.jwt, { sign })
+    }
+
+    assert.equal(await collection('emailSends').countDocuments({ userId: people.hana!.userId }), 0)
+    assert.equal(((await userOf('hana'))?.lifecycleEmails as Record<string, Date> | undefined)?.colors_ready, undefined)
+    assert.equal((await userOf('hana'))?.lifecycleEmailLastAt, undefined)
+    assert.equal((await retryColorReads(app, later(55 * MINUTE))).sent, 0)
   })
 })

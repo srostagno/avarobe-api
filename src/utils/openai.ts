@@ -53,10 +53,28 @@ export class OpenAiRequestError extends Error {
 export type AiFailure = 'no_credits' | 'account' | 'rate_limited' | 'provider' | 'rejected' | 'internal'
 
 const NO_CREDIT_CODES = new Set(['credit_balance_exhausted', 'insufficient_quota', 'billing_hard_limit_reached'])
+// The 400s that are about the photo itself. Every other 400 is our request
+// (a setting or schema the model doesn't take, after a change): the selfie
+// is normalized to JPEG before it goes, so telling people to try another
+// photo would send them re-uploading for nothing.
+const PHOTO_CODES = new Set([
+  'invalid_image',
+  'invalid_image_format',
+  'image_parse_error',
+  'moderation_blocked',
+  'content_policy_violation',
+])
+// The key missing from our own config: like a refused key, it needs a
+// person, at once.
+const MISSING_KEY = 'missing_api_key'
 
 export function classifyAiError(error: unknown): AiFailure {
   if (error instanceof OpenAiRequestError) {
     const status = error.statusCode
+
+    if (error.code === MISSING_KEY) {
+      return 'account'
+    }
 
     if (status === 429) {
       return (error.code && NO_CREDIT_CODES.has(error.code)) || error.type === 'insufficient_quota' ? 'no_credits' : 'rate_limited'
@@ -66,12 +84,17 @@ export function classifyAiError(error: unknown): AiFailure {
       return 'account'
     }
 
-    // Includes our own 502 (network), 504 (timeout) and 503 (no key).
+    // Includes our own 502 (network) and 504 (timeout).
     if (status === 408 || status === 409 || status >= 500) {
       return 'provider'
     }
 
-    return status === 400 || status === 422 ? 'rejected' : 'internal'
+    // 422: the model refused (ours, from readOutputText, or a content filter).
+    if (status === 422 || (status === 400 && error.code !== null && PHOTO_CODES.has(error.code))) {
+      return 'rejected'
+    }
+
+    return 'internal'
   }
 
   // A reply that wasn't the JSON it promised.
@@ -171,9 +194,10 @@ function simulatedFault(): OpenAiRequestError | null {
   }
 }
 
+// Reported like any failed call, so the founder hears of it at once.
 function requireKey() {
   if (!env.OPENAI_API_KEY) {
-    throw new OpenAiRequestError('OPENAI_API_KEY is missing on avarobe-api.', 503)
+    throw reported(new OpenAiRequestError('OPENAI_API_KEY is missing on avarobe-api.', 503, { code: MISSING_KEY }))
   }
 
   return env.OPENAI_API_KEY
@@ -293,10 +317,10 @@ export async function createStructuredResponse<T>(input: {
   )
 
   if (payload.status === 'incomplete') {
-    throw new OpenAiRequestError(
-      `OpenAI response incomplete: ${payload.incomplete_details?.reason ?? 'unknown'}.`,
-      502,
-    )
+    const reason = payload.incomplete_details?.reason ?? 'unknown'
+
+    // Filtered: it would be again (a refusal, not OpenAI being down).
+    throw new OpenAiRequestError(`OpenAI response incomplete: ${reason}.`, reason === 'content_filter' ? 422 : 502)
   }
 
   const text = readOutputText(payload)
@@ -414,13 +438,14 @@ async function streamImageEdit(
     throw reported(fault)
   }
 
+  const key = requireKey()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const response = await fetch(`${OPENAI_BASE_URL}/images/edits`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${requireKey()}` },
+      headers: { Authorization: `Bearer ${key}` },
       body: form,
       signal: controller.signal,
     })
@@ -448,10 +473,11 @@ async function streamImageEdit(
 
       const event = JSON.parse(data) as ImageStreamEvent
 
-      // A 502 unless the event names what failed (a 429 with its code).
+      // A 502 unless the event names what failed (a 429 with its code, a
+      // 400 for the image).
       if (event.type === 'error' || event.error) {
         const code = event.error?.code ?? null
-        const status = code && (NO_CREDIT_CODES.has(code) || code === 'rate_limit_exceeded') ? 429 : 502
+        const status = !code ? 502 : NO_CREDIT_CODES.has(code) || code === 'rate_limit_exceeded' ? 429 : PHOTO_CODES.has(code) ? 400 : 502
         throw new OpenAiRequestError(event.error?.message ?? 'OpenAI image stream failed.', status, {
           code,
           type: event.error?.type,

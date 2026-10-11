@@ -61,8 +61,11 @@ function busyMessage(job: AvatarJob | null | undefined) {
   return job?.kind === 'colors' ? 'We are still reading your colors. One moment.' : 'Your avatar is still being created.'
 }
 
+// `code` tells the day's limit from the per-minute rate limit (also a 429),
+// so the web stops trying again by itself only for this one.
 function limitReached(reply: FastifyReply) {
   return reply.code(429).send({
+    code: 'daily_limit',
     message: `You can create or adjust your avatar ${env.DAILY_AVATAR_LIMIT} times a day. Try again tomorrow.`,
   })
 }
@@ -368,7 +371,12 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       }
 
       startColorsJob(app, avatar._id)
-      void trackServerEvent(app, { name: 'colors_started', userId, props: { retry: !selfieKey } })
+      // trigger 'auto': the web's busy card trying again by itself, not a tap.
+      void trackServerEvent(app, {
+        name: 'colors_started',
+        userId,
+        props: { retry: !selfieKey, ...(fields.trigger === 'auto' ? { trigger: 'auto' } : {}) },
+      })
 
       return reply.code(202).send({ avatar: await serializeAvatar(avatar, await paletteAccess(app, userId)) })
     },

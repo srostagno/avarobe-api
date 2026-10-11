@@ -119,7 +119,14 @@ describe('OpenAI errors', () => {
       assert.equal(status(code), 'account', `HTTP ${code}`)
     }
     assert.equal(status(422), 'rejected')
-    assert.equal(status(400, { code: 'invalid_image' }), 'rejected')
+    // A 400 is the photo only when OpenAI says so; otherwise it's our request
+    // (a setting or schema the model doesn't take), not "try another photo".
+    for (const code of ['invalid_image', 'invalid_image_format', 'image_parse_error', 'moderation_blocked', 'content_policy_violation']) {
+      assert.equal(status(400, { code }), 'rejected', code)
+    }
+    assert.equal(status(400, { code: 'unsupported_parameter' }), 'internal')
+    assert.equal(status(400, { code: 'invalid_value' }), 'internal')
+    assert.equal(status(400), 'internal')
     assert.equal(status(418), 'internal')
     // JSON.parse on a reply that wasn't the JSON it promised.
     assert.equal(classifyAiError(new SyntaxError('Unexpected token')), 'provider')
@@ -148,6 +155,35 @@ describe('OpenAI errors', () => {
     assert.equal((streamed as OpenAiRequestError).statusCode, 429)
     assert.equal(classifyAiError(streamed), 'no_credits')
     assert.equal(heard.length, 2)
+  })
+
+  it('treats a content filter as a refusal, and running out of tokens as the provider', async () => {
+    reply(() => json(200, { status: 'incomplete', incomplete_details: { reason: 'content_filter' } }))
+    const filtered = await failure(ask())
+    assert.equal((filtered as OpenAiRequestError).statusCode, 422)
+    assert.equal(classifyAiError(filtered), 'rejected')
+    reply(() => json(200, { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }))
+    assert.equal(classifyAiError(await failure(ask())), 'provider')
+  })
+
+  it('reads a missing key as an account problem the founder hears of at once, told once', async () => {
+    env.OPENAI_API_KEY = undefined
+    reply(() => json(200, { output_text: '{"ok":true}' }))
+    const missing = (await failure(ask())) as OpenAiRequestError
+    assert.equal(missing.code, 'missing_api_key')
+    assert.equal(classifyAiError(missing), 'account')
+    assert.deepEqual(heard, [missing])
+    // The streamed render too, without telling the listener twice.
+    const streamed = await failure(
+      generateImageFromReferences({
+        images: [{ data: Buffer.from('x'), filename: 'a.jpg', contentType: 'image/jpeg' }],
+        prompt: 'x',
+        onPartial: () => undefined,
+      }),
+    )
+    assert.equal(classifyAiError(streamed), 'account')
+    assert.equal(heard.length, 2)
+    assert.equal(calls, 0)
   })
 
   it('never lets a broken listener break the call', async () => {

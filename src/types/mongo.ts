@@ -28,6 +28,10 @@ export type UserDocument = {
   checkoutLinkNonceHash?: string | null
   checkoutLinkSentAt?: Date | null
   checkoutLinkEmails?: Partial<Record<PurchaseProduct, Date>>
+  // The link to their colors after a read the AI did late (lifecycle
+  // sendColorsReady): its own, so the offers' sign-in links don't void it.
+  colorsLinkNonceHash?: string | null
+  colorsLinkSentAt?: Date | null
   passwordHash?: string | null
   passwordUpdatedAt?: Date | null
   // Throttles password guessing per account on top of the per-IP rate limit.
@@ -419,7 +423,8 @@ export type ColorsFailure = { code: AiFailure; at: Date; attempts: number; detai
 // "Tell me when my colors are ready", after a read failed because the AI was
 // busy or out of credits (modules/avatar/retry.ts reads it again and emails
 // a sign-in link). Pending while sentAt and gaveUpAt are null, for a day.
-// `attempts` counts the reads that cost something.
+// `attempts` counts the reads that cost something; `sendFailures` the
+// emails that didn't go (given up at 3).
 export type ColorsNotify = {
   requestedAt: Date
   attempts: number
@@ -427,6 +432,7 @@ export type ColorsNotify = {
   sentAt: Date | null
   gaveUpAt: Date | null
   via: 'guest' | 'account' | 'script'
+  sendFailures?: number
 }
 
 export type AvatarAdjustment =

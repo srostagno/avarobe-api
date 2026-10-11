@@ -6,7 +6,19 @@ import { ObjectId } from 'mongodb'
 import { fakeApp, type Doc } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
 import { OpenAiRequestError } from '../../../utils/openai.js'
-import { alertAccount, alertContent, chileTime, duration, noteReadFailed, noteReadSucceeded, shouldAlertReads } from '../alerts.js'
+import {
+  ALERT_RULES,
+  alertAccount,
+  alertContent,
+  alertIsOver,
+  alertWasSent,
+  chileTime,
+  duration,
+  noteReadFailed,
+  noteReadSucceeded,
+  shouldAlertReads,
+  undeliveredLastSentAt,
+} from '../alerts.js'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -75,6 +87,32 @@ describe('shouldAlertReads', () => {
   })
 })
 
+describe('when an alert is over', () => {
+  const now = at(0)
+  it('the credits one, once OpenAI has stopped saying so for 2 minutes', () => {
+    assert.equal(alertIsOver('openai_account', { lastAccountErrorAt: null, failingPeople: 9 }, now), true)
+    assert.equal(alertIsOver('openai_account', { lastAccountErrorAt: at(-MINUTE), failingPeople: 0 }, now), false)
+    assert.equal(alertIsOver('openai_account', { lastAccountErrorAt: at(-2 * MINUTE), failingPeople: 0 }, now), true)
+  })
+
+  it('the reads one, once fewer than 3 people failed in 10 minutes', () => {
+    assert.equal(alertIsOver('reads_failing', { lastAccountErrorAt: null, failingPeople: 3 }, now), false)
+    assert.equal(alertIsOver('reads_failing', { lastAccountErrorAt: null, failingPeople: 2 }, now), true)
+  })
+
+  it('says so only if the founder was told of it', () => {
+    assert.equal(alertWasSent({ lastSentAt: at(0), openSince: at(0) }), true)
+    assert.equal(alertWasSent({ lastSentAt: at(HOUR), openSince: at(0) }), true)
+    // Came back within the hour, held back by the throttle.
+    assert.equal(alertWasSent({ lastSentAt: at(0), openSince: at(20 * MINUTE) }), false)
+  })
+
+  it('an undelivered alert is tried again in 10 minutes', () => {
+    const lastSentAt = undeliveredLastSentAt(now)
+    assert.equal(now.getTime() - lastSentAt.getTime(), ALERT_RULES.every - 10 * MINUTE)
+  })
+})
+
 describe('alert text', () => {
   it('escapes the HTML and keeps the lines', () => {
     const content = alertContent('Avarobe: test', ['Último error: <script>', 'línea 2'])
@@ -133,6 +171,19 @@ describe('the credits alert', () => {
     assert.equal(emailed(logs.slice(before)).length, 1)
     const alert = await collection('opsAlerts').findOne({ _id: 'openai_account' })
     assert.equal((alert?.openSince as Date).getTime(), at(0).getTime())
+  })
+
+  it('names a missing key as ours, without the top-up link', async () => {
+    const other = fakeApp()
+    await alertAccount(
+      other.app,
+      new OpenAiRequestError('OPENAI_API_KEY is missing on avarobe-api.', 503, { code: 'missing_api_key' }),
+      'account',
+      at(0),
+    )
+    assert.deepEqual(emailed(other.logs), ['Avarobe: falta OPENAI_API_KEY en el servidor — las lecturas de color están fallando'])
+    assert.ok(lastText(other.logs).startsWith('avarobe-api no tiene OPENAI_API_KEY'))
+    assert.ok(!lastText(other.logs).includes('platform.openai.com'))
   })
 
   it('names a refused key differently', async () => {
@@ -207,5 +258,132 @@ describe('the reads failing alert', () => {
 
     await noteReadFailed(app, at(0))
     assert.deepEqual(emailed(logs), [])
+  })
+})
+
+describe('an alert that can’t be delivered', () => {
+  const saved = { fetch: globalThis.fetch, key: env.MAILERSEND_API_KEY, from: env.MAILERSEND_FROM_EMAIL }
+  let calls = 0
+  let failing = true
+
+  before(() => {
+    // Allowlisted, so it really goes to MailerSend: here a stub, down.
+    env.EMAIL_DEV_ALLOWLIST = ['founder@example.test']
+    env.MAILERSEND_API_KEY = 'mlsn-test-not-a-key'
+    env.MAILERSEND_FROM_EMAIL = 'hello@example.test'
+    globalThis.fetch = async () => {
+      calls += 1
+      return new Response(failing ? 'down' : '{}', { status: failing ? 503 : 202 })
+    }
+  })
+
+  after(() => {
+    env.EMAIL_DEV_ALLOWLIST = []
+    env.MAILERSEND_API_KEY = saved.key
+    env.MAILERSEND_FROM_EMAIL = saved.from
+    globalThis.fetch = saved.fetch
+  })
+
+  it('is tried again in 10 minutes, not at every failed call, and not counted as sent', async () => {
+    const { app, collection } = fakeApp()
+    await alertAccount(app, incident(), 'no_credits', at(0))
+    assert.equal(calls, 1)
+    const alert = await collection('opsAlerts').findOne({ _id: 'openai_account' })
+    assert.equal((alert?.lastSentAt as Date).getTime(), undeliveredLastSentAt(at(0)).getTime())
+    assert.equal((alert?.openSince as Date).getTime(), at(0).getTime())
+    assert.equal(await collection('analyticsEvents').countDocuments({ name: 'ops_alert_sent' }), 0)
+
+    // The errors keep coming: no new delivery for 10 minutes.
+    await alertAccount(app, incident(), 'no_credits', at(MINUTE))
+    await alertAccount(app, incident(), 'no_credits', at(9 * MINUTE))
+    assert.equal(calls, 1)
+
+    failing = false
+    await alertAccount(app, incident(), 'no_credits', at(11 * MINUTE))
+    assert.equal(calls, 2)
+    const sent = await collection('opsAlerts').findOne({ _id: 'openai_account' })
+    assert.equal((sent?.lastSentAt as Date).getTime(), at(11 * MINUTE).getTime())
+    assert.equal((sent?.openSince as Date).getTime(), at(0).getTime())
+    assert.equal(await collection('analyticsEvents').countDocuments({ name: 'ops_alert_sent' }), 1)
+  })
+})
+
+describe('the reads failing alert, after it went out', () => {
+  // 3 people failed for the provider; the alert went out at 0.
+  function outage() {
+    const { app, collection, logs } = fakeApp({
+      opsAlerts: [{ _id: 'reads_failing', lastSentAt: at(0), openSince: at(0), lastError: 'x' }],
+    })
+    const fail = (when: Date, reason = 'provider') => {
+      const person = failedAvatar(reason, when)
+      collection('avatars').docs.push(person.avatar)
+      collection('users').docs.push(person.user)
+      collection('analyticsEvents').docs.push({ name: 'colors_failed', origin: 'server', at: when, userId: person.user._id, props: { reason } })
+    }
+
+    return { app, collection, logs, fail }
+  }
+
+  it('stays open while people keep failing, though some reads get through (a rate limit)', async () => {
+    const { app, collection, logs, fail } = outage()
+    fail(at(MINUTE))
+    fail(at(2 * MINUTE))
+    fail(at(3 * MINUTE))
+    await noteReadSucceeded(app, at(4 * MINUTE))
+    assert.deepEqual(emailed(logs), [])
+    assert.ok((await collection('opsAlerts').findOne({ _id: 'reads_failing' }))?.openSince)
+    // Ten quiet minutes later, it's over.
+    await noteReadSucceeded(app, at(14 * MINUTE))
+    assert.deepEqual(emailed(logs), ['Avarobe: las lecturas de color funcionan de nuevo'])
+  })
+
+  it('doesn’t count photos the AI refused, to open or to keep open', async () => {
+    const { app, logs, fail } = outage()
+    fail(at(MINUTE), 'rejected')
+    fail(at(2 * MINUTE), 'rejected')
+    fail(at(3 * MINUTE), 'rejected')
+    await noteReadSucceeded(app, at(4 * MINUTE))
+    assert.deepEqual(emailed(logs), ['Avarobe: las lecturas de color funcionan de nuevo'])
+
+    const fresh = fakeApp()
+    for (const minutes of [1, 2, 3]) {
+      const person = failedAvatar('rejected', at(-minutes * MINUTE))
+      fresh.collection('avatars').docs.push(person.avatar)
+      fresh.collection('users').docs.push(person.user)
+    }
+    await noteReadFailed(fresh.app, at(0))
+    assert.deepEqual(emailed(fresh.logs), [])
+  })
+
+  it('after "funcionan de nuevo", a new outage alerts 10 minutes later at the earliest, not in an hour', async () => {
+    const { app, collection, logs, fail } = outage()
+    await noteReadSucceeded(app, at(5 * MINUTE))
+    assert.equal(emailed(logs).length, 1)
+
+    // Back 5 minutes after: held back.
+    fail(at(10 * MINUTE))
+    fail(at(10 * MINUTE))
+    fail(at(10 * MINUTE))
+    await noteReadFailed(app, at(10 * MINUTE))
+    assert.equal(emailed(logs).length, 1)
+    // Still failing 10 minutes after the recovery: the alert.
+    fail(at(16 * MINUTE))
+    await noteReadFailed(app, at(16 * MINUTE))
+    assert.equal(emailed(logs).at(-1), 'Avarobe: 4 lecturas de color fallaron en 10 min')
+    const alert = await collection('opsAlerts').findOne({ _id: 'reads_failing' })
+    assert.equal((alert?.lastSentAt as Date).getTime(), at(16 * MINUTE).getTime())
+  })
+
+  it('trouble back within the hour and over before any alert ends quietly', async () => {
+    const { app, collection, logs } = fakeApp({
+      opsAlerts: [{ _id: 'openai_account', lastSentAt: at(0), openSince: null, lastError: 'x' }],
+    })
+    // 20 minutes after the last alert (and its recovery): no credits again.
+    await alertAccount(app, incident(), 'no_credits', at(20 * MINUTE))
+    assert.deepEqual(emailed(logs), [])
+    assert.equal(((await collection('opsAlerts').findOne({ _id: 'openai_account' }))?.openSince as Date).getTime(), at(20 * MINUTE).getTime())
+    await noteReadSucceeded(app, at(25 * MINUTE))
+    assert.deepEqual(emailed(logs), [])
+    assert.equal((await collection('opsAlerts').findOne({ _id: 'openai_account' }))?.openSince, null)
   })
 })

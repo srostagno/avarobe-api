@@ -283,8 +283,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const { user } = result
       // Without colors the "saved" email would say nothing true; theirs
       // comes with their colors. If the read worked meanwhile, it's the
-      // usual one.
-      const waiting = parsed.data.notify === 'colors' && (await requestColorsNotice(app, user._id, 'guest'))
+      // usual one. They're saved by now: a failure here mustn't lose the
+      // session (their next try would find the account already saved).
+      const waiting =
+        parsed.data.notify === 'colors' &&
+        (await requestColorsNotice(app, user._id, 'guest').catch((error: unknown) => {
+          request.log.error({ err: error, userId: user._id.toString() }, 'Could not save the colors notice')
+          return false
+        }))
 
       if (!waiting) {
         try {
@@ -745,10 +751,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         payload =
           (await readLink(app, parsed.data.token, 'handoff')) ??
           (await readLink(app, parsed.data.token, 'sign_in')) ??
-          (await readLink(app, parsed.data.token, 'checkout'))
+          (await readLink(app, parsed.data.token, 'checkout')) ??
+          (await readLink(app, parsed.data.token, 'colors'))
       }
 
-      const purpose = payload?.typ === 'sign_in' || payload?.typ === 'checkout' ? payload.typ : 'handoff'
+      const purpose = payload?.typ === 'sign_in' || payload?.typ === 'checkout' || payload?.typ === 'colors' ? payload.typ : 'handoff'
       const emailed = purpose !== 'handoff'
       const consumed = payload ? await consumeLink(app, payload, purpose) : null
 

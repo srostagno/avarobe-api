@@ -37,7 +37,6 @@ type Row = Pick<AnalyticsEventDocument, 'at' | 'name' | 'origin' | 'visitorId' |
 type Tally = { events: number; people: Set<string> }
 
 const str = (value: unknown) => (typeof value === 'string' && value ? value : 'unknown')
-const num = (value: unknown) => (typeof value === 'number' ? value : 0)
 
 function tally(map: Map<string, Tally>, key: string, person: string) {
   const entry = map.get(key) ?? { events: 0, people: new Set<string>() }

@@ -5,23 +5,27 @@ import type { AvatarDocument, ColorsNotify } from '../../types/mongo.js'
 import { isGuestEmail } from '../../utils/guests.js'
 import type { AiFailure } from '../../utils/openai.js'
 import { withLocale } from '../../utils/request-locale.js'
+import { failStaleColorReads } from '../../utils/stale-jobs.js'
 import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { sendColorsReady } from '../lifecycle/service.js'
+import { PROVIDER_CODES } from './failures.js'
 import { colorsReadReset, runColorsJobSafely } from './service.js'
 
 // "Tell me when my colors are ready": people whose read failed because the
 // AI was busy or out of credits, and who left their email. Every few
 // minutes their reads are tried again, one at a time, in their language;
-// the first one is the probe, so a pass stops at the first failure (no
-// credits yet, OpenAI still down) instead of spending on the rest. Each
-// done read emails a sign-in link to their colors (lifecycle sendColorsReady).
+// the first one is the probe, so a pass stops at the first failure of the
+// AI (no credits yet, OpenAI still down) instead of spending on the rest.
+// A photo it refuses is given up (reading it again would cost the same and
+// end the same). Each done read emails a sign-in link to their colors
+// (lifecycle sendColorsReady).
 
 const HOUR = 60 * 60 * 1000
 
 export const NOTIFY_RULES = {
-  // Reads that cost something (a failure with no credits or a refused key
-  // costs nothing, so it doesn't count).
+  // Reads that cost something (no credits, a refused key or a rate limit
+  // cost nothing, so they don't count: only the day does).
   attempts: 6,
   window: 24 * HOUR,
   perPass: 5,
@@ -42,10 +46,28 @@ export function shouldGiveUp(notify: ColorsNotify, now: Date) {
   )
 }
 
-// Whether a failed read counts toward the cap: OpenAI out of credits or
-// refusing the key charges nothing.
+// Whether a failed read counts toward the cap: OpenAI out of credits,
+// refusing the key or over its rate limit charges nothing (a daily token
+// limit can last hours; the day's window still ends it).
 export function countsAsAttempt(code: AiFailure | null | undefined) {
-  return code !== 'no_credits' && code !== 'account'
+  return code !== 'no_credits' && code !== 'account' && code !== 'rate_limited'
+}
+
+// What a scheduled read that didn't bring colors means for the pass: the
+// AI failing ends it ('failed', the probe), a photo it refuses is given up,
+// anything else (ours, or replaced by a read they started) moves on.
+export function afterFailedRead(avatar: Pick<AvatarDocument, 'status' | 'failure'> | null): 'stop' | 'give_up' | 'next' {
+  if (avatar?.status !== 'failed') {
+    return 'next'
+  }
+
+  const code = avatar.failure?.code
+
+  if (code === 'rejected') {
+    return 'give_up'
+  }
+
+  return code && PROVIDER_CODES.includes(code) ? 'stop' : 'next'
 }
 
 export type ReadOutcome = 'ready' | 'failed' | 'skipped'
@@ -110,14 +132,26 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
     let gaveUp = 0
     let sent = 0
 
-    // 1. Too old or tried enough: given up, without an email.
+    // 0. A read cut off by a restart: failed, so step 3 can read it again.
+    const interrupted = await failStaleColorReads(app, now)
+
+    if (interrupted > 0) {
+      app.log.warn({ colorReads: interrupted }, 'Marked interrupted color reads as failed')
+    }
+
+    // 1. Too old, tried enough, or a photo the AI refuses (their own new
+    // selfie, since): given up, without an email.
     const stale = await app.collections.avatars
       .find(
         {
           'colorsNotify.requestedAt': { $exists: true },
           'colorsNotify.sentAt': null,
           'colorsNotify.gaveUpAt': null,
-          $or: [{ 'colorsNotify.requestedAt': { $lt: since } }, { 'colorsNotify.attempts': { $gte: NOTIFY_RULES.attempts } }],
+          $or: [
+            { 'colorsNotify.requestedAt': { $lt: since } },
+            { 'colorsNotify.attempts': { $gte: NOTIFY_RULES.attempts } },
+            { status: 'failed', 'failure.code': 'rejected' },
+          ],
         },
         { projection, limit: 200 },
       )
@@ -152,13 +186,16 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
     }
 
     // 3. The reads, least recently tried first, so one person who keeps
-    // failing doesn't block the rest.
+    // failing doesn't block the rest. Never a photo the AI refused (a
+    // missing failure is a read failed before failures were recorded:
+    // scripts/colors-notify.ts).
     const due = await app.collections.avatars
       .find(
         {
           status: 'failed',
           avatarKey: null,
           colorAnalysis: null,
+          'failure.code': { $nin: ['rejected'] },
           'colorsNotify.requestedAt': { $gte: since },
           'colorsNotify.sentAt': null,
           'colorsNotify.gaveUpAt': null,
@@ -182,7 +219,8 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
 
       const startedAt = new Date()
       const claimed = await app.collections.avatars.updateOne(
-        { _id: avatar._id, status: 'failed', avatarKey: null },
+        // As listed: not if they (or another instance's pass) tried since.
+        { _id: avatar._id, status: 'failed', avatarKey: null, 'colorsNotify.lastTriedAt': avatar.colorsNotify?.lastTriedAt ?? null },
         { $set: { ...colorsReadReset(startedAt), 'colorsNotify.lastTriedAt': startedAt } },
       )
 
@@ -194,7 +232,7 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
 
       await withLocale(user.locale ?? 'en', () => runColorsJobSafely(app, avatar._id, 'notify'))
 
-      const after = await app.collections.avatars.findOne({ _id: avatar._id }, { projection: { ...projection, failure: 1 } })
+      const after = await app.collections.avatars.findOne({ _id: avatar._id }, { projection: { ...projection, status: 1, failure: 1 } })
 
       if (after?.colorAnalysis) {
         if (await sendColorsReady(app, user, after, new Date())) {
@@ -204,11 +242,18 @@ export async function retryColorReads(app: FastifyInstance, now = new Date()) {
         return 'ready'
       }
 
-      if (countsAsAttempt(after?.failure?.code)) {
+      const next = afterFailedRead(after)
+
+      if (next === 'give_up') {
+        gaveUp += Number(await giveUp(app, after ?? avatar, now))
+        return 'skipped'
+      }
+
+      if (after?.status === 'failed' && countsAsAttempt(after.failure?.code)) {
         await app.collections.avatars.updateOne({ _id: avatar._id }, { $inc: { 'colorsNotify.attempts': 1 } })
       }
 
-      return 'failed'
+      return next === 'stop' ? 'failed' : 'skipped'
     })
 
     if (gaveUp || sent || outcomes.length) {
