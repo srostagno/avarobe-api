@@ -437,7 +437,7 @@ const PAY_TERMS: Record<Locale, string> = {
 // setting (it shouldn't, see termsAcceptance), it's logged and the checkout
 // opens anyway, with the sentence beside Pay instead: a checkout never fails
 // over it.
-async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: Locale, log?: { error: (obj: unknown, msg: string) => void }) {
+async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: Locale) {
   const text = params.custom_text?.submit
   const submit = text ? text.message : ''
 
@@ -452,7 +452,7 @@ async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: 
       throw error
     }
 
-    ;(log ?? console).error({ err: error.message }, 'Stripe refused the terms checkbox; checkout opened with the sentence instead')
+    console.error('Stripe refused the terms checkbox; checkout opened with the sentence instead:', error.message)
 
     return stripe().checkout.sessions.create({
       ...params,

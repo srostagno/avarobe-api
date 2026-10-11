@@ -356,7 +356,7 @@ export function proCreditOffer(user: UserDocument, now: Date): ProCreditOffer | 
     credit: credit.amount,
     currency: credit.currency,
     from: credit.from.length > 1 ? 'both' : (credit.from[0] ?? 'color'),
-    since: new Date(Math.min(...dates.map((date) => date.getTime()))),
+    since: dates.length > 0 ? new Date(Math.min(...dates.map((date) => date.getTime()))) : now,
     until: credit.until,
   }
 }
