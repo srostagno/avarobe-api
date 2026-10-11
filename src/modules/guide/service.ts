@@ -23,9 +23,24 @@ export function guideDownloadUrl(order: Pick<GuideOrderDocument, 'token'>) {
 }
 
 // The 7-day refund for an order, from its email: the web's thank-you page
-// with the order's token (it asks before refunding).
-export function guideRefundUrl(order: Pick<GuideOrderDocument, 'token'>, locale?: Locale) {
-  return `${appUrl(locale, '/guide/thanks')}?refund=${encodeURIComponent(order.token)}`
+// with the order's refund key (it asks before refunding).
+export function guideRefundUrl(refundToken: string, locale?: Locale) {
+  return `${appUrl(locale, '/guide/thanks')}?refund=${encodeURIComponent(refundToken)}`
+}
+
+const newToken = () => randomBytes(24).toString('base64url')
+
+// The order's refund key, made the first time it's needed for an order from
+// before orders had one.
+export async function guideRefundToken(app: FastifyInstance, order: Pick<GuideOrderDocument, '_id' | 'refundToken'>) {
+  if (order.refundToken) {
+    return order.refundToken
+  }
+
+  await app.collections.guideOrders.updateOne({ _id: order._id, refundToken: { $exists: false } }, { $set: { refundToken: newToken() } })
+  const stored = await app.collections.guideOrders.findOne({ _id: order._id }, { projection: { refundToken: 1 } })
+
+  return stored?.refundToken ?? null
 }
 
 export function isGuideSession(session: Stripe.Checkout.Session) {
@@ -82,7 +97,8 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     sessionId: session.id,
     email,
     userId,
-    token: randomBytes(24).toString('base64url'),
+    token: newToken(),
+    refundToken: newToken(),
     amount: session.amount_total ?? 0,
     currency: session.currency ?? 'usd',
     emailedAt: null,
@@ -142,7 +158,7 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
             email: order.email,
             firstName: name,
             downloadUrl: guideDownloadUrl(order),
-            refundUrl: order.amount > 0 ? guideRefundUrl(order, locale) : undefined,
+            refundUrl: order.amount > 0 && order.refundToken ? guideRefundUrl(order.refundToken, locale) : undefined,
             locale,
           }),
         })

@@ -5,7 +5,8 @@ import type { UserLocation } from '../types/mongo.js'
 // from the country and state she signed up from (users.location), one zone
 // per state or country: the one most people there live in. Anyone else, or
 // with no location, gets New York's, where most buyers are.
-const DEFAULT_ZONE = 'America/New_York'
+export const DEFAULT_TIME_ZONE = 'America/New_York'
+const DEFAULT_ZONE = DEFAULT_TIME_ZONE
 
 const EASTERN = 'America/New_York'
 const CENTRAL = 'America/Chicago'

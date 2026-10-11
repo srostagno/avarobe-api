@@ -58,11 +58,11 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     pro_monthly: {
       name: 'Avarobe Pro (mensal)',
-      description: 'Looks novos todo mês, seus relatórios de cores e estilo, provas virtuais, cada peça nas lojas e mais.',
+      description: 'Looks novos todo mês, os três consultores (Cores, Estilo, Cabelo e Barba), provas virtuais, cada peça nas lojas e mais.',
     },
     pro_annual: {
       name: 'Avarobe Pro (anual)',
-      description: 'Tudo do Pro por um ano, com seus Consultores de Cores e Estilo incluídos.',
+      description: 'Tudo do Pro por um ano, com os três consultores incluídos: Cores, Estilo e Cabelo e Barba.',
     },
     pro_trial: {
       name: 'Teste do Avarobe Pro',
@@ -120,11 +120,11 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     pro_monthly: {
       name: 'Avarobe Pro (mensual)',
-      description: 'Looks nuevos cada mes, tus reportes de color y estilo, pruebas virtuales, cada prenda en tiendas y más.',
+      description: 'Looks nuevos cada mes, los tres asesores (Color, Estilo, Cabello y Barba), pruebas virtuales, cada prenda en tiendas y más.',
     },
     pro_annual: {
       name: 'Avarobe Pro (anual)',
-      description: 'Todo Pro por un año, con tus Asesores de Color y Estilo incluidos.',
+      description: 'Todo Pro por un año, con los tres asesores incluidos: Color, Estilo y Cabello y Barba.',
     },
     pro_trial: {
       name: 'Prueba de Avarobe Pro',

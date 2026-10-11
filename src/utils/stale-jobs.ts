@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 
 import { settleFailure } from '../modules/avatar/service.js'
-import { refundCredits } from '../modules/billing/entitlements.js'
+import { refundCredits, releaseAvatarRun } from '../modules/billing/entitlements.js'
 import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
 import { releaseGenerations } from './usage.js'
@@ -64,6 +64,11 @@ export async function failStaleJobs(app: FastifyInstance) {
     }
   }
   const colorReads = await failStaleColorReads(app, now)
+  // Interrupted avatar renders (a deploy mid-render) give back what they
+  // took: the day's avatar render and picture, and the Pro month's render.
+  const stuckRenders = await app.collections.avatars
+    .find({ status: 'processing', 'job.kind': { $ne: 'colors' }, updatedAt: { $lt: cutoff } }, { projection: { userId: 1, job: 1 } })
+    .toArray()
   const [refinements, avatars, looks, , pieces] = await Promise.all([
     // An interrupted refinement or haircut leaves the previous avatar usable.
     app.collections.avatars.updateMany(
@@ -117,6 +122,11 @@ export async function failStaleJobs(app: FastifyInstance) {
       ),
     ),
   ])
+
+  for (const avatar of stuckRenders) {
+    await releaseGenerations(app, avatar.userId, 'avatar', 1)
+    await releaseAvatarRun(app, avatar.userId, avatar.job?.avatarRun)
+  }
 
   // Hair studio: an interrupted read can be started again; an interrupted
   // haircut gives back what it took (a credit or the free hairstyle).

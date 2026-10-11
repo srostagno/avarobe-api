@@ -198,7 +198,9 @@ describe('the report credit toward Pro annual', () => {
   it('reaches the web in the currency of where they signed up', () => {
     const brazilian = user({ colorReportAt: new Date(Date.now() - DAY), location: { country: 'BR', region: null, source: 'edge', at: new Date() } })
     const credit = serializeBilling(brazilian).reportCredit
-    assert.deepEqual([credit?.amount, credit?.currency, credit?.from], [1490, 'brl', ['color']])
-    assert.equal(serializeBilling(user({ colorReportAt: new Date(Date.now() - DAY) })).reportCredit?.currency, 'usd')
+    assert.deepEqual([credit?.amount, credit?.currency, credit?.region, credit?.from], [1490, 'brl', 'br', ['color']])
+    // No location: US prices, said so (a LatAm offer, also in dollars, isn't the same prices).
+    const nowhere = serializeBilling(user({ colorReportAt: new Date(Date.now() - DAY) })).reportCredit
+    assert.deepEqual([nowhere?.currency, nowhere?.region], ['usd', 'us'])
   })
 })

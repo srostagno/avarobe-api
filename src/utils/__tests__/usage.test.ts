@@ -5,6 +5,7 @@ import { ObjectId } from 'mongodb'
 
 import { fakeApp } from '../../__tests__/fake-app.js'
 import { env } from '../../config/env.js'
+import { limitMessages } from '../../i18n/limits.js'
 import { withLocale } from '../request-locale.js'
 import { imageLimitBody, releaseGenerations, remainingGenerations, reserveGenerations, reserveUsage } from '../usage.js'
 
@@ -63,7 +64,7 @@ describe('the day’s new pictures', () => {
     const { app, userId, count } = setup({ image: 15, look: 2 })
     const result = await reserveUsage(app, userId, 'look', 1)
 
-    assert.deepEqual(result, { ok: false, reason: 'images', left: 0 })
+    assert.deepEqual(result, { ok: false, reason: 'images', left: 0, timeZone: 'America/New_York' })
     assert.deepEqual([count('look'), count('image')], [2, 15])
     // A read still goes.
     assert.equal(await reserveGenerations(app, userId, 'avatar', 1, { image: false }), true)
@@ -72,7 +73,7 @@ describe('the day’s new pictures', () => {
   it('tell a batch how many still fit', async () => {
     const { app, userId } = setup({ image: 13 })
 
-    assert.deepEqual(await reserveUsage(app, userId, 'look', 3), { ok: false, reason: 'images', left: 2 })
+    assert.deepEqual(await reserveUsage(app, userId, 'look', 3), { ok: false, reason: 'images', left: 2, timeZone: 'America/New_York' })
     assert.match(withLocale('en', () => imageLimitBody(2).message), /You can make 2 more new pictures today/)
     assert.match(withLocale('en', () => imageLimitBody(1).message), /1 more new picture today/)
     assert.equal(imageLimitBody(0).code, 'daily_image_limit')
@@ -103,6 +104,20 @@ describe('the day’s new pictures', () => {
     assert.equal(count('image'), 16)
     await releaseGenerations(app, userId, 'look', 1)
     assert.equal(count('image'), 15)
+  })
+
+  it('say when more come back on their clock: later today in the Americas’ evening, tomorrow otherwise', () => {
+    // 20:00 UTC: 1 PM in California, 5 PM in São Paulo, already 10 PM in Madrid.
+    const evening = new Date('2026-10-11T20:00:00Z')
+
+    assert.match(limitMessages('en', 'America/Los_Angeles', evening).images(15, 0), /More from 5:00\sPM today; your looks stay/)
+    assert.match(limitMessages('pt-BR', 'America/Sao_Paulo', evening).images(15, 0), /Hoje, a partir das 21:00, tem mais/)
+    assert.match(limitMessages('es', 'America/Mexico_City', evening).images(15, 2), /vuelve después de las 6:00\sp\.\s?m\./)
+    assert.match(limitMessages('en', 'Europe/Madrid', evening).images(15, 0), /More tomorrow/)
+    // A batch that can't be smaller (an event's looks) isn't told to ask for fewer.
+    const event = limitMessages('en', 'Europe/Madrid', evening).images(15, 2, 3)
+    assert.match(event, /You can make 2 more new pictures today, and this needs 3\. Come back tomorrow; nothing was used\./)
+    assert.doesNotMatch(event, /fewer/)
   })
 
   it('say it in the language of the page', () => {

@@ -142,6 +142,20 @@ describe('annual Pro’s first week, out of looks', () => {
     })
   })
 
+  it('says it too when a few are left but fewer than asked for (an event’s 3)', async () => {
+    const { app, userId, user } = account({ credits: 2, pro: pro({ interval: 'year', heldCredits: { amount: 20, at: inDays(5) } }) })
+
+    await assert.rejects(withLocale('es', () => spendCredits(app, userId, 3)), /Te quedan 2 looks y los otros 20 llegan el .+\. Pide menos o agrega un paquete de looks ahora\./)
+    assert.equal(user().credits, 2)
+  })
+
+  it('dates it on their clock', () => {
+    // 02:00 UTC on Nov 7 is still Nov 6 in California.
+    const resetsAt = new Date('2026-11-07T02:00:00Z')
+    assert.match(withLocale('en', () => new AvatarCapError(20, resetsAt, 'America/Los_Angeles').message), /More on November 6\.$/)
+    assert.match(withLocale('en', () => new AvatarCapError(20, resetsAt, 'Europe/Madrid').message), /More on November 7\.$/)
+  })
+
   it('is the usual message once nothing is held', async () => {
     const { app, userId } = account({ credits: 0, pro: pro({ interval: 'year' }) })
 

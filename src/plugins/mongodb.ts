@@ -105,6 +105,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.magazines.createIndex({ userId: 1, createdAt: -1 }),
     collections.guideOrders.createIndex({ sessionId: 1 }, { unique: true }),
     collections.guideOrders.createIndex({ token: 1 }, { unique: true }),
+    collections.guideOrders.createIndex({ refundToken: 1 }, { unique: true, partialFilterExpression: { refundToken: { $type: 'string' } } }),
     collections.looks.createIndex({ eventId: 1 }, { sparse: true }),
     collections.looks.createIndex({ userId: 1, batchId: 1 }),
     collections.looks.createIndex({ userId: 1, collectionIds: 1, createdAt: -1 }),

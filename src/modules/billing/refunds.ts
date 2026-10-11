@@ -89,8 +89,15 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId) {
   // Named in the language of the page asking.
   const locale = currentLocale()
 
+  const untils = new Map(purchases.map((purchase) => [purchase._id.toString(), refundableUntil(purchase, { firstProAt: firstPro })]))
+  // Refunding one Pro payment of the first week refunds them all (a switch
+  // to annual within it, say): the dialog says the whole amount.
+  const proWeek = purchases
+    .filter((purchase) => isPro(purchase.product) && untils.get(purchase._id.toString()))
+    .reduce((sum, purchase) => sum + purchase.amountTotal, 0)
+
   return purchases.map((purchase) => {
-    const until = refundableUntil(purchase, { firstProAt: firstPro })
+    const until = untils.get(purchase._id.toString()) ?? null
 
     return {
       id: purchase._id.toString(),
@@ -101,6 +108,8 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId) {
       createdAt: purchase.createdAt.toISOString(),
       refundedAt: purchase.refundedAt?.toISOString() ?? null,
       refundableUntil: until?.toISOString() ?? null,
+      // What a refund of it gives back.
+      refundAmount: until && isPro(purchase.product) ? proWeek : purchase.amountTotal,
     }
   })
 }
@@ -323,7 +332,7 @@ export async function requestRefund(
 // Pro refunded: the subscription ends now, in Stripe and here, with the
 // first week's held looks (the looks it gave are taken back by
 // revokePurchase). Admins' simulated plans never reach Stripe.
-async function endPro(app: FastifyInstance, userId: ObjectId, deps: RefundDeps) {
+async function endPro(app: FastifyInstance, userId: ObjectId, deps: Pick<RefundDeps, 'cancelProNow'>) {
   const user = await app.collections.users.findOne({ _id: userId }, { projection: { pro: 1 } })
   const subscriptionId = user?.pro?.subscriptionId
 
@@ -352,8 +361,15 @@ type RefundedCharge = { payment_intent: string | { id: string } | null; refunded
 // A full refund made in Stripe (charge.refunded): the purchase is marked and
 // revoked the same way, and a guest's book order loses its link. Ours arrive
 // here too, already marked, and are skipped. A Pro payment recorded before
-// purchases kept their payment is found by its invoice.
-export async function handleChargeRefunded(app: FastifyInstance, charge: RefundedCharge, findInvoice: (paymentIntentId: string) => Promise<string | null> = invoiceOfPayment) {
+// purchases kept their payment is found by its invoice. Pro's latest payment
+// refunded ends Pro as the app's refund does (a refunded year isn't a free
+// one); an older one refunded leaves the current period alone.
+export async function handleChargeRefunded(
+  app: FastifyInstance,
+  charge: RefundedCharge,
+  findInvoice: (paymentIntentId: string) => Promise<string | null> = invoiceOfPayment,
+  deps: Pick<RefundDeps, 'cancelProNow'> = STRIPE,
+) {
   const paymentIntentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
 
   if (!paymentIntentId || !charge.refunded) {
@@ -394,6 +410,18 @@ export async function handleChargeRefunded(app: FastifyInstance, charge: Refunde
     return
   }
 
+  if (isPro(purchase.product)) {
+    const latest = await app.collections.purchases.findOne(
+      { userId: purchase.userId, product: { $in: [...PRO_PRODUCTS] } },
+      { sort: { createdAt: -1 }, projection: { _id: 1 } },
+    )
+
+    if (latest?._id.equals(purchase._id)) {
+      app.log.warn({ userId: purchase.userId.toString(), purchaseId: purchase._id.toString() }, 'Pro refunded in Stripe: Pro ended and the subscription cancelled')
+      await endPro(app, purchase.userId, deps)
+    }
+  }
+
   await revokePurchase(app, { ...purchase, refundedAt })
   void trackServerEvent(app, {
     name: 'refund_completed',
@@ -403,8 +431,8 @@ export async function handleChargeRefunded(app: FastifyInstance, charge: Refunde
 }
 
 // A guest's Outfit Formula Book, refunded from the link in its email (its
-// download token): within 7 days, once. A signed-in buyer's purchase is
-// marked too. The link stops working.
+// refund key, not the download's): within 7 days, once. A signed-in buyer's
+// purchase is marked too. The link stops working.
 export async function refundGuideOrder(
   app: FastifyInstance,
   input: { token: string; reason: RefundReason | null },
@@ -413,7 +441,7 @@ export async function refundGuideOrder(
     paymentOf: sessionPayment,
   },
 ) {
-  const order = await app.collections.guideOrders.findOne({ token: input.token })
+  const order = await app.collections.guideOrders.findOne({ refundToken: input.token })
 
   if (!order || !guideRefundableUntil(order)) {
     throw new RefundError('This order can no longer be refunded here. Write to us at hello@avarobe.com.')

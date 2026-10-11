@@ -1058,6 +1058,9 @@ export type GuideOrderDocument = {
   createdAt: Date
   // Since Oct 2026: the payment (for the 7-day refund, guests included), the
   // terms accepted at checkout, and the refund, after which the link stops.
+  // The refund link's key is its own (refundToken), not the download's, so a
+  // forwarded download link can't refund the order.
+  refundToken?: string
   paymentIntentId?: string | null
   terms?: 'accepted' | null
   refundedAt?: Date | null

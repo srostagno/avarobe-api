@@ -39,7 +39,7 @@ export const ptBrEmails: EmailCopy = {
 
   proIncludes: {
     list: (limits: ProLimits) => [
-      'Os três consultores: Cores, Estilo e Cabelo e Barba, enquanto você tiver o Pro. No anual, eles ficam com você para sempre.',
+      'Os três consultores: Cores, Estilo e Cabelo e Barba, enquanto você tiver o Pro. No anual, eles ficam com você.',
       `${limits.credits} looks por mês: cada look criado, prova de roupa ou de um Edit, ou penteado que você descrever usa 1. Um evento com o Stylist de Eventos usa ${limits.eventLooks}. Os looks que você não usar continuam na sua conta.`,
       `Vai ficar bem em mim? Confira qualquer peça com as suas cores, até ${limits.checks} por dia.`,
       'Cada peça de um look, encontrada em lojas.',
@@ -387,7 +387,7 @@ export const ptBrEmails: EmailCopy = {
       (left > 0 ? (left === 1 ? ' Você ainda tem 1 look para usar.' : ` Você ainda tem ${left} looks para usar.`) : ''),
     button: 'Continuar montando looks',
     cancel: (end: string, annual: string, perMonth: string) =>
-      `Prefere não continuar? Cancele nas configurações da sua conta antes de ${end}, e nada será cobrado. Prefere um ano? O Pro anual custa ${annual} (${perMonth}/mês) e mantém os dois relatórios para sempre.`,
+      `Prefere não continuar? Cancele nas configurações da sua conta antes de ${end}, e nada será cobrado. Prefere um ano? O Pro anual custa ${annual} (${perMonth}/mês), e os três consultores ficam com você.`,
   },
 
   guide: {

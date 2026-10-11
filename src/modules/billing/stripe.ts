@@ -12,7 +12,7 @@ import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
-import { annualFirstWeek, colorAddonCents, proIsLive, styleAddonCents } from './entitlements.js'
+import { annualFirstWeek, colorAddonCents, PRO_GRACE_MS, PRO_LIVE_STATUSES, proIsLive, styleAddonCents } from './entitlements.js'
 import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
@@ -135,7 +135,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   pro_monthly: {
     lookupKey: 'avarobe_pro_monthly_v1',
     name: 'Avarobe Pro (monthly)',
-    description: 'New looks every month, your color and style reports, try-ons, every piece in stores and more.',
+    description: 'New looks every month, all three advisors (Color, Style, Hair & Grooming), try-ons, every piece in stores and more.',
     amount: () => env.PRICE_PRO_MONTHLY_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'month',
@@ -143,7 +143,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   pro_annual: {
     lookupKey: 'avarobe_pro_annual_v1',
     name: 'Avarobe Pro (annual)',
-    description: 'Everything in Pro for a year, with your Color and Style Advisors included.',
+    description: 'Everything in Pro for a year, with all three advisors included: Color, Style and Hair & Grooming.',
     amount: () => env.PRICE_PRO_ANNUAL_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'year',
@@ -190,19 +190,41 @@ const priceIds = new Map<string, string>()
 const PRO_DESCRIPTOR = 'AVAROBE'
 const describedProducts = new Set<string>()
 
-// Recurring products (Pro) found from before get the descriptor once per run.
-async function ensureDescriptor(productId: string) {
+// The descriptor is a nicety: if Stripe ever refuses it (its rules, the
+// shared account, a hiccup), the checkout goes on without it and says so in
+// the logs; it's tried again on the next run.
+function descriptorRefused(productId: string, error: unknown) {
+  console.error(
+    `Stripe refused updating Pro product ${productId} (AVAROBE statement descriptor or copy); checkout goes on without it:`,
+    error instanceof Error ? error.message : error,
+  )
+}
+
+// Pro's products from before get the descriptor once per run (`current`: the
+// descriptor already read, for a product just read), and the English one its
+// current name and description (`copy`; the other languages' are kept up to
+// date in localizedProduct).
+async function ensureDescriptor(productId: string, options: { current?: string | null; copy?: { name: string; description: string } } = {}) {
   if (describedProducts.has(productId)) {
     return
   }
 
-  const product = await stripe().products.retrieve(productId)
+  try {
+    const product = options.current !== undefined && !options.copy ? null : await stripe().products.retrieve(productId)
+    const descriptor = product ? product.statement_descriptor : options.current
 
-  if (product.statement_descriptor !== PRO_DESCRIPTOR) {
-    await stripe().products.update(productId, { statement_descriptor: PRO_DESCRIPTOR })
+    if (product && options.copy && (product.name !== options.copy.name || product.description !== options.copy.description)) {
+      await stripe().products.update(productId, { name: options.copy.name, description: options.copy.description })
+    }
+
+    if (descriptor !== PRO_DESCRIPTOR) {
+      await stripe().products.update(productId, { statement_descriptor: PRO_DESCRIPTOR })
+    }
+
+    describedProducts.add(productId)
+  } catch (error) {
+    descriptorRefused(productId, error)
   }
-
-  describedProducts.add(productId)
 }
 
 // The product's name and description in the buyer's language.
@@ -225,13 +247,12 @@ async function localizedProduct(product: PurchaseProduct, locale: Exclude<Locale
   try {
     const existing = await stripe().products.retrieve(id)
 
-    if (
-      existing.name !== copy.name ||
-      existing.description !== copy.description ||
-      !existing.active ||
-      (PRODUCTS[product].recurring && existing.statement_descriptor !== PRO_DESCRIPTOR)
-    ) {
-      await stripe().products.update(id, { name: copy.name, description: copy.description, active: true, ...descriptor })
+    if (existing.name !== copy.name || existing.description !== copy.description || !existing.active) {
+      await stripe().products.update(id, { name: copy.name, description: copy.description, active: true })
+    }
+
+    if (PRODUCTS[product].recurring) {
+      await ensureDescriptor(id, { current: existing.statement_descriptor ?? null })
     }
 
     return id
@@ -241,8 +262,34 @@ async function localizedProduct(product: PurchaseProduct, locale: Exclude<Locale
     }
   }
 
-  await stripe().products.create({ id, ...copy, ...descriptor, metadata: { app: APP, product, locale } })
+  try {
+    await stripe().products.create({ id, ...copy, ...descriptor, metadata: { app: APP, product, locale } })
+  } catch (error) {
+    if (!PRODUCTS[product].recurring) {
+      throw error
+    }
+
+    descriptorRefused(id, error)
+    await stripe().products.create({ id, ...copy, metadata: { app: APP, product, locale } })
+  }
+
   return id
+}
+
+// A new product in English (Pro's with the descriptor, without it if refused).
+async function createProduct(product: PurchaseProduct) {
+  const config = PRODUCTS[product]
+  const base = { name: config.name, description: config.description, metadata: { app: APP, product } }
+
+  if (config.recurring) {
+    try {
+      return (await stripe().products.create({ ...base, statement_descriptor: PRO_DESCRIPTOR })).id
+    } catch (error) {
+      descriptorRefused(config.lookupKey, error)
+    }
+  }
+
+  return (await stripe().products.create(base)).id
 }
 
 // Finds the product's price by lookup key, creating product and price the
@@ -269,7 +316,7 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us', 
   // Pro's products from before the descriptor get it now (localized ones
   // above).
   if (config.recurring && !localized && typeof current?.product === 'string') {
-    await ensureDescriptor(current.product)
+    await ensureDescriptor(current.product, { copy: { name: config.name, description: config.description } })
   }
 
   if (current && current.unit_amount === amount && current.currency === currency) {
@@ -287,19 +334,10 @@ async function priceFor(product: PurchaseProduct, region: PricingRegion = 'us', 
     (typeof current?.product === 'string' ? current.product : typeof usPrice?.product === 'string' ? usPrice.product : null)
 
   if (config.recurring && !localized && !current && typeof usPrice?.product === 'string') {
-    await ensureDescriptor(usPrice.product)
+    await ensureDescriptor(usPrice.product, { copy: { name: config.name, description: config.description } })
   }
 
-  const productId =
-    knownProduct ??
-    (
-      await stripe().products.create({
-        name: config.name,
-        description: config.description,
-        ...(config.recurring ? { statement_descriptor: PRO_DESCRIPTOR } : {}),
-        metadata: { app: APP, product },
-      })
-    ).id
+  const productId = knownProduct ?? (await createProduct(product))
   const price = await stripe().prices.create({
     product: productId,
     currency,
@@ -413,10 +451,26 @@ export function submitMessage(product: PurchaseProduct, region: PricingRegion = 
 // checkbox with Stripe's consent_collection, worded and linked here. The
 // wording is required for it too: without it Stripe wants a terms URL in the
 // account's dashboard, which is Trimry's (tested in test mode, hosted,
-// embedded and subscription checkouts alike).
-export function termsAcceptance(locale: Locale) {
+// embedded and subscription checkouts alike). A subscription's box also
+// takes the renewal itself (California's automatic renewal law and the FTC
+// ask for consent to it, not only a sentence beside Pay): the price and how
+// often, until they cancel.
+export function termsAcceptance(locale: Locale, product?: PurchaseProduct, region: PricingRegion = 'us') {
   const terms = appUrl(locale, '/terms')
   const privacy = appUrl(locale, '/privacy')
+  const plan = product === 'pro_trial' ? 'pro_monthly' : product
+  const recurring = plan ? PRODUCTS[plan].recurring : undefined
+
+  if (plan && recurring) {
+    const price = money(regionalAmount(plan, region), REGION_CURRENCY[region], locale)
+    const trial = product === 'pro_trial'
+
+    return {
+      en: `I agree to Avarobe’s [Terms](${terms}) and [Privacy Policy](${privacy}), and that ${trial ? 'after the trial ' : ''}Pro renews automatically at ${price} per ${recurring} until I cancel.`,
+      'pt-BR': `Concordo com os [Termos](${terms}) e a [Política de Privacidade](${privacy}) do Avarobe, e que ${trial ? 'depois do teste ' : ''}o Pro renova automaticamente por ${price} por ${recurring === 'year' ? 'ano' : 'mês'} até eu cancelar.`,
+      es: `Acepto los [Términos](${terms}) y la [Política de Privacidad](${privacy}) de Avarobe, y que ${trial ? 'después de la prueba ' : ''}Pro se renueva automáticamente por ${price} al ${recurring === 'year' ? 'año' : 'mes'} hasta que lo cancele.`,
+    }[locale]
+  }
 
   return {
     en: `I agree to Avarobe’s [Terms](${terms}) and [Privacy Policy](${privacy}).`,
@@ -437,7 +491,7 @@ const PAY_TERMS: Record<Locale, string> = {
 // setting (it shouldn't, see termsAcceptance), it's logged and the checkout
 // opens anyway, with the sentence beside Pay instead: a checkout never fails
 // over it.
-async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: Locale) {
+async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: Locale, product?: PurchaseProduct, region?: PricingRegion) {
   const text = params.custom_text?.submit
   const submit = text ? text.message : ''
 
@@ -445,7 +499,7 @@ async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: 
     return await stripe().checkout.sessions.create({
       ...params,
       consent_collection: { terms_of_service: 'required' },
-      custom_text: { ...params.custom_text, terms_of_service_acceptance: { message: termsAcceptance(locale) } },
+      custom_text: { ...params.custom_text, terms_of_service_acceptance: { message: termsAcceptance(locale, product, region) } },
     })
   } catch (error) {
     if (!(error instanceof Stripe.errors.StripeInvalidRequestError) || !/consent|terms of service|terms_of_service/i.test(`${error.param ?? ''} ${error.message}`)) {
@@ -555,7 +609,7 @@ export async function createCheckout(input: {
         // would only say the account's name.
         payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
       }
-  const session = await openSession(params, locale)
+  const session = await openSession(params, locale, input.product, region)
 
   if (input.embedded ? !session.client_secret : !session.url) {
     throw new Error('Stripe returned a checkout session without a URL or client secret.')
@@ -1185,9 +1239,22 @@ export async function handleSubscriptionChange(app: FastifyInstance, subscriptio
       ? new Date(end * 1000)
       : null
   const interval = intervalOf(subscription)
+  const now = new Date()
 
-  await app.collections.users.updateOne(
-    { _id: userId },
+  // A late event about an older subscription (one refunded and cancelled at
+  // once, then a new one bought; webhooks retry for days) never overwrites
+  // the newer one while that one is live.
+  const result = await app.collections.users.updateOne(
+    {
+      _id: userId,
+      $or: [
+        { 'pro.subscriptionId': subscription.id },
+        { 'pro.subscriptionId': null },
+        { 'pro.status': { $nin: [...PRO_LIVE_STATUSES] } },
+        { 'pro.periodEnd': null },
+        { 'pro.periodEnd': { $lte: new Date(now.getTime() - PRO_GRACE_MS) } },
+      ],
+    },
     {
       $set: {
         'pro.subscriptionId': subscription.id,
@@ -1198,10 +1265,14 @@ export async function handleSubscriptionChange(app: FastifyInstance, subscriptio
         'pro.cancelAtPeriodEnd': subscription.cancel_at_period_end,
         'pro.trialEnd': subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
         ...(interval === 'month' ? { 'pro.nextCreditsAt': null } : {}),
-        updatedAt: new Date(),
+        updatedAt: now,
       },
     },
   )
+
+  if (result.matchedCount === 0) {
+    app.log.info({ userId: userId.toString(), subscriptionId: subscription.id, status: subscription.status }, 'Subscription event for an older subscription ignored')
+  }
 }
 
 // Cancels Pro at the end of the paid period, or undoes that. Done here
@@ -1322,7 +1393,19 @@ export async function refillAnnualCredits(app: FastifyInstance, now = new Date()
       { ...(live ? { $inc: { credits: hold.amount } } : {}), $unset: { 'pro.heldCredits': '' }, $set: { updatedAt: now } },
     )
 
-    refilled += live ? result.modifiedCount : 0
+    if (live && result.modifiedCount > 0) {
+      refilled += 1
+
+      // They came with the first payment: a refund of it takes them back too.
+      const first = await app.collections.purchases.findOne(
+        { userId: user._id, product: 'pro_annual', refundedAt: null },
+        { sort: { createdAt: -1 }, projection: { _id: 1 } },
+      )
+
+      if (first) {
+        await app.collections.purchases.updateOne({ _id: first._id }, { $inc: { credits: hold.amount } })
+      }
+    }
   }
 
   const due = await app.collections.users

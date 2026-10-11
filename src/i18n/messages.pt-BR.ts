@@ -136,6 +136,8 @@ export const ptBrMessages: MessageTable = {
   'We could not analyze this look. Try again.': 'Não conseguimos analisar este look. Tente de novo.',
   'We could not find that payment.': 'Não encontramos esse pagamento.',
   'We could not find this account. It may have been deleted.': 'Não encontramos esta conta. Ela pode ter sido excluída.',
+  'This download link is not valid. Write to hello@avarobe.com and we will send you a new one.': 'Este link de download não é válido. Escreva para hello@avarobe.com e enviaremos um novo.',
+  'This order was refunded, so its download link no longer works.': 'Este pedido foi reembolsado, então o link de download não funciona mais.',
   'We could not find this order.': 'Não encontramos este pedido.',
   'We could not open the checkout. Please try again.': 'Não conseguimos abrir o pagamento. Tente de novo.',
   'We could not prepare your download. Please refresh.': 'Não conseguimos preparar seu download. Atualize a página.',

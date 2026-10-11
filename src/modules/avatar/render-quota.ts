@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import { dailyLimitReply, releaseGenerations, reserveUsage } from '../../utils/usage.js'
-import { AvatarCapError, PaywallError, type AvatarRun, sendAvatarCap, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
+import { AvatarCapError, PaywallError, type AvatarRun, releaseAvatarRun, sendAvatarCap, sendPaywall, useAvatarRun } from '../billing/entitlements.js'
 
 // `code` tells the day's limit from the per-minute rate limit (also a 429),
 // so the web stops trying again by itself only for this one.
@@ -42,6 +42,25 @@ export async function takeAvatarRender(
       return { ok: false, sent: sendPaywall(reply, offer ?? error) }
     }
 
+    throw error
+  }
+}
+
+// A render taken but never started (an upload or the database failed before
+// its job did): the day's avatar render and picture, and the Pro month's
+// render, given back. Once the job runs, it gives them back itself.
+export async function giveBackAvatarRender(app: FastifyInstance, userId: ObjectId, run: AvatarRun) {
+  await releaseGenerations(app, userId, 'avatar', 1)
+  await releaseAvatarRun(app, userId, run)
+}
+
+// Runs what comes between taking a render and starting its job, giving the
+// render back if it throws.
+export async function beforeAvatarJob<T>(app: FastifyInstance, userId: ObjectId, run: AvatarRun, step: () => Promise<T>) {
+  try {
+    return await step()
+  } catch (error) {
+    await giveBackAvatarRender(app, userId, run).catch(() => undefined)
     throw error
   }
 }

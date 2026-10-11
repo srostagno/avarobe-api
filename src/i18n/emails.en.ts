@@ -425,7 +425,7 @@ export const enEmails = {
       (left > 0 ? ` You still have ${left} look${left === 1 ? '' : 's'} to use.` : ''),
     button: 'Keep styling',
     cancel: (end: string, annual: string, perMonth: string) =>
-      `Rather not continue? Cancel in your account settings before ${end} and you won't be charged. Prefer a year? Pro annual is ${annual} (${perMonth}/mo) and keeps both reports for good.`,
+      `Rather not continue? Cancel in your account settings before ${end} and you won't be charged. Prefer a year? Pro annual is ${annual} (${perMonth}/mo), and all three advisors are yours to keep.`,
   },
 
   guide: {

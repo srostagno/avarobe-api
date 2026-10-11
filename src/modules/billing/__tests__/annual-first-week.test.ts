@@ -76,7 +76,7 @@ describe('annual Pro’s first month', () => {
   })
 
   it('releases the 20 after the week, once, and only while Pro is live', async () => {
-    const { app, userId, user } = setup(1)
+    const { app, userId, user, purchases } = setup(1)
 
     await handleInvoicePaid(app, invoice(userId, { id: 'in_1', reason: 'subscription_create' }))
     const at = user().pro!.heldCredits!.at
@@ -86,6 +86,8 @@ describe('annual Pro’s first month', () => {
     assert.equal(await refillAnnualCredits(app, new Date(at.getTime() + 60_000)), 1)
     assert.equal(user().credits, 31)
     assert.equal(user().pro?.heldCredits, undefined)
+    // They came with the first payment: a refund of it takes all 30 back.
+    assert.equal(purchases()[0]?.credits, 30)
     assert.equal(await refillAnnualCredits(app, new Date(at.getTime() + 120_000)), 0)
     assert.equal(user().credits, 31)
 
@@ -96,6 +98,7 @@ describe('annual Pro’s first month', () => {
     await refillAnnualCredits(ended.app, new Date(Date.now() + 8 * DAY))
     assert.equal(ended.user().credits, 11)
     assert.equal(ended.user().pro?.heldCredits, undefined)
+    assert.equal(ended.purchases()[0]?.credits, 10)
   })
 
   it('then adds the month’s 30 a month on, with a new month of avatar changes', async () => {

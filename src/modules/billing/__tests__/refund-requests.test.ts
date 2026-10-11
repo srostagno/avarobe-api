@@ -146,6 +146,18 @@ describe('asking for a refund in the app', () => {
     assert.deepEqual(refundable, ['magazine'])
   })
 
+  it('says the whole first week’s Pro amount on each of its payments (a switch to annual within it refunds both)', async () => {
+    const { app, userId } = buyer({}, [
+      { product: 'pro_monthly', amountTotal: 799, createdAt: ago(3 * DAY), stripePaymentIntentId: null, stripeSessionId: 'in_m' },
+      { product: 'pro_annual', amountTotal: 2200, createdAt: ago(2 * DAY), stripePaymentIntentId: null, stripeSessionId: 'in_a' },
+      { product: 'look_pack', amountTotal: 499, createdAt: ago(DAY) },
+    ])
+    const listed = await purchasesFor(app, userId)
+    const amounts = Object.fromEntries(listed.map((item) => [item.product, [item.amount, item.refundAmount]]))
+
+    assert.deepEqual(amounts, { pro_monthly: [799, 2999], pro_annual: [2200, 2999], look_pack: [499, 499] })
+  })
+
   it('keeps the purchase as it was when Stripe refuses', async () => {
     const { deps } = stripe()
     const failing = { ...deps, refundPayment: async () => Promise.reject(new Error('Stripe is down')) }
@@ -175,6 +187,47 @@ describe('refunds made in Stripe', () => {
   })
 })
 
+describe('Pro refunded in Stripe’s dashboard', () => {
+  const live = (fields: Partial<ProSubscription> = {}): ProSubscription => ({
+    subscriptionId: 'sub_1',
+    customerId: 'cus_1',
+    status: 'active',
+    interval: 'year',
+    periodEnd: new Date(Date.now() + 360 * DAY),
+    cancelAtPeriodEnd: false,
+    ...fields,
+  })
+
+  it('ends Pro when its latest payment is refunded, with its held looks', async () => {
+    const { deps, cancelled } = stripe()
+    const { app, user, purchases } = buyer({ credits: 10, pro: live({ heldCredits: { amount: 20, at: new Date(Date.now() + 5 * DAY) } }) }, [
+      { product: 'pro_annual', amountTotal: 2999, credits: 10, stripePaymentIntentId: 'pi_annual', createdAt: ago(2 * DAY) },
+    ])
+
+    await handleChargeRefunded(app, { payment_intent: 'pi_annual', refunded: true, amount_refunded: 2999 }, async () => null, deps)
+
+    assert.ok(purchases()[0]?.refundedAt)
+    assert.deepEqual(cancelled, ['sub_1'])
+    assert.equal(user().pro?.status, 'canceled')
+    assert.equal(user().pro?.heldCredits, undefined)
+    assert.equal(user().credits, 0)
+  })
+
+  it('leaves the paid period alone when an older payment is refunded', async () => {
+    const { deps, cancelled } = stripe()
+    const { app, user, purchases } = buyer({ credits: 30, pro: live({ interval: 'month', periodEnd: new Date(Date.now() + 20 * DAY) }) }, [
+      { product: 'pro_monthly', amountTotal: 799, credits: 30, stripePaymentIntentId: 'pi_old', createdAt: ago(40 * DAY) },
+      { product: 'pro_monthly', amountTotal: 799, credits: 30, stripePaymentIntentId: 'pi_now', createdAt: ago(10 * DAY) },
+    ])
+
+    await handleChargeRefunded(app, { payment_intent: 'pi_old', refunded: true, amount_refunded: 799 }, async () => null, deps)
+
+    assert.ok(purchases()[0]?.refundedAt)
+    assert.deepEqual(cancelled, [])
+    assert.equal(user().pro?.status, 'active')
+  })
+})
+
 describe('a guest’s book, refunded from its link', () => {
   it('refunds once within 7 days, and the signed-in purchase with it', async () => {
     const refunded: string[] = []
@@ -189,19 +242,21 @@ describe('a guest’s book, refunded from its link', () => {
       {},
       [{ product: 'outfit_guide', amountTotal: 1490, stripeSessionId: 'cs_book', stripePaymentIntentId: 'pi_book' }],
       [
-        { sessionId: 'cs_book', token: 'tok_new', amount: 1490, currency: 'usd', paymentIntentId: 'pi_book', createdAt: ago(DAY), refundedAt: null },
-        { sessionId: 'cs_old', token: 'tok_old', amount: 1490, currency: 'usd', createdAt: ago(8 * DAY), refundedAt: null },
-        { sessionId: 'cs_before', token: 'tok_before', amount: 1490, currency: 'usd', createdAt: ago(2 * DAY) },
+        { sessionId: 'cs_book', token: 'tok_new', refundToken: 'ref_new', amount: 1490, currency: 'usd', paymentIntentId: 'pi_book', createdAt: ago(DAY), refundedAt: null },
+        { sessionId: 'cs_old', token: 'tok_old', refundToken: 'ref_old', amount: 1490, currency: 'usd', createdAt: ago(8 * DAY), refundedAt: null },
+        { sessionId: 'cs_before', token: 'tok_before', refundToken: 'ref_before', amount: 1490, currency: 'usd', createdAt: ago(2 * DAY) },
       ],
     )
 
-    assert.deepEqual(await refundGuideOrder(app, { token: 'tok_new', reason: 'mistake' }, deps), { amount: 1490, currency: 'usd' })
+    // The download link's token can't refund it: only the refund key can.
+    await assert.rejects(refundGuideOrder(app, { token: 'tok_new', reason: null }, deps), RefundError)
+    assert.deepEqual(await refundGuideOrder(app, { token: 'ref_new', reason: 'mistake' }, deps), { amount: 1490, currency: 'usd' })
     assert.ok(guide()[0]?.refundedAt)
     assert.ok(purchases()[0]?.refundedAt)
-    await assert.rejects(refundGuideOrder(app, { token: 'tok_new', reason: null }, deps), RefundError)
-    await assert.rejects(refundGuideOrder(app, { token: 'tok_old', reason: null }, deps), RefundError)
+    await assert.rejects(refundGuideOrder(app, { token: 'ref_new', reason: null }, deps), RefundError)
+    await assert.rejects(refundGuideOrder(app, { token: 'ref_old', reason: null }, deps), RefundError)
     // An order from before orders kept their payment: its checkout's.
-    await refundGuideOrder(app, { token: 'tok_before', reason: null }, deps)
+    await refundGuideOrder(app, { token: 'ref_before', reason: null }, deps)
     assert.deepEqual(refunded, ['pi_book', 'pi_from_session'])
   })
 })

@@ -5,6 +5,7 @@ import { env } from '../../config/env.js'
 import { limitMessages } from '../../i18n/limits.js'
 import type { ProSubscription, UserDocument } from '../../types/mongo.js'
 import { toObjectId } from '../../utils/object-id.js'
+import { timeZoneFor } from '../../utils/timezones.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
 
@@ -91,7 +92,7 @@ export async function adminUserIds(app: FastifyInstance): Promise<ObjectId[]> {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 // A failed renewal gets a few days while Stripe retries the card.
-const PRO_GRACE_MS = 3 * DAY_MS
+export const PRO_GRACE_MS = 3 * DAY_MS
 export const PRO_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due'])
 
 export function proIsLive(pro: UserDocument['pro'], now = Date.now()) {
@@ -137,7 +138,9 @@ export const styleAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS
 // Pro annual, which includes them, up to the bundle price: in the prices and
 // currency of the buyer's region, as checkout takes it off (a one-time
 // coupon) and as every offer of it shows it. None on Pro.
-export type ReportCredit = { amount: number; currency: Currency; from: ('color' | 'style')[]; until: Date }
+// `region`: whose prices it's in (where they signed up), so the web only
+// takes it off an offer in the same prices.
+export type ReportCredit = { amount: number; currency: Currency; region: PricingRegion; from: ('color' | 'style')[]; until: Date }
 
 export function reportCreditFor(
   user: Pick<UserDocument, 'colorReportAt' | 'styleReportAt' | 'pro'>,
@@ -166,6 +169,7 @@ export function reportCreditFor(
   return {
     amount,
     currency: REGION_CURRENCY[region],
+    region,
     from: [...(color ? ['color' as const] : []), ...(style ? ['style' as const] : [])],
     until,
   }
@@ -283,6 +287,7 @@ export function serializeBilling(user: BillingFields) {
       ? {
           amount: state.reportCredit.amount,
           currency: state.reportCredit.currency,
+          region: state.reportCredit.region,
           from: state.reportCredit.from,
           until: iso(state.reportCredit.until),
         }
@@ -395,14 +400,24 @@ export async function spendCredits(app: FastifyInstance, userId: ObjectId, amoun
   )
 
   if (result.modifiedCount === 0) {
-    const { proActive, proLive, pro, trialing, paid, credits } = await loadState(app, userId)
+    const user = await loadBillingUser(app, userId)
+
+    if (!user) {
+      throw new PaywallError('needs_pro', 'Sign in again to continue.')
+    }
+
+    const { proActive, proLive, pro, trialing, paid, credits } = billingState(user)
     const left = `${credits} look${credits === 1 ? '' : 's'} left`
-    // Annual's first week: the rest of the month's looks are on their way.
+    // Annual's first week: the rest of the month's looks are on their way,
+    // said whether none are left or just fewer than this needs.
     const held = proLive && pro?.heldCredits && pro.heldCredits.at.getTime() > Date.now() ? pro.heldCredits : null
 
-    if (held && credits === 0) {
+    if (held) {
       void trackServerEvent(app, { name: 'usage_cap_hit', userId, props: { cap: 'held_credits', route: '' } })
-      throw new PaywallError('no_credits', limitMessages().held(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, held.amount, held.at))
+      throw new PaywallError(
+        'no_credits',
+        limitMessages(undefined, timeZoneFor(user.location)).held(env.PRO_ANNUAL_FIRST_WEEK_CREDITS, held.amount, held.at, credits),
+      )
     }
 
     throw new PaywallError(
@@ -439,8 +454,9 @@ export class AvatarCapError extends Error {
   constructor(
     readonly limit: number,
     readonly resetsAt: Date | null,
+    timeZone?: string,
   ) {
-    super(limitMessages().avatarMonth(limit, resetsAt))
+    super(limitMessages(undefined, timeZone).avatarMonth(limit, resetsAt))
   }
 }
 
@@ -476,7 +492,7 @@ export async function useAvatarRun(app: FastifyInstance, userId: ObjectId): Prom
     )
 
     if (taken.modifiedCount === 0) {
-      throw new AvatarCapError(limit, state.proAvatarRuns.resetsAt)
+      throw new AvatarCapError(limit, state.proAvatarRuns.resetsAt, timeZoneFor(user.location))
     }
 
     return 'pro'

@@ -20,7 +20,7 @@ import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
 import { AVATAR_ADJUSTMENTS } from './prompts.js'
 import { answeredBefore, colorsLocked, colorsReadStart, imageHash, loadColorsAccess, newReadId, readEntry, replacedKeys, withRead } from './reads.js'
-import { avatarLimitBody, takeAvatarRender } from './render-quota.js'
+import { avatarLimitBody, beforeAvatarJob, takeAvatarRender } from './render-quota.js'
 import { newJob, requestColorsNotice, startAvatarJob, startColorsJob } from './service.js'
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
@@ -155,23 +155,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      const render = await takeAvatarRender(app, reply, userId)
-
-      if (!render.ok) {
-        return render.sent
-      }
-
       const stamp = Date.now()
       const selfieKey = selfie ? `users/${userId.toString()}/selfie-${stamp}.jpg` : null
       const bodyPhotoKey = bodyPhoto ? `users/${userId.toString()}/body-${stamp}.jpg` : null
-
-      if (selfie && selfieKey) {
-        await storage.put(selfieKey, selfie, 'image/jpeg')
-      }
-
-      if (bodyPhoto && bodyPhotoKey) {
-        await storage.put(bodyPhotoKey, bodyPhoto, 'image/jpeg')
-      }
 
       const now = new Date()
       const avatarId = existing?._id ?? new ObjectId()
@@ -201,46 +187,63 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
             }
           : null
 
-      // What it replaces comes from the document as it was right before, so
-      // a report image that finished rendering meanwhile goes too.
-      const previous = await app.collections.avatars.findOneAndUpdate(
-        { userId },
-        {
-          $set: {
-            status: 'processing',
-            error: null,
-            failure: null,
-            body: roundBody(parsedBody.data),
-            job: newJob('create', render.run),
-            updatedAt: now,
-            readyAt: existing?.readyAt ?? null,
-            avatarKey: existing?.avatarKey ?? null,
-            styleProfile: null,
-            ...(selfieKey
-              ? wipe
-                ? {
-                    selfieKey,
-                    colorAnalysis: null,
-                    colorsAt: null,
-                    colorReport: null,
-                    drape: null,
-                    drapePreview: null,
-                    reportBoards: null,
-                    hairProfile: null,
-                  }
-                : { selfieKey, hairProfile: null, ...(legacySource ? { colorsSource: legacySource } : {}) }
-              : {}),
-            ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
-            ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+      const render = await takeAvatarRender(app, reply, userId)
+
+      if (!render.ok) {
+        return render.sent
+      }
+
+      // The photos and the job's start: a failure here gives the render back.
+      const previous = await beforeAvatarJob(app, userId, render.run, async () => {
+        if (selfie && selfieKey) {
+          await storage.put(selfieKey, selfie, 'image/jpeg')
+        }
+
+        if (bodyPhoto && bodyPhotoKey) {
+          await storage.put(bodyPhotoKey, bodyPhoto, 'image/jpeg')
+        }
+
+        // What it replaces comes from the document as it was right before, so
+        // a report image that finished rendering meanwhile goes too.
+        return app.collections.avatars.findOneAndUpdate(
+          { userId },
+          {
+            $set: {
+              status: 'processing',
+              error: null,
+              failure: null,
+              body: roundBody(parsedBody.data),
+              job: newJob('create', render.run),
+              updatedAt: now,
+              readyAt: existing?.readyAt ?? null,
+              avatarKey: existing?.avatarKey ?? null,
+              styleProfile: null,
+              ...(selfieKey
+                ? wipe
+                  ? {
+                      selfieKey,
+                      colorAnalysis: null,
+                      colorsAt: null,
+                      colorReport: null,
+                      drape: null,
+                      drapePreview: null,
+                      reportBoards: null,
+                      hairProfile: null,
+                    }
+                  : { selfieKey, hairProfile: null, ...(legacySource ? { colorsSource: legacySource } : {}) }
+                : {}),
+              ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
+              ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+            },
+            // A new selfie without colors clears every board (above); the body,
+            // or a selfie while there are colors, the style ones.
+            ...(wipe ? {} : { $unset: unsetBoards(STYLE_BOARDS) }),
+            $inc: { generations: 1 },
+            $setOnInsert: { _id: avatarId, userId, createdAt: now },
           },
-          // A new selfie without colors clears every board (above); the body,
-          // or a selfie while there are colors, the style ones.
-          ...(wipe ? {} : { $unset: unsetBoards(STYLE_BOARDS) }),
-          $inc: { generations: 1 },
-          $setOnInsert: { _id: avatarId, userId, createdAt: now },
-        },
-        { upsert: true, returnDocument: 'before' },
-      )
+          { upsert: true, returnDocument: 'before' },
+        )
+      })
 
       // The free preview of a selfie with colors goes only once a read of the
       // new one succeeds (the job); a waiting candidate keeps its photo.
@@ -625,21 +628,23 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return render.sent
       }
 
-      const previous = await app.collections.avatars.findOneAndUpdate(
-        { _id: existing._id },
-        {
-          $set: {
-            status: 'processing',
-            error: null,
-            failure: null,
-            job: newJob('create', render.run),
-            updatedAt: new Date(),
-            ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),
+      const previous = await beforeAvatarJob(app, userId, render.run, () =>
+        app.collections.avatars.findOneAndUpdate(
+          { _id: existing._id },
+          {
+            $set: {
+              status: 'processing',
+              error: null,
+              failure: null,
+              job: newJob('create', render.run),
+              updatedAt: new Date(),
+              ...(parsed.data.body ? { body: roundBody(parsed.data.body), styleProfile: null } : {}),
+            },
+            ...(parsed.data.body ? { $unset: unsetBoards(STYLE_BOARDS) } : {}),
+            $inc: { generations: 1 },
           },
-          ...(parsed.data.body ? { $unset: unsetBoards(STYLE_BOARDS) } : {}),
-          $inc: { generations: 1 },
-        },
-        { returnDocument: 'before' },
+          { returnDocument: 'before' },
+        ),
       )
 
       // New measurements retire the style boards along with the profile.
@@ -684,12 +689,14 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return render.sent
       }
 
-      await app.collections.avatars.updateOne(
-        { _id: existing._id },
-        {
-          $set: { status: 'processing', error: null, job: newJob('refine', render.run), updatedAt: new Date() },
-          $inc: { generations: 1 },
-        },
+      await beforeAvatarJob(app, userId, render.run, () =>
+        app.collections.avatars.updateOne(
+          { _id: existing._id },
+          {
+            $set: { status: 'processing', error: null, job: newJob('refine', render.run), updatedAt: new Date() },
+            $inc: { generations: 1 },
+          },
+        ),
       )
 
       startAvatarJob(app, existing._id, {

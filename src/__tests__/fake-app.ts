@@ -290,8 +290,8 @@ export class FakeCollection {
     return cursor
   }
 
-  async findOne(filter: Doc = {}, _options?: unknown) {
-    const doc = this.select(filter)[0]
+  async findOne(filter: Doc = {}, options?: FindOptions) {
+    const doc = this.select(filter, { sort: options?.sort })[0]
 
     return doc ? clone(doc) : null
   }

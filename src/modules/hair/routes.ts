@@ -12,7 +12,7 @@ import { storage } from '../../utils/storage.js'
 import { dailyLimitReply, releaseGenerations, remainingGenerations, reserveGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { currentHair } from '../avatar/hair.js'
-import { takeAvatarRender } from '../avatar/render-quota.js'
+import { beforeAvatarJob, takeAvatarRender } from '../avatar/render-quota.js'
 import { startAvatarJob } from '../avatar/service.js'
 import {
   PaywallError,
@@ -310,17 +310,19 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
 
     const now = new Date()
 
-    await app.collections.avatars.updateOne(
-      { _id: avatar._id },
-      {
-        $set: {
-          status: 'processing',
-          error: null,
-          job: { kind: 'hair', startedAt: now, previewKey: null, previewCount: 0, hairstyleId: hairstyle._id.toString(), avatarRun: render.run },
-          updatedAt: now,
+    await beforeAvatarJob(app, userId, render.run, () =>
+      app.collections.avatars.updateOne(
+        { _id: avatar._id },
+        {
+          $set: {
+            status: 'processing',
+            error: null,
+            job: { kind: 'hair', startedAt: now, previewKey: null, previewCount: 0, hairstyleId: hairstyle._id.toString(), avatarRun: render.run },
+            updatedAt: now,
+          },
+          $inc: { generations: 1 },
         },
-        $inc: { generations: 1 },
-      },
+      ),
     )
     startAvatarJob(app, avatar._id, { kind: 'hair', hairstyleId: hairstyle._id.toString() })
     void trackServerEvent(app, { name: 'avatar_started', userId, props: { kind: 'hair' } })

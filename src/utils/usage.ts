@@ -8,6 +8,7 @@ import { isAdmin } from '../modules/billing/entitlements.js'
 import type { UsageKind } from '../types/mongo.js'
 import { isDuplicateKeyError } from './mongo-errors.js'
 import { toObjectId } from './object-id.js'
+import { timeZoneFor } from './timezones.js'
 
 const LIMITS: Record<UsageKind, () => number> = {
   avatar: () => env.DAILY_AVATAR_LIMIT,
@@ -28,7 +29,8 @@ export const IMAGE_KINDS: ReadonlySet<UsageKind> = new Set<UsageKind>(['look', '
 
 type ImageOption = { image?: boolean }
 
-export type UsageReservation = { ok: true } | { ok: false; reason: 'kind' | 'images'; left: number }
+// `timeZone` (the day's pictures only): where they are, for when more come back.
+export type UsageReservation = { ok: true } | { ok: false; reason: 'kind' | 'images'; left: number; timeZone?: string }
 
 function limitFor(kind: UsageKind) {
   return LIMITS[kind]()
@@ -91,7 +93,7 @@ async function reserveImages(app: FastifyInstance, userId: ObjectId, amount: num
     return { ok: true }
   }
 
-  const user = await app.collections.users.findOne({ _id: userId }, { projection: { email: 1, compPaused: 1 } })
+  const user = await app.collections.users.findOne({ _id: userId }, { projection: { email: 1, compPaused: 1, location: 1 } })
 
   if (user && isAdmin(user) && !user.compPaused) {
     const day = utcDay()
@@ -105,7 +107,7 @@ async function reserveImages(app: FastifyInstance, userId: ObjectId, amount: num
     return { ok: true }
   }
 
-  return { ok: false, reason: 'images', left: await remainingGenerations(app, userId, 'image') }
+  return { ok: false, reason: 'images', left: await remainingGenerations(app, userId, 'image'), timeZone: timeZoneFor(user?.location) }
 }
 
 // Reserves `amount` generations of a kind for today, and as many of the
@@ -172,9 +174,14 @@ export function trackCapHit(app: FastifyInstance, userId: ObjectId | null, cap: 
   void trackServerEvent(app, { name: 'usage_cap_hit', userId, props: { cap, route } })
 }
 
-// The 429 for the day's pictures: "back tomorrow", or how many still fit.
-export function imageLimitBody(left: number) {
-  return { code: 'daily_image_limit', message: limitMessages().images(env.AI_DAILY_IMAGE_LIMIT, left), left }
+// The 429 for the day's pictures: when more come back on their clock, or
+// how many still fit (`needed`: a batch that can't be smaller, an event).
+export function imageLimitBody(left: number, options: { timeZone?: string; needed?: number } = {}) {
+  return {
+    code: 'daily_image_limit',
+    message: limitMessages(undefined, options.timeZone).images(env.AI_DAILY_IMAGE_LIMIT, left, options.needed),
+    left,
+  }
 }
 
 // A reservation that didn't go: the day's pictures in their words, or the
@@ -182,7 +189,7 @@ export function imageLimitBody(left: number) {
 export function dailyLimitReply(reply: FastifyReply, result: Extract<UsageReservation, { ok: false }>, otherwise: Record<string, unknown>) {
   if (result.reason === 'images') {
     trackCapHit(reply.server, toObjectId(reply.request.authUserId), 'images', reply.request.routeOptions.url ?? '')
-    return reply.code(429).send(imageLimitBody(result.left))
+    return reply.code(429).send(imageLimitBody(result.left, { timeZone: result.timeZone }))
   }
 
   return reply.code(429).send(otherwise)

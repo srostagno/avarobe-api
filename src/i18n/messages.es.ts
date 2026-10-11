@@ -137,6 +137,8 @@ export const esMessages: MessageTable = {
   'We could not analyze this look. Try again.': 'No pudimos analizar este look. Inténtalo de nuevo.',
   'We could not find that payment.': 'No encontramos ese pago.',
   'We could not find this account. It may have been deleted.': 'No encontramos esta cuenta. Es posible que se haya eliminado.',
+  'This download link is not valid. Write to hello@avarobe.com and we will send you a new one.': 'Este enlace de descarga no es válido. Escríbenos a hello@avarobe.com y te enviaremos uno nuevo.',
+  'This order was refunded, so its download link no longer works.': 'Este pedido fue reembolsado, así que su enlace de descarga ya no funciona.',
   'We could not find this order.': 'No encontramos este pedido.',
   'We could not open the checkout. Please try again.': 'No pudimos abrir el pago. Inténtalo de nuevo.',
   'We could not prepare your download. Please refresh.': 'No pudimos preparar tu descarga. Actualiza la página.',

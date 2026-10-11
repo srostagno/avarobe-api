@@ -15,7 +15,8 @@ export async function reserveLookQuota(
   app: FastifyInstance,
   userId: ObjectId,
   amount: number,
-  options: { image?: boolean; route?: string } = {},
+  // `fixed`: a batch that can't be smaller (an event's looks).
+  options: { image?: boolean; route?: string; fixed?: boolean } = {},
 ): Promise<QuotaResult> {
   const reserved = await reserveUsage(app, userId, 'look', amount, { image: options.image })
 
@@ -25,7 +26,7 @@ export async function reserveLookQuota(
 
   if (reserved.reason === 'images') {
     trackCapHit(app, userId, 'images', options.route ?? 'looks')
-    return { ok: false, status: 429, body: imageLimitBody(reserved.left) }
+    return { ok: false, status: 429, body: imageLimitBody(reserved.left, { timeZone: reserved.timeZone, needed: options.fixed ? amount : undefined }) }
   }
 
   const remaining = reserved.left
