@@ -12,7 +12,16 @@ import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
 import { reportPurchase } from './conversions.js'
-import { annualFirstWeek, colorAddonCents, PRO_GRACE_MS, PRO_LIVE_STATUSES, proIsLive, styleAddonCents } from './entitlements.js'
+import {
+  annualFirstWeek,
+  colorAddonCents,
+  PRO_GRACE_MS,
+  PRO_LIVE_STATUSES,
+  proIsLive,
+  rolloverCredits,
+  rolloverCreditsExpression,
+  styleAddonCents,
+} from './entitlements.js'
 import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
@@ -774,6 +783,9 @@ type Grant = {
   // Credits this payment grants, when not the product's usual (annual's
   // first payment holds some back).
   credits?: number
+  // A Pro renewal or plan switch: its looks roll over only up to
+  // PRO_ROLLOVER_CAP (rolloverCredits). The purchase records what it added.
+  rollover?: boolean
   // The terms accepted at checkout (session.consent), when known.
   terms?: 'accepted' | null
 }
@@ -787,7 +799,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
   }
 
   const config = PRODUCTS[grant.product]
-  const credits = grant.credits ?? config.credits()
+  const due = grant.credits ?? config.credits()
   // What she paid for, for products that unlock her colors: her season now
   // and the read it came from (a later read can't silently replace it).
   const avatar =
@@ -799,6 +811,15 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
 
   try {
     await mongoSession.withTransaction(async () => {
+      const user = await app.collections.users.findOne({ _id: grant.userId }, { session: mongoSession })
+
+      if (!user) {
+        throw new Error(`Payment ${grant.paymentKey} for a missing user.`)
+      }
+
+      const balance = user.credits ?? env.FREE_CREDITS
+      const credits = grant.rollover ? rolloverCredits(balance, due) : due
+
       // A concurrent grant of the same payment fails here on the unique
       // index, which aborts this transaction (handled below).
       await app.collections.purchases.insertOne(
@@ -812,6 +833,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           currency: grant.currency,
           amountUsd: toUsdCents(grant.amount, grant.currency),
           credits,
+          ...(credits < due ? { creditsOverCap: due - credits } : {}),
           createdAt: new Date(),
           ...(config.unlocks?.color || config.unlocks?.mirror ? { colorRead } : {}),
           ...(grant.placement ? { placement: grant.placement } : {}),
@@ -820,19 +842,13 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
         { session: mongoSession },
       )
 
-      const user = await app.collections.users.findOne({ _id: grant.userId }, { session: mongoSession })
-
-      if (!user) {
-        throw new Error(`Payment ${grant.paymentKey} for a missing user.`)
-      }
-
       const now = new Date()
 
       await app.collections.users.updateOne(
         { _id: grant.userId },
         {
           $set: {
-            credits: (user.credits ?? env.FREE_CREDITS) + credits,
+            credits: balance + credits,
             paidAt: user.paidAt ?? now,
             ...(config.unlocks?.color ? { colorReportAt: user.colorReportAt ?? now } : {}),
             ...(config.unlocks?.style ? { styleReportAt: user.styleReportAt ?? now } : {}),
@@ -1023,6 +1039,8 @@ function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoi
 // Annual plans get the rest of each year's monthly looks from
 // refillAnnualCredits, starting a month after every annual payment. A new
 // annual subscription's first month comes in two parts (annualFirstWeek).
+// Renewals and switches roll over up to PRO_ROLLOVER_CAP; the first payment
+// adds its looks in full.
 // Every payment starts a new month of avatar renders (the object is
 // replaced) and marks the subscription as under the avatar cap.
 async function grantProPayment(
@@ -1057,6 +1075,7 @@ async function grantProPayment(
     placement: input.placement ?? null,
     terms: input.terms ?? null,
     ...(firstWeek ? { credits: firstWeek.now } : {}),
+    rollover: !input.first,
     set: (user) => ({
       pro: {
         subscriptionId: input.subscriptionId,
@@ -1370,8 +1389,9 @@ export async function startProNow(app: FastifyInstance, subscriptionId: string) 
 
 // The monthly looks of annual plans, a month apart until the paid year ends
 // (the renewal payment grants the next year's first month), each with a new
-// month of avatar renders. Also the rest of a new annual plan's first month,
-// once its week is up; dropped without looks if Pro ended meanwhile (a
+// month of avatar renders; they roll over up to PRO_ROLLOVER_CAP. Also the
+// rest of a new annual plan's first month, once its week is up (in full,
+// like the first payment); dropped without looks if Pro ended meanwhile (a
 // refund, a cancellation).
 export async function refillAnnualCredits(app: FastifyInstance, now = new Date()) {
   const held = await app.collections.users
@@ -1412,6 +1432,7 @@ export async function refillAnnualCredits(app: FastifyInstance, now = new Date()
     .find({ 'pro.interval': 'year', 'pro.nextCreditsAt': { $lte: now } }, { projection: { pro: 1 } })
     .limit(500)
     .toArray()
+  let capped = 0
 
   for (const user of due) {
     const pro = user.pro
@@ -1421,11 +1442,34 @@ export async function refillAnnualCredits(app: FastifyInstance, now = new Date()
       continue
     }
 
-    const result = await app.collections.users.updateOne(
+    // In one step on the stored balance, so a look spent meanwhile still
+    // counts: up to the cap, and never less than she has.
+    const before = await app.collections.users.findOneAndUpdate(
       { _id: user._id, 'pro.nextCreditsAt': next },
-      { $inc: { credits: env.PRO_MONTHLY_CREDITS }, $set: { 'pro.nextCreditsAt': addMonths(next, 1), 'pro.avatarRuns': 0, updatedAt: now } },
+      [
+        {
+          $set: {
+            credits: rolloverCreditsExpression(env.PRO_MONTHLY_CREDITS),
+            'pro.nextCreditsAt': addMonths(next, 1),
+            'pro.avatarRuns': 0,
+            updatedAt: now,
+          },
+        },
+      ],
+      { returnDocument: 'before', projection: { credits: 1 } },
     )
-    refilled += result.modifiedCount
+
+    if (before) {
+      refilled += 1
+
+      if (rolloverCredits(before.credits ?? env.FREE_CREDITS, env.PRO_MONTHLY_CREDITS) < env.PRO_MONTHLY_CREDITS) {
+        capped += 1
+      }
+    }
+  }
+
+  if (capped > 0) {
+    app.log.info({ capped, cap: env.PRO_ROLLOVER_CAP }, 'Annual Pro looks held at the rollover cap')
   }
 
   return refilled

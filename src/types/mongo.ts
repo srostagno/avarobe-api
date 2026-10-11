@@ -265,6 +265,9 @@ export type PurchaseDocument = {
   // across currencies; missing on purchases from before (all in dollars).
   amountUsd?: number
   credits: number
+  // A Pro renewal's looks that didn't fit under the rollover cap
+  // (PRO_ROLLOVER_CAP): `credits` is what it added.
+  creditsOverCap?: number
   createdAt: Date
   // Money back: the 7-day guarantee asked for in the app, or a refund made in
   // Stripe's dashboard. What the purchase unlocked is taken away.

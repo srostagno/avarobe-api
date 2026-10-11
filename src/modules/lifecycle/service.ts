@@ -24,6 +24,8 @@ import {
   latestEdit,
   pickCrossSell,
   proCreditDue,
+  proTourLinkDue,
+  proTourPath,
   type CrossSellKind,
   type CrossSellState,
 } from './cross-sell.js'
@@ -447,12 +449,14 @@ export type CrossSellPersonal = Pick<CrossSellContent, 'heroUrl' | 'gift' | 'cut
 
 // `credit`: the report credit the send priced with (null: none, or left
 // out for the bundle's buyers); `proCreditUrl`: the Pro credit block's
-// checkout, when this email carries it (proCreditDue).
+// checkout, when this email carries it (proCreditDue); `proTourUrl`: the
+// web's Pro tour under it (proTourLinkDue).
 export type CrossSellLink = {
   url: string
   side: 'style' | 'color' | null
   credit?: ProCreditOffer | null
   proCreditUrl?: string | null
+  proTourUrl?: string | null
 } & CrossSellPersonal
 
 export function crossSellContentFor(
@@ -491,7 +495,15 @@ export function crossSellContentFor(
     occasionUrls: link?.occasionUrls ?? [],
     proCredit:
       credit && proCreditUrl
-        ? { price: credit.price, regular: credit.regular, credit: credit.credit, from: credit.from, until: credit.until, url: proCreditUrl }
+        ? {
+            price: credit.price,
+            regular: credit.regular,
+            credit: credit.credit,
+            from: credit.from,
+            until: credit.until,
+            url: proCreditUrl,
+            tourUrl: link?.proTourUrl ?? null,
+          }
         : null,
   }
 }
@@ -1453,18 +1465,28 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
     // Signed in from the email, in their own browser (where Apple Pay
     // works): straight to that checkout, to the gift look, or to the Event
     // Stylist with the event they picked. The book needs no account. The
-    // Pro credit block opens Pro annual's checkout, its own placement.
+    // Pro credit block opens Pro annual's checkout, its own placement, and
+    // under it the web's Pro tour for whom it plays.
     let url = crossSellPage(kind, offer.product, user.locale, edit)
     let gift: CrossSellPersonal['gift'] = null
     let occasionUrls: string[] = []
-    const proNext = context.withProCredit ? [studioPath('/studio', { buy: 'pro_annual', from: `email_${kind}_pro` })] : []
-    let proCreditUrl: string | null = null
+    const tour = proTourLinkDue({
+      on: env.PRO_TOUR_EMAIL_LINK,
+      withProCredit: context.withProCredit,
+      colorReport: billingState(user, now.getTime()).colorReport,
+      colorsRead: Boolean(context.avatar?.colorAnalysis),
+      presentation: context.avatar ? presentationOf(context.avatar) : null,
+    })
+    const proNext = context.withProCredit
+      ? [studioPath('/studio', { buy: 'pro_annual', from: `email_${kind}_pro` }), ...(tour ? [proTourPath(kind)] : [])]
+      : []
+    let proLinks: string[] = []
 
     if (kind === 'xsell_event') {
       const occasions = emailCopy(user.locale).crossSell.event.occasions.map((item) => studioPath('/studio/events', { occasion: item.occasion }))
       const links = await signInLinks(app, user, kind, [...occasions, ...proNext])
       occasionUrls = links.slice(0, occasions.length)
-      proCreditUrl = proNext.length ? (links[occasions.length] ?? null) : null
+      proLinks = links.slice(occasions.length)
     } else if (offer.product !== 'outfit_guide') {
       const target = crossSellTarget(kind, offer.product, edit)
       const giftLook = personal.giftLook
@@ -1473,10 +1495,13 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
       const [checkout, look] = links
       url = checkout!
       gift = giftLook && look ? { url: look, color: giftLook.color } : null
-      proCreditUrl = proNext.length ? (links[nexts.length] ?? null) : null
+      proLinks = links.slice(nexts.length)
     } else if (proNext.length) {
-      proCreditUrl = (await signInLinks(app, user, kind, proNext))[0] ?? null
+      proLinks = await signInLinks(app, user, kind, proNext)
     }
+
+    const proCreditUrl = proLinks[0] ?? null
+    const proTourUrl = tour ? (proLinks[1] ?? null) : null
 
     const content = lifecycleContentFor(
       kind,
@@ -1497,6 +1522,7 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
         occasionUrls,
         credit: context.credit,
         proCreditUrl,
+        proTourUrl,
       },
       now,
     )
@@ -1517,7 +1543,16 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
       content: trackContent(content, sendId),
     })
     app.log.info(
-      { userId: user._id.toString(), kind, product: offer.product, photo: Boolean(personal.heroUrl), edit, proCredit: Boolean(proCreditUrl), delivered },
+      {
+        userId: user._id.toString(),
+        kind,
+        product: offer.product,
+        photo: Boolean(personal.heroUrl),
+        edit,
+        proCredit: Boolean(proCreditUrl),
+        proTour: Boolean(proTourUrl),
+        delivered,
+      },
       'Cross-sell email',
     )
     return delivered

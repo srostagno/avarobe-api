@@ -191,7 +191,8 @@ function crossSellPreviews(
   const pro = { ...owner, price: price('pro_monthly'), regular: null, until: null, edit }
   // A Color Advisor bought yesterday counts toward Pro annual (billing
   // reportCreditFor), at the market's prices: the block in the first two
-  // cross-sells, and the Pro email's annual offer.
+  // cross-sells (with the Pro tour linked under it), and the Pro email's
+  // annual offer.
   const proCredit = {
     price: price('pro_annual') - price('color_report'),
     regular: price('pro_annual'),
@@ -199,6 +200,7 @@ function crossSellPreviews(
     from: 'color' as const,
     until: new Date(now.getTime() + 13 * 24 * 60 * 60 * 1000),
     url: `${url}&buy=pro_annual`,
+    tourUrl: `${url}&see=pro`,
   }
 
   return {

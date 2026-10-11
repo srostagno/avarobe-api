@@ -41,7 +41,7 @@ export const esEmails: EmailCopy = {
   proIncludes: {
     list: (limits: ProLimits) => [
       'Los tres asesores: Color, Estilo y Cabello y Barba, mientras tengas Pro. Con el anual, se quedan contigo.',
-      `${limits.credits} looks al mes: cada look, prueba de outfit o de un Edit, o peinado que describas usa 1. Un evento con el Estilista de Eventos usa ${limits.eventLooks}. Los looks que no uses se quedan en tu cuenta.`,
+      `${limits.credits} looks al mes: cada look, prueba de outfit o de un Edit, o peinado que describas usa 1. Un evento con el Estilista de Eventos usa ${limits.eventLooks}. Los looks que no uses se quedan en tu cuenta, hasta ${limits.rollover}.`,
       `¿Me quedará bien? Revisa cualquier prenda con tus colores, hasta ${limits.checks} al día.`,
       'Cada prenda de un look, encontrada en tiendas.',
       'La opinión completa de tu estilista sobre cada look.',
@@ -434,7 +434,7 @@ export const esEmails: EmailCopy = {
     ],
     eventFeatures: [
       'Tres looks completos para su código de vestimenta, en ti',
-      'Cada prenda encontrada en tiendas, según tu presupuesto',
+      'Prendas parecidas en tiendas, con el precio de cada tienda',
       'Zapatos, bolsas, peinado y maquillaje para completar cada look',
       'Un checklist para el día',
     ],
@@ -470,6 +470,7 @@ export const esEmails: EmailCopy = {
         `${today} hoy por tu primer año; después, ${full} al año hasta que canceles. Cancela cuando quieras desde tu cuenta.`,
       preheader: (today: string, full: string, date: string) =>
         `${today} en vez de ${full} por tu primer año de Pro: lo que pagaste cuenta. Válido hasta el ${date}.`,
+      tourLink: 'Mira lo que hace Pro · 1 min',
     },
 
     style: {
@@ -586,9 +587,9 @@ export const esEmails: EmailCopy = {
         `Elige el evento: tres looks completos para su código de vestimenta, en ti, con cada prenda en tiendas. ${price} por evento.`,
       heading: '¿Tienes algún evento pronto?',
       introPhoto: (upcoming: string) =>
-        `Ese es tu look más reciente, en ti. ${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con cada prenda disponible en tiendas y cómo completar el look.`,
+        `Ese es tu look más reciente, en ti. ${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con prendas parecidas para encontrar en tiendas y cómo completar el look.`,
       intro: (upcoming: string) =>
-        `${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con cada prenda disponible en tiendas y cómo completar el look.`,
+        `${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con prendas parecidas para encontrar en tiendas y cómo completar el look.`,
       occasions: [
         { label: 'Boda', occasion: 'Una boda' },
         { label: 'Evento de trabajo', occasion: 'Un evento de trabajo' },

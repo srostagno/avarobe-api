@@ -150,6 +150,7 @@ const proLimits = (): ProLimits => ({
   eventLooks: EVENT_LOOKS,
   checks: DAILY_CHECKS,
   avatarRuns: env.PRO_AVATAR_RUNS_PER_MONTH,
+  rollover: env.PRO_ROLLOVER_CAP,
 })
 
 // Under the Pro list: the day's fair use, and annual's first week.
@@ -1194,7 +1195,8 @@ export type CrossSellContent = {
   // What they paid for an advisor counts toward Pro annual: today's price
   // for the first year, the regular annual price, the credit, which advisor
   // it's from, until when, and its checkout. A block in the first two
-  // cross-sells after buying; the whole offer in the Pro email.
+  // cross-sells after buying; the whole offer in the Pro email. `tourUrl`:
+  // the web's Pro tour, linked under the block (proTourLinkDue).
   proCredit?: {
     price: number
     regular: number
@@ -1202,6 +1204,7 @@ export type CrossSellContent = {
     from: 'color' | 'style' | 'both'
     until: Date
     url: string
+    tourUrl?: string | null
   } | null
 }
 
@@ -1273,7 +1276,8 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
     ]
   }
   // The credit as its own block before the signature, in any cross-sell
-  // that carries it but the Pro email (where it's the offer).
+  // that carries it but the Pro email (where it's the offer), with the Pro
+  // tour under it when the send links it.
   const sign = () => [
     ...(credit && input.kind !== 'xsell_pro'
       ? [
@@ -1282,6 +1286,7 @@ export function crossSellEmail(input: Recipient & CrossSellContent): EmailConten
           subheading(xs.proCredit.title(money(credit.price))),
           paragraph(xs.proCredit.body(money(credit.price), money(credit.regular), money(credit.credit), endDay(credit.until))),
           ...annualBlocks(credit),
+          ...(credit.tourUrl ? [textLink(xs.proCredit.tourLink, credit.tourUrl)] : []),
         ]
       : []),
     signature(c),

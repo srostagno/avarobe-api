@@ -1,4 +1,4 @@
-import type { LifecycleEmailKind } from '../../types/mongo.js'
+import type { LifecycleEmailKind, Presentation } from '../../types/mongo.js'
 import { tooSoonAfter } from './schedule.js'
 
 const HOUR = 60 * 60 * 1000
@@ -112,6 +112,28 @@ export function proCreditDue(state: Pick<CrossSellState, 'proCredit' | 'owns' | 
   const since = crossSellsSent(state.sent).filter((date) => date.getTime() >= credit.since.getTime()).length
 
   return since < CROSS_SELL_RULES.proCreditEmails && credit.until.getTime() - at >= CROSS_SELL_RULES.proCreditMinLeft
+}
+
+// Under that block, a link to the web's Pro tour ("See what Pro does ·
+// 1 min", /studio?see=pro), only for whom the web plays it: her colors read
+// and the Color Advisor (Pro and comp never get the block), not menswear
+// (the web opens the Pro sheet there), while the link is on
+// (PRO_TOUR_EMAIL_LINK). Otherwise the link would open the studio and
+// nothing else.
+export function proTourLinkDue(input: {
+  on: boolean
+  withProCredit: boolean
+  colorReport: boolean
+  colorsRead: boolean
+  presentation: Presentation | null
+}) {
+  return input.on && input.withProCredit && input.colorReport && input.colorsRead && input.presentation !== 'menswear'
+}
+
+// Where it lands after signing in: the tour's own parameter, tagged as the
+// web's host expects for an email (placement pro_tour_email).
+export function proTourPath(kind: CrossSellKind) {
+  return `/studio?${new URLSearchParams({ see: 'pro', utm_source: 'email', utm_medium: 'lifecycle', utm_campaign: kind }).toString()}`
 }
 
 const newestFirst = (edits: CrossSellState['edits'], at: number) =>

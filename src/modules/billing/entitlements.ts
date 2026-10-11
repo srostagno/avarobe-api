@@ -130,6 +130,24 @@ export function annualFirstWeek() {
   return held > 0 ? { now, held, days: env.PRO_ANNUAL_FIRST_WEEK_DAYS } : null
 }
 
+// Unused looks roll over up to PRO_ROLLOVER_CAP (since Oct 2026): a Pro
+// renewal or month's drop adds only what fits under it, and a balance already
+// at or above it is kept as it is, with nothing added (never taken away). A
+// subscription's first payment, the rest of annual's first month and look
+// packs aren't rollover, and add in full.
+export function rolloverCredits(balance: number, amount: number, cap = env.PRO_ROLLOVER_CAP) {
+  return Math.max(0, Math.min(amount, cap - balance))
+}
+
+// The same, as an update pipeline's value for `credits`, so a month's drop
+// applies it atomically on the stored balance (missing: FREE_CREDITS, as
+// everywhere): max(balance, min(cap, balance + amount)).
+export function rolloverCreditsExpression(amount: number, cap = env.PRO_ROLLOVER_CAP) {
+  const balance = { $ifNull: ['$credits', env.FREE_CREDITS] }
+
+  return { $max: [balance, { $min: [cap, { $add: [balance, amount] }] }] }
+}
+
 // Add-on prices: the other report at what completes the bundle.
 export const colorAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_STYLE_REPORT_CENTS)
 export const styleAddonCents = () => Math.max(50, env.PRICE_REPORTS_BUNDLE_CENTS - env.PRICE_COLOR_REPORT_CENTS)

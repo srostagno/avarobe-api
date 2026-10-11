@@ -31,7 +31,7 @@ const PLURAL_PRODUCTS = new Set(['look_pack', 'reports_bundle', 'advisors_bundle
 const theEdit = (name: string) => name.replace(/^The /, 'the ')
 
 // The numbers in the official Pro list (lifecycle/templates.ts proLimits).
-export type ProLimits = { credits: number; eventLooks: number; checks: number; avatarRuns: number }
+export type ProLimits = { credits: number; eventLooks: number; checks: number; avatarRuns: number; rollover: number }
 
 export const enEmails = {
   // <html lang>.
@@ -54,7 +54,7 @@ export const enEmails = {
   proIncludes: {
     list: (limits: ProLimits) => [
       'All three advisors: Color, Style and Hair & Grooming, while you’re on Pro. With annual, they’re yours to keep.',
-      `${limits.credits} looks a month: each styled look, outfit or Edit try-on, or hairstyle you describe uses 1. An event with the Event Stylist uses ${limits.eventLooks}. Unused looks stay in your account.`,
+      `${limits.credits} looks a month: each styled look, outfit or Edit try-on, or hairstyle you describe uses 1. An event with the Event Stylist uses ${limits.eventLooks}. Unused looks stay in your account, up to ${limits.rollover}.`,
       `Will it suit me? Check any piece against your colors, up to ${limits.checks} a day.`,
       'Every piece of a look, found in stores.',
       'Your stylist’s full take on each look.',
@@ -475,7 +475,7 @@ export const enEmails = {
     ],
     eventFeatures: [
       'Three complete looks for its dress code, on you',
-      'Every piece found in stores, at your budget',
+      'Similar pieces found in stores, with each store’s price',
       'Shoes, bags, hair and makeup to finish each look',
       'A checklist for the day',
     ],
@@ -518,6 +518,8 @@ export const enEmails = {
         `${today} today for your first year, then ${full} a year until you cancel. Cancel anytime in your account.`,
       preheader: (today: string, full: string, date: string) =>
         `${today} instead of ${full} for your first year of Pro: what you paid counts toward it. Good until ${date}.`,
+      // Under the block: the web's Pro tour (/studio?see=pro).
+      tourLink: 'See what Pro does · 1 min',
     },
 
     style: {
@@ -639,9 +641,9 @@ export const enEmails = {
       heading: 'Something coming up?',
       // With their latest look as the picture.
       introPhoto: (upcoming: string) =>
-        `That’s your latest look, on you. ${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, on you, with every piece findable in stores and how to finish the look.`,
+        `That’s your latest look, on you. ${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, on you, with similar pieces to find in stores and how to finish the look.`,
       intro: (upcoming: string) =>
-        `${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, shown on you, with every piece findable in stores and how to finish the look.`,
+        `${upcoming} Pick the event and the Event Stylist plans three complete outfits for its dress code, shown on you, with similar pieces to find in stores and how to finish the look.`,
       // One button each; `occasion` fills in the Event Stylist's form.
       occasions: [
         { label: 'Wedding', occasion: 'A wedding' },

@@ -23,6 +23,7 @@ import {
   isAdmin,
   loadBillingUser,
   reportCreditFor,
+  rolloverCreditsExpression,
 } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
 import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
@@ -219,6 +220,8 @@ function proIncludes() {
     dailyImages: env.AI_DAILY_IMAGE_LIMIT,
     dailyChecks: DAILY_CHECKS,
     annualFirstWeek: week ? { credits: week.now, days: week.days } : null,
+    // Unused looks stay, up to this many (the official list says it).
+    rolloverCap: env.PRO_ROLLOVER_CAP,
   }
 }
 
@@ -777,8 +780,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       try {
         if (isSimulated(subscriptionId)) {
           const now = new Date()
-          await app.collections.users.updateOne(
-            { _id: userId },
+          // A plan switch's looks roll over up to the cap, as Stripe's do.
+          await app.collections.users.updateOne({ _id: userId }, [
             {
               $set: {
                 'pro.interval': 'year',
@@ -789,10 +792,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
                 colorReportAt: user.colorReportAt ?? now,
                 styleReportAt: user.styleReportAt ?? now,
                 hairAdvisorAt: user.hairAdvisorAt ?? now,
+                credits: rolloverCreditsExpression(env.PRO_MONTHLY_CREDITS),
               },
-              $inc: { credits: env.PRO_MONTHLY_CREDITS },
             },
-          )
+          ])
         } else {
           await switchToAnnual(app, subscriptionId)
         }
@@ -831,8 +834,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
 
       try {
         if (isSimulated(subscriptionId)) {
-          await app.collections.users.updateOne(
-            { _id: userId },
+          // The first monthly charge after a trial: a renewal, up to the cap.
+          await app.collections.users.updateOne({ _id: userId }, [
             {
               $set: {
                 'pro.status': 'active',
@@ -840,10 +843,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
                 'pro.cancelAtPeriodEnd': false,
                 'pro.trialEnd': null,
                 'pro.avatarRuns': 0,
+                credits: rolloverCreditsExpression(env.PRO_MONTHLY_CREDITS),
               },
-              $inc: { credits: env.PRO_MONTHLY_CREDITS },
             },
-          )
+          ])
         } else {
           await startProNow(app, subscriptionId)
         }

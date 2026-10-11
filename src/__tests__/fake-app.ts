@@ -3,7 +3,7 @@
 // collections understand the small part of MongoDB those jobs use: filters
 // with dotted paths, null matching a missing field, $exists, $ne, $in, $nin,
 // $lt/$lte/$gt/$gte, $or, $nor and $and; updates with $set, $unset, $inc and
-// $setOnInsert, pipeline $set with $ifNull and $min, upserts (and their duplicate-key
+// $setOnInsert, pipeline $set with $ifNull, $min, $max and $add, upserts (and their duplicate-key
 // error, on _id and on the unique fields of UNIQUE: avatars.userId, as in
 // plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
 // passes on a query the fake didn't understand.
@@ -176,6 +176,31 @@ function evaluate(doc: Doc, expression: unknown): unknown {
     const values = (expression.$min as unknown[]).map((value) => evaluate(doc, value)).filter((value) => value !== null && value !== undefined)
 
     return values.length > 0 ? values.reduce((least, value) => (order(value, least) < 0 ? value : least)) : null
+  }
+
+  if (isPlain(expression) && Array.isArray(expression.$max)) {
+    const values = (expression.$max as unknown[]).map((value) => evaluate(doc, value)).filter((value) => value !== null && value !== undefined)
+
+    return values.length > 0 ? values.reduce((most, value) => (order(value, most) > 0 ? value : most)) : null
+  }
+
+  // Numbers only; null when any is missing, as in MongoDB.
+  if (isPlain(expression) && Array.isArray(expression.$add)) {
+    const values = (expression.$add as unknown[]).map((value) => evaluate(doc, value))
+
+    if (values.some((value) => value === null || value === undefined)) {
+      return null
+    }
+
+    if (!values.every((value) => typeof value === 'number')) {
+      throw new Error('fake-app: $add takes numbers only')
+    }
+
+    return values.reduce((sum, value) => sum + value, 0)
+  }
+
+  if (isPlain(expression) && Object.keys(expression).some((key) => key.startsWith('$'))) {
+    throw new Error(`fake-app: expression ${Object.keys(expression).join(', ')} is not supported`)
   }
 
   return expression
