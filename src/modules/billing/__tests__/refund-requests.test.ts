@@ -1,18 +1,24 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 
+import type { FastifyRequest } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import { fakeApp, type LogLine } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
 import type { ProSubscription, PurchaseDocument, RefundRequestDocument } from '../../../types/mongo.js'
+import { translateMessage } from '../../../utils/translate-message.js'
+import { decisionEmailFor, founderEmail } from '../refund-notify.js'
 import {
+  RATE_LIMIT_MESSAGE,
+  REQUEST_RATE_LIMIT,
   RefundRequestError,
   approveRefundRequest,
   createGuideRefundRequest,
   createRefundRequest,
   forgetRefundRequests,
   planRefund,
+  proPauseEnd,
   purchasesFor,
   rejectRefundRequest,
   sendRefundReminders,
@@ -601,5 +607,324 @@ describe('the account page', () => {
 
     assert.deepEqual(amounts, { pro_monthly: [2490, 12480], pro_annual: [9990, 12480], look_pack: [1490, 1490] })
     assert.equal(listed.find((item) => item.product === 'look_pack')?.withdrawal?.law, 'br_cdc_49')
+  })
+})
+
+describe('an approval that stopped halfway (a crash after marking the purchase)', () => {
+  // As approveRefundRequest leaves it when the process dies mid-way: the
+  // request "approved" for longer than STALE_APPROVAL_MS, the purchase marked
+  // as this request's refund, with or without Stripe's refund id.
+  async function stuck(fields: { stripeRefundId: string | null; revokedAt?: Date | null; credits?: number }) {
+    const s = stripe()
+    const w = world({ user: { credits: fields.credits ?? 10 }, purchases: [{ product: 'look_pack', credits: 10, stripePaymentIntentId: 'pi_pack' }] })
+    const { request, notified } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id, { category: 'quality' }), s.requests)
+    await notified
+    const at = ago(11 * 60 * 1000)
+
+    await w.collection('purchases').updateOne(
+      { _id: w.purchases()[0]!._id },
+      {
+        $set: {
+          refundedAt: at,
+          refund: {
+            source: 'admin',
+            requestId: request._id,
+            reason: 'quality',
+            note: null,
+            amount: 499,
+            stripeRefundId: fields.stripeRefundId,
+            flags: [],
+            priorRefunds: 0,
+            revokedAt: fields.revokedAt ?? null,
+          },
+        },
+      },
+    )
+    await w.collection('refundRequests').updateOne(
+      { _id: request._id },
+      { $set: { status: 'approved', updatedAt: at, decision: { outcome: 'approved', by: 'admin', adminId: w.admin.adminId, adminEmail: w.admin.adminEmail, at, code: null, note: null, cdcOverride: false } } },
+    )
+
+    return { s, w, request: w.requests()[0]! }
+  }
+
+  it('is finished with 0 when Stripe refunded it: no second refund, its looks taken once, closed and told', async () => {
+    const { s, w, request } = await stuck({ stripeRefundId: 're_pi_pack' })
+
+    const plan = await planRefund(w.app, request)
+    assert.equal(plan.total, 0)
+    assert.equal(plan.payments[0]?.refundedByRequest, true)
+    assert.equal(plan.payments[0]?.alreadyRefunded, false)
+    assert.ok(plan.warnings.some((warning) => warning.startsWith('Refunded by this request on')))
+
+    const closed = await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 0, note: null }, s.refunds)
+
+    assert.equal(closed.status, 'refunded')
+    assert.equal(closed.openKey, undefined)
+    assert.deepEqual(closed.refund?.stripeRefundIds, ['re_pi_pack'])
+    assert.deepEqual(s.refunded, [])
+    assert.equal(w.user().credits, 0)
+    assert.ok(w.purchases()[0]?.refund?.revokedAt)
+    assert.equal(sent(w.logs, 'nora@example.com').filter((subject) => subject === 'Your refund is on its way').length, 1)
+  })
+
+  it('asks Stripe again when the approval stopped before Stripe answered', async () => {
+    const { s, w, request } = await stuck({ stripeRefundId: null })
+
+    const plan = await planRefund(w.app, request)
+    assert.equal(plan.total, 499)
+    assert.ok(plan.warnings.some((warning) => warning.startsWith('An approval stopped before Stripe answered')))
+
+    const refunded = await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 499, note: null }, s.refunds)
+
+    assert.equal(refunded.status, 'refunded')
+    assert.deepEqual(s.refunded, ['pi_pack'])
+    assert.equal(w.purchases()[0]?.refund?.stripeRefundId, 're_pi_pack')
+    assert.equal(w.user().credits, 0)
+  })
+
+  it('never takes back twice what it took already', async () => {
+    // Taken back before the crash; she has bought 7 more looks since.
+    const { s, w, request } = await stuck({ stripeRefundId: 're_pi_pack', revokedAt: ago(11 * 60 * 1000), credits: 7 })
+
+    await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 0, note: null }, s.refunds)
+
+    assert.equal(w.user().credits, 7)
+    assert.equal(w.requests()[0]?.status, 'refunded')
+  })
+
+  it('waits while an approval may still be running, and tells the founder once when it stopped', async () => {
+    const { s, w, request } = await stuck({ stripeRefundId: 're_pi_pack' })
+    await w.collection('refundRequests').updateOne({ _id: request._id }, { $set: { updatedAt: ago(60 * 1000) } })
+
+    await refused(approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 0, note: null }, s.refunds), 409)
+    const quiet = await sendRefundReminders(w.app)
+    assert.equal(quiet.reminded, 0)
+
+    await w.collection('refundRequests').updateOne({ _id: request._id }, { $set: { updatedAt: ago(11 * 60 * 1000) } })
+    const told = await sendRefundReminders(w.app)
+    await sendRefundReminders(w.app)
+
+    assert.equal(told.reminded, 1)
+    assert.ok(w.requests()[0]?.emails.stuckAt)
+    assert.deepEqual(sent(w.logs, FOUNDER).slice(1), ['Reembolsos por decidir: 1'])
+  })
+
+  it('closes with 0 a pending request whose payment was refunded in Stripe while its webhook was missed', async () => {
+    const s = stripe()
+    const w = world({ user: { eventCredits: 1 }, purchases: [{ product: 'event_pass', stripePaymentIntentId: 'pi_event' }] })
+    const { request } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests)
+    // The webhook marked the purchase, then died before closing the request.
+    await w.collection('purchases').updateOne(
+      { _id: w.purchases()[0]!._id },
+      { $set: { refundedAt: new Date(), refund: { source: 'stripe', reason: null, note: null, amount: 499, stripeRefundId: null } } },
+    )
+
+    const plan = await planRefund(w.app, w.requests()[0]!)
+    assert.equal(plan.total, 0)
+    assert.equal(plan.payments[0]?.alreadyRefunded, true)
+
+    const closed = await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 0, note: null }, s.refunds)
+
+    assert.equal(closed.status, 'refunded')
+    assert.equal(closed.decision?.by, 'stripe')
+    assert.deepEqual(s.refunded, [])
+    assert.ok(sent(w.logs, 'nora@example.com').includes('Your refund is on its way'))
+  })
+})
+
+describe('Stripe’s idempotency', () => {
+  it('gives each approval attempt its own key, so Try again isn’t answered with the error Stripe kept', async () => {
+    const s = stripe()
+    const w = world({ purchases: [{ product: 'color_report', stripePaymentIntentId: 'pi_color' }] })
+    const { request } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests)
+    const keys: string[] = []
+    const metadata: Record<string, string>[] = []
+    // Stripe as it really is: a key's first answer, for 24 hours.
+    const answers = new Map<string, Promise<string>>()
+    let down = true
+    const deps: RefundDeps = {
+      ...s.refunds,
+      refundPayment: (paymentIntentId, meta, key) => {
+        keys.push(key)
+        metadata.push(meta)
+
+        if (!answers.has(key)) {
+          answers.set(key, down ? Promise.reject(new Error('Your card was declined.')) : Promise.resolve(`re_${paymentIntentId}`))
+        }
+
+        return answers.get(key)!
+      },
+    }
+
+    await refused(approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 499, note: null }, deps), 502)
+    down = false
+    const retried = await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 499, note: null }, deps)
+
+    assert.equal(retried.status, 'refunded')
+    assert.equal(keys.length, 2)
+    assert.notEqual(keys[0], keys[1])
+    assert.ok(keys.every((key) => key.startsWith(`avarobe_refund_${request._id.toString()}_`) && key.endsWith('_pi_color')))
+    assert.deepEqual(Object.keys(metadata[1]!).sort(), ['attempt', 'product', 'purchaseId', 'requestId', 'userId'])
+  })
+})
+
+describe('Pro ending while its request is reviewed', () => {
+  const trial = (periodEnd: Date): ProSubscription => ({
+    subscriptionId: 'sub_trial',
+    customerId: 'cus_1',
+    status: 'trialing',
+    interval: 'month',
+    periodEnd,
+    trialEnd: periodEnd,
+    cancelAtPeriodEnd: false,
+  })
+
+  it('warns the founder before the trial ends, and a rejection after it says Pro ended instead of “stays active”', async () => {
+    const s = stripe()
+    const w = world({ user: { pro: trial(new Date(Date.now() + 2 * HOUR)) }, purchases: [{ product: 'pro_trial', amountTotal: 100, credits: 1, stripePaymentIntentId: 'pi_trial', createdAt: ago(5 * DAY) }] })
+    s.watch(w.users)
+    const { request, notified } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id, { category: 'quality' }), s.requests)
+    await notified
+
+    const plan = await planRefund(w.app, request)
+    assert.ok(plan.warnings.some((warning) => warning.startsWith('Pro’s trial ends')))
+    const end = proPauseEnd(request, w.user().pro, new Date())
+    assert.equal(end?.trial, true)
+    assert.equal(end?.ended, false)
+    const founder = founderEmail({ request, account: null, plan, removesEs: [], proEnd: end, test: false })
+    assert.match(founder.text, /Pro: su prueba termina el .+, antes del plazo de revisión/)
+
+    // The trial ran out with its renewal paused: Stripe ended it.
+    const user = w.user()
+    user.pro = { ...user.pro!, status: 'canceled', periodEnd: ago(HOUR) }
+
+    const rejected = await rejectRefundRequest(w.app, { ...w.admin, id: request._id, code: 'used', note: null, cdcOverride: false }, s.requests)
+
+    assert.ok(rejected.proPause?.endedAt)
+    assert.equal(rejected.proPause?.restoredAt, null)
+    assert.deepEqual(s.renewals, [['sub_trial', true]])
+    const email = decisionEmailFor(rejected, { proRenewsAt: null, proEndedAt: rejected.proPause?.endedAt ?? null })
+    assert.match(email.text, /Pro ended on .+ while we reviewed your request/)
+    assert.doesNotMatch(email.text, /stays active/)
+    const es = decisionEmailFor({ ...rejected, locale: 'es' }, { proRenewsAt: null, proEndedAt: rejected.proPause?.endedAt ?? null })
+    assert.match(es.text, /Pro terminó el .+ mientras revisábamos tu solicitud/)
+  })
+})
+
+describe('a deleted account’s decided request', () => {
+  it('keeps its address until the decision email goes out, then is scrubbed', async () => {
+    const s = stripe()
+    const w = world({ purchases: [{ product: 'color_report', stripePaymentIntentId: 'pi_color' }] })
+    const { request, notified } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests)
+    await notified
+    await forgetRefundRequests(w.app, w.userId)
+    await w.collection('purchases').deleteMany({ userId: w.userId })
+    await w.collection('users').deleteOne({ _id: w.userId })
+    const saved = { mode: env.NODE_ENV, key: env.MAILERSEND_API_KEY }
+
+    // Email down: MailerSend refuses the decision email.
+    env.NODE_ENV = 'production'
+    env.MAILERSEND_API_KEY = undefined
+
+    try {
+      await rejectRefundRequest(w.app, { ...w.admin, id: request._id, code: 'used', note: null, cdcOverride: false }, s.requests)
+    } finally {
+      env.NODE_ENV = saved.mode
+      env.MAILERSEND_API_KEY = saved.key
+    }
+
+    assert.equal(w.requests()[0]?.email, 'nora@example.com')
+    assert.equal(w.requests()[0]?.emails.decisionAt, null)
+
+    // The tick sends it, then scrubs.
+    await sendRefundReminders(w.app, new Date(Date.now() + 10 * 60 * 1000))
+
+    assert.ok(sent(w.logs, 'nora@example.com').includes('About your refund request'))
+    assert.equal(w.requests()[0]?.email, null)
+    assert.equal(w.requests()[0]?.explanation, '')
+    assert.ok(w.requests()[0]?.scrubbedAt)
+  })
+
+  it('is scrubbed after a day of failed emails all the same', async () => {
+    const w = world()
+    const id = new ObjectId()
+    await w.collection('refundRequests').insertOne({
+      _id: id,
+      status: 'rejected',
+      email: 'gone@example.com',
+      firstName: 'Gone',
+      explanation: 'Something they wrote',
+      attachment: null,
+      accountDeletedAt: ago(3 * DAY),
+      decision: { outcome: 'rejected', by: 'admin', adminId: null, adminEmail: null, at: ago(2 * DAY), code: 'used', note: null, cdcOverride: false },
+      emails: { founderAt: ago(3 * DAY), receivedAt: ago(3 * DAY), decisionAt: null, reminderAt: null },
+      createdAt: ago(3 * DAY),
+      updatedAt: ago(2 * DAY),
+    })
+
+    const result = await sendRefundReminders(w.app)
+
+    assert.equal(result.scrubbed, 1)
+    assert.equal(w.requests()[0]?.email, null)
+  })
+})
+
+describe('Brazil by its signals', () => {
+  it('says when only the language makes it a withdrawal, and keeps the request limit for those', async () => {
+    const s = stripe({ country: 'US' })
+    const products = ['color_report', 'style_report', 'hair_advisor', 'magazine']
+    const w = world({ purchases: products.map((product) => ({ product })) })
+    const ids = w.purchases().map((purchase) => purchase._id)
+    const pt = { explanation: 'Não quero mais esta compra, obrigada.', locale: 'pt-BR' as const }
+
+    const first = await createRefundRequest(w.app, ask(w.userId, ids[0]!, pt), s.requests)
+    await first.notified
+
+    assert.deepEqual(first.request.statutory?.basis, ['language'])
+    assert.match(sent(w.logs, FOUNDER)[0]!, /^\[BR art\. 49 · solo idioma\] Reembolso R-/)
+
+    await createRefundRequest(w.app, ask(w.userId, ids[1]!, pt), s.requests)
+    await createRefundRequest(w.app, ask(w.userId, ids[2]!, pt), s.requests)
+    await refused(createRefundRequest(w.app, ask(w.userId, ids[3]!, pt), s.requests), 429)
+  })
+
+  it('looks up the card’s country once for the account page, so a Brazilian card opens the withdrawal there', async () => {
+    const s = stripe({ country: 'br' })
+    const w = world({ purchases: [{ product: 'color_report', stripePaymentIntentId: 'pi_color' }, { product: 'magazine', createdAt: ago(30 * DAY) }] })
+
+    const listed = await purchasesFor(w.app, w.userId, Date.now(), s.requests)
+    await purchasesFor(w.app, w.userId, Date.now(), s.requests)
+
+    assert.equal(listed.find((item) => item.product === 'color_report')?.withdrawal?.law, 'br_cdc_49')
+    assert.equal(w.purchases().find((purchase) => purchase.product === 'color_report')?.cardCountry, 'BR')
+    // Once, and only for what can still be requested.
+    assert.equal(s.facts.length, 1)
+    assert.equal(w.purchases().find((purchase) => purchase.product === 'magazine')?.cardCountry, undefined)
+  })
+})
+
+describe('an account without an email', () => {
+  it('can’t send a request no one could answer: write to hello@', async () => {
+    const s = stripe()
+    const w = world({ user: { email: 'guest-123@guest.avarobe.invalid' }, purchases: [{ product: 'color_report' }] })
+
+    await assert.rejects(createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests), (error: unknown) => {
+      return error instanceof RefundRequestError && error.status === 409 && error.blocked === 'email' && /hello@avarobe\.com/.test(error.message)
+    })
+    assert.equal(w.requests().length, 0)
+  })
+})
+
+describe('the request routes’ rate limit', () => {
+  it('answers in the page’s language', () => {
+    const page = (locale: string) => ({ headers: { 'x-avarobe-locale': locale } }) as unknown as FastifyRequest
+    const es = REQUEST_RATE_LIMIT.errorResponseBuilder(page('es'), { statusCode: 429 })
+
+    assert.equal(es.statusCode, 429)
+    assert.equal(es.message, 'Demasiados intentos en pocos minutos. Espera un poco y vuelve a intentarlo.')
+    assert.equal(REQUEST_RATE_LIMIT.errorResponseBuilder(page('pt-BR'), { statusCode: 429 }).message, 'Muitas tentativas em poucos minutos. Espere um pouco e tente de novo.')
+    assert.equal(REQUEST_RATE_LIMIT.errorResponseBuilder(page('en'), { statusCode: 429 }).message, RATE_LIMIT_MESSAGE)
+    assert.equal(translateMessage(RATE_LIMIT_MESSAGE, 'es'), es.message)
   })
 })

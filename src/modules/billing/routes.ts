@@ -31,6 +31,7 @@ import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, reg
 import { handleChargeRefunded } from './refunds.js'
 import {
   REFUND_SETTINGS,
+  REQUEST_RATE_LIMIT,
   RefundRequestError,
   SCREENSHOT_MAX_BYTES,
   createRefundRequest,
@@ -493,7 +494,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
   // without the screenshot). 201 new, 200 the open one already there.
   app.post(
     '/refund-requests',
-    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } },
+    { preHandler: authenticate, config: { rateLimit: REQUEST_RATE_LIMIT } },
     async (request, reply) => {
       const userId = requireUserId(request)
       const fields: Record<string, unknown> = {}
@@ -542,7 +543,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
 
         return reply
           .code(isNew ? 201 : 200)
-          .send({ request: customerView(created, locale), purchases: await purchasesFor(app, userId), refunds: REFUND_SETTINGS })
+          .send({ request: customerView(created, locale), created: isNew, purchases: await purchasesFor(app, userId), refunds: REFUND_SETTINGS })
       } catch (error) {
         if (error instanceof RefundRequestError) {
           return reply.code(error.status).send({ message: error.message, ...(error.blocked ? { code: error.blocked } : {}) })

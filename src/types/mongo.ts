@@ -286,6 +286,10 @@ export type PurchaseDocument = {
   placement?: string | null
   // The terms accepted at checkout (Stripe's consent checkbox), since Oct 2026.
   terms?: 'accepted' | null
+  // The card's country as Stripe has it, looked up once while a refund can
+  // be requested (a Brazilian card is one of the signals of Brazil's right
+  // of withdrawal); null when Stripe has none. Missing: not looked up yet.
+  cardCountry?: string | null
 }
 
 // What happened, as the customer picks it in a refund request. A superset of
@@ -310,6 +314,9 @@ export type PurchaseRefund = {
   // own flags.
   flags?: RefundRequestFlag[]
   priorRefunds?: number
+  // When what it gave was taken back (an approved request), so an approval
+  // that stopped halfway and is finished later doesn't take it twice.
+  revokedAt?: Date | null
 }
 
 // The flags the one-tap refund kept on purchases (a subset of the request's).
@@ -406,6 +413,10 @@ export type RefundRequestDecision = {
   cdcOverride: boolean
 }
 
+// Why a purchase counts as Brazilian: paid in reais, signed up in Brazil, a
+// Brazilian card, or only the language (Brazilian Portuguese).
+export type BrazilBasis = 'currency' | 'signup' | 'card' | 'language'
+
 export type RefundRequestDocument = {
   _id: ObjectId
   // "R-7F3K2Q" (6 Crockford base32), for emails, support and the admin.
@@ -447,8 +458,9 @@ export type RefundRequestDocument = {
   // Asked within 7 days of paying (Brazil: calendar days, São Paulo time).
   within7d: boolean
   // Brazil's right of withdrawal (CDC art. 49): asked within its 7 days, so it
-  // must be refunded. `until`: the end of those 7 days.
-  statutory: { law: 'br_cdc_49'; until: Date } | null
+  // must be refunded. `until`: the end of those 7 days. `basis`: why it
+  // counts as Brazilian (missing on requests from before it was kept).
+  statutory: { law: 'br_cdc_49'; until: Date; basis?: BrazilBasis[] } | null
   // Paid under the old Terms' guarantee, and covered by it.
   oldGuarantee: boolean
   reasonCategory: RefundReason
@@ -459,14 +471,17 @@ export type RefundRequestDocument = {
   history: RefundRequestHistory
   flags: RefundRequestFlag[]
   // Pro's renewal paused while under review, and what it was before.
-  proPause: { subscriptionId: string; wasCancelAtPeriodEnd: boolean; at: Date; restoredAt: Date | null } | null
+  // `endedAt`: the subscription ended during the review (its renewal was
+  // paused), so a rejection couldn't put it back.
+  proPause: { subscriptionId: string; wasCancelAtPeriodEnd: boolean; at: Date; restoredAt: Date | null; endedAt?: Date | null } | null
   status: RefundRequestStatus
   decision: RefundRequestDecision | null
   attempts: { at: Date; adminId: ObjectId | null; ok: boolean; error: string | null }[]
   refund: { stripeRefundIds: string[]; amount: number; via: 'admin' | 'stripe'; at: Date; partial: boolean } | null
   internalNote: string | null
   // When each email went out (claimed before sending, unset if it failed).
-  emails: { founderAt: Date | null; receivedAt: Date | null; decisionAt: Date | null; reminderAt: Date | null }
+  // `stuckAt`: the founder was told an approval stopped halfway.
+  emails: { founderAt: Date | null; receivedAt: Date | null; decisionAt: Date | null; reminderAt: Date | null; stuckAt?: Date | null }
   // The account was deleted while the request was open: decided as usual
   // (money back only), then scrubbed once its decision email goes out.
   accountDeletedAt?: Date | null
@@ -1239,6 +1254,8 @@ export type GuideOrderDocument = {
   refundToken?: string
   paymentIntentId?: string | null
   terms?: 'accepted' | null
+  // As on purchases: the card's country, looked up once (refund requests).
+  cardCountry?: string | null
   refundedAt?: Date | null
   refund?: {
     source: 'app' | 'stripe' | 'admin'

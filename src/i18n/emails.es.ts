@@ -643,7 +643,8 @@ export const esEmails: EmailCopy = {
         pack: 'se quitan los looks que agregó y que aún te quedan',
         guide: 'el enlace de descarga del libro deja de funcionar',
       },
-      proPaused: 'Pro no se renovará mientras revisamos tu solicitud. Si no podemos aprobarla, sigue como antes.',
+      proPaused:
+        'Pro no se renovará mientras revisamos tu solicitud. Si no podemos aprobarla, volvemos a activar su renovación; si tu periodo actual termina antes de que te respondamos, puedes volver a activar Pro desde tu cuenta.',
       withdrawal:
         'Compra hecha en Brasil: estás dentro de tu plazo de 7 días del derecho de arrepentimiento (art. 49 del Código de Defensa del Consumidor), así que esta compra se reembolsará por completo.',
       reason: (label: string) => `Lo que nos contaste: ${label}.`,
@@ -671,6 +672,8 @@ export const esEmails: EmailCopy = {
       why: (text: string) => `Motivo: ${text}`,
       stays: 'Tu compra sigue activa y todo lo que incluye sigue siendo tuyo.',
       pro: (date: string) => `Pro sigue como antes y se renueva el ${date}, salvo que lo canceles en la configuración de tu cuenta.`,
+      proEnded: (date: string) =>
+        `Pro terminó el ${date} mientras revisábamos tu solicitud, sin renovarse ni cobrarte de nuevo. Puedes volver a activarlo desde tu cuenta cuando quieras.`,
       again: 'Si crees que nos equivocamos, responde a este correo y lo revisaremos de nuevo.',
     },
     codes: {

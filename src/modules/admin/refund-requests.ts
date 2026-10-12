@@ -35,8 +35,10 @@ const listSchema = z.object({
 })
 
 const approveSchema = z.object({
-  // The plan's total the admin read: approving refunds exactly this.
-  expectedAmount: z.number().int().min(1),
+  // The plan's total the admin read: approving refunds exactly this. 0
+  // closes a request with nothing left to refund (refunded in Stripe, or by
+  // its own approval that stopped halfway, which this finishes).
+  expectedAmount: z.number().int().min(0),
   note: z.string().trim().max(1000).optional(),
 })
 
@@ -75,6 +77,9 @@ export function adminRow(request: RefundRequestDocument, now = new Date()) {
     flags: request.flags,
     statutory: Boolean(request.statutory),
     statutoryUntil: request.statutory?.until.toISOString() ?? null,
+    // Why it counts as Brazilian; 'language' alone: only the page's language
+    // (paid in another currency, no Brazilian card or sign-up).
+    statutoryBasis: request.statutory ? (request.statutory.basis ?? null) : null,
     oldGuarantee: request.oldGuarantee,
     hasAttachment: Boolean(request.attachment),
     locale: request.locale,

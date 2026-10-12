@@ -184,11 +184,59 @@ export async function revokePurchase(app: FastifyInstance, purchase: PurchaseDoc
 
 // What refunds go through, so tests can stand in for Stripe. `paymentOf`:
 // the payment of a book order from before orders kept it (its checkout's).
+// The third argument of the refunds is the Stripe idempotency key
+// (refundKey).
 export type RefundDeps = {
   refundPayment: typeof refundPayment
   refundInvoice: typeof refundInvoice
   cancelProNow: typeof cancelProNow
   paymentOf?: (order: GuideOrderDocument) => Promise<string | null>
+}
+
+// The idempotency key of one payment in one approval attempt: a retried
+// network call refunds once, and a new attempt (Try again after a Stripe
+// error, or finishing an approval that stopped halfway) is never answered
+// with an earlier attempt's result (Stripe keeps a key's answer for 24
+// hours, the errors it got as far as processing included) nor refused for
+// sending other metadata under the same key. A second refund of the same
+// payment is stopped by the purchase marked first and by Stripe's
+// charge_already_refunded.
+export const refundKey = (requestId: ObjectId, attempt: string, paymentId: string) => `avarobe_refund_${requestId.toString()}_${attempt}_${paymentId}`
+
+// What every refund carries in Stripe, whichever way its money goes back
+// (the purchase, the book order, the payment a deleted account's request
+// kept).
+export function refundMetadata(input: {
+  requestId: ObjectId
+  attempt: string
+  product: string
+  userId: ObjectId | null
+  purchaseId: ObjectId | null
+  guideOrderId: ObjectId | null
+}): Record<string, string> {
+  return {
+    requestId: input.requestId.toString(),
+    attempt: input.attempt,
+    product: input.product,
+    ...(input.userId ? { userId: input.userId.toString() } : {}),
+    ...(input.purchaseId ? { purchaseId: input.purchaseId.toString() } : {}),
+    ...(input.guideOrderId ? { guideOrderId: input.guideOrderId.toString() } : {}),
+  }
+}
+
+type MarkedRefund = { refundedAt?: Date | null; refund?: { source: string; requestId?: ObjectId | null; stripeRefundId: string | null } | null }
+
+// A purchase (or book order) this same request marked in an earlier
+// approval that stopped halfway (a crash, a restart): 'refunded' when Stripe
+// gave its refund id back, 'unsent' when it may never have been called (the
+// next attempt calls it again; a refund made meanwhile answers
+// charge_already_refunded). Null when it isn't this request's.
+export function earlierAttempt(doc: MarkedRefund, requestId: ObjectId): 'refunded' | 'unsent' | null {
+  if (!doc.refundedAt || doc.refund?.source !== 'admin' || !doc.refund.requestId?.equals(requestId)) {
+    return null
+  }
+
+  return doc.refund.stripeRefundId ? 'refunded' : 'unsent'
 }
 
 // A book order from before orders kept their payment: its checkout's.
@@ -201,12 +249,18 @@ async function sessionPayment(order: GuideOrderDocument) {
 export const STRIPE_REFUNDS: RefundDeps = { refundPayment, refundInvoice, cancelProNow, paymentOf: sessionPayment }
 
 // The money back for one purchase: by its payment, or its invoice's.
-async function refundMoney(purchase: Pick<PurchaseDocument, 'stripePaymentIntentId' | 'stripeSessionId'>, metadata: Record<string, string>, deps: RefundDeps) {
+async function refundMoney(
+  purchase: Pick<PurchaseDocument, 'stripePaymentIntentId' | 'stripeSessionId'>,
+  metadata: Record<string, string>,
+  key: (paymentId: string) => string,
+  deps: RefundDeps,
+) {
   if (purchase.stripePaymentIntentId) {
-    return { refundId: await deps.refundPayment(purchase.stripePaymentIntentId, metadata), paymentIntentId: purchase.stripePaymentIntentId }
+    const paymentIntentId = purchase.stripePaymentIntentId
+    return { refundId: await deps.refundPayment(paymentIntentId, metadata, key(paymentIntentId)), paymentIntentId }
   }
 
-  return deps.refundInvoice(purchase.stripeSessionId, metadata)
+  return deps.refundInvoice(purchase.stripeSessionId, metadata, key(purchase.stripeSessionId))
 }
 
 // The report credit at work: a report refunded after it counted toward a Pro
@@ -246,11 +300,15 @@ export type CoverFailed = { cover: CoverToRefund; error: string }
 // An approved refund request, paid back: each payment in Stripe, then what
 // it gave taken away. Each purchase (and book order) is marked first, so a
 // second approval (or the refund webhook that follows) can't refund or
-// revoke it twice; a Stripe error unmarks it. A purchase that's gone (the
-// account was deleted) is refunded by the payment the request kept: there's
-// nothing left to take away. Stripe saying the charge was refunded already
-// (in its dashboard) counts as refunded. No window here: the request was
-// made within it, and the review can take days.
+// revoke it twice; a Stripe error unmarks it. A purchase this same request
+// marked in an approval that stopped halfway (earlierAttempt) is finished:
+// refunded in Stripe if it never got its refund id (a refund made meanwhile
+// counts), and taken back if it wasn't yet (`refund.revokedAt`). A purchase
+// that's gone (the account was deleted) is refunded by the payment the
+// request kept: there's nothing left to take away. Stripe saying the charge
+// was refunded already (in its dashboard) counts as refunded. No window
+// here: the request was made within it, and the review can take days.
+// `attempt`: this approval's own id, in each refund's idempotency key.
 export async function refundCovers(
   app: FastifyInstance,
   input: {
@@ -260,33 +318,38 @@ export async function refundCovers(
     note: string | null
     requestId: ObjectId
     flags: RefundRequestFlag[]
+    attempt: string
   },
   deps: RefundDeps = STRIPE_REFUNDS,
 ) {
   const refundedAt = new Date()
   // Every earlier refund counts: the instant ones, approved requests and
-  // refunds made in Stripe.
-  const priorRefunds = input.userId ? await app.collections.purchases.countDocuments({ userId: input.userId, refundedAt: { $ne: null } }) : 0
+  // refunds made in Stripe (not this request's own, from an attempt that
+  // stopped halfway).
+  const priorRefunds = input.userId
+    ? await app.collections.purchases.countDocuments({ userId: input.userId, refundedAt: { $ne: null }, 'refund.requestId': { $ne: input.requestId } })
+    : 0
   const flags = [...new Set<RefundRequestFlag>([...input.flags, ...(priorRefunds > 0 ? (['repeat'] as const) : [])])]
   const refunded: CoverRefunded[] = []
   const skipped: CoverToRefund[] = []
   const failed: CoverFailed[] = []
   const revoke: PurchaseDocument[] = []
-  const requestId = input.requestId.toString()
+  const key = (paymentId: string) => refundKey(input.requestId, input.attempt, paymentId)
 
   for (const cover of input.covers) {
-    const metadata: Record<string, string> = {
-      requestId,
+    const metadata = refundMetadata({
+      requestId: input.requestId,
+      attempt: input.attempt,
       product: cover.product,
-      ...(input.userId ? { userId: input.userId.toString() } : {}),
-      ...(cover.purchaseId ? { purchaseId: cover.purchaseId.toString() } : {}),
-      ...(cover.guideOrderId ? { guideOrderId: cover.guideOrderId.toString() } : {}),
-    }
-    const purchase = cover.purchaseId ? await app.collections.purchases.findOne({ _id: cover.purchaseId }) : null
+      userId: input.userId,
+      purchaseId: cover.purchaseId,
+      guideOrderId: cover.guideOrderId,
+    })
+    const found = cover.purchaseId ? await app.collections.purchases.findOne({ _id: cover.purchaseId }) : null
 
-    if (purchase) {
+    if (found) {
       const claimed = await app.collections.purchases.updateOne(
-        { _id: purchase._id, refundedAt: null },
+        { _id: found._id, refundedAt: null },
         {
           $set: {
             refundedAt,
@@ -295,7 +358,7 @@ export async function refundCovers(
               requestId: input.requestId,
               reason: input.reason,
               note: input.note,
-              amount: purchase.amountTotal,
+              amount: found.amountTotal,
               stripeRefundId: null,
               flags,
               priorRefunds,
@@ -303,17 +366,38 @@ export async function refundCovers(
           },
         },
       )
+      let purchase = found
 
-      // Refunded meanwhile (in Stripe, by another approval): nothing to do.
       if (claimed.modifiedCount === 0) {
-        skipped.push(cover)
-        continue
+        // Marked already: by this request's approval that stopped halfway
+        // (finished here), or refunded meanwhile in Stripe or by another
+        // approval (nothing to do).
+        const marked = await app.collections.purchases.findOne({ _id: found._id })
+        const earlier = marked ? earlierAttempt(marked, input.requestId) : null
+
+        if (!marked || !earlier) {
+          skipped.push(cover)
+          continue
+        }
+
+        purchase = marked
+
+        if (earlier === 'refunded') {
+          refunded.push({ cover, stripeRefundId: marked.refund?.stripeRefundId ?? null, amount: marked.amountTotal, inStripe: false })
+
+          if (!marked.refund?.revokedAt) {
+            revoke.push(marked)
+          }
+
+          continue
+        }
       }
 
+      const resumed = purchase !== found
       // The book bought signed in: its order loses its link with it.
       const order =
         purchase.product === 'outfit_guide'
-          ? await app.collections.guideOrders.findOneAndUpdate(
+          ? ((await app.collections.guideOrders.findOneAndUpdate(
               { sessionId: purchase.stripeSessionId, refundedAt: null },
               {
                 $set: {
@@ -322,11 +406,11 @@ export async function refundCovers(
                 },
               },
               { returnDocument: 'after' },
-            )
+            )) ?? (resumed ? await app.collections.guideOrders.findOne({ sessionId: purchase.stripeSessionId, 'refund.requestId': input.requestId }) : null))
           : null
 
       try {
-        const { refundId, paymentIntentId } = await refundMoney(purchase, metadata, deps)
+        const { refundId, paymentIntentId } = await refundMoney(purchase, metadata, key, deps)
 
         await app.collections.purchases.updateOne(
           { _id: purchase._id },
@@ -346,7 +430,7 @@ export async function refundCovers(
             await app.collections.guideOrders.updateOne({ _id: order._id }, { $set: { refundedAt: null, refund: null } })
           }
 
-          app.log.error({ err: errorMessage(error), purchaseId: purchase._id.toString(), requestId }, 'Refund request: Stripe did not refund a payment')
+          app.log.error({ err: errorMessage(error), purchaseId: purchase._id.toString(), requestId: input.requestId.toString() }, 'Refund request: Stripe did not refund a payment')
           failed.push({ cover, error: errorMessage(error) })
           continue
         }
@@ -354,13 +438,20 @@ export async function refundCovers(
         refunded.push({ cover, stripeRefundId: null, amount: purchase.amountTotal, inStripe: true })
       }
 
-      revoke.push({ ...purchase, refundedAt })
+      if (!purchase.refund?.revokedAt) {
+        revoke.push({ ...purchase, refundedAt: purchase.refundedAt ?? refundedAt })
+      }
+
       continue
     }
 
     if (cover.guideOrderId) {
       try {
-        const done = await refundGuideCover(app, { orderId: cover.guideOrderId, reason: input.reason, requestId: input.requestId }, deps)
+        const done = await refundGuideCover(
+          app,
+          { orderId: cover.guideOrderId, reason: input.reason, requestId: input.requestId, attempt: input.attempt, userId: input.userId },
+          deps,
+        )
 
         if (done) {
           refunded.push({ cover, ...done })
@@ -368,7 +459,7 @@ export async function refundCovers(
           skipped.push(cover)
         }
       } catch (error) {
-        app.log.error({ err: errorMessage(error), guideOrderId: cover.guideOrderId.toString(), requestId }, 'Refund request: Stripe did not refund a book order')
+        app.log.error({ err: errorMessage(error), guideOrderId: cover.guideOrderId.toString(), requestId: input.requestId.toString() }, 'Refund request: Stripe did not refund a book order')
         failed.push({ cover, error: errorMessage(error) })
       }
 
@@ -376,12 +467,14 @@ export async function refundCovers(
     }
 
     // The account was deleted, and its purchases with it: the payment the
-    // request kept, straight to Stripe (its key refunds it once).
+    // request kept, straight to Stripe (a refund made before, by an attempt
+    // that stopped halfway or in the dashboard, answers
+    // charge_already_refunded).
     try {
       const refundId = cover.stripePaymentIntentId
-        ? await deps.refundPayment(cover.stripePaymentIntentId, metadata)
+        ? await deps.refundPayment(cover.stripePaymentIntentId, metadata, key(cover.stripePaymentIntentId))
         : cover.stripeInvoiceId
-          ? (await deps.refundInvoice(cover.stripeInvoiceId, metadata)).refundId
+          ? (await deps.refundInvoice(cover.stripeInvoiceId, metadata, key(cover.stripeInvoiceId))).refundId
           : null
 
       if (!refundId) {
@@ -396,17 +489,20 @@ export async function refundCovers(
         continue
       }
 
-      app.log.error({ err: errorMessage(error), requestId }, 'Refund request: Stripe did not refund a deleted account’s payment')
+      app.log.error({ err: errorMessage(error), requestId: input.requestId.toString() }, 'Refund request: Stripe did not refund a deleted account’s payment')
       failed.push({ cover, error: errorMessage(error) })
     }
   }
 
-  if (input.userId && refunded.some((item) => isPro(item.cover.product))) {
+  // Pro ends with a Pro payment taken back now (not again when an attempt
+  // that stopped halfway had taken it back already).
+  if (input.userId && revoke.some((purchase) => isPro(purchase.product))) {
     await endPro(app, input.userId, deps)
   }
 
   for (const purchase of revoke) {
     await revokePurchase(app, purchase)
+    await app.collections.purchases.updateOne({ _id: purchase._id }, { $set: { 'refund.revokedAt': new Date() } })
   }
 
   for (const item of refunded) {
@@ -418,7 +514,7 @@ export async function refundCovers(
         amount: item.amount,
         reason: input.reason,
         source: 'admin',
-        requestId,
+        requestId: input.requestId.toString(),
         hours: Math.round((refundedAt.getTime() - item.cover.paidAt.getTime()) / 3_600_000),
         priorRefunds,
         ...(item.inStripe ? { inStripe: true } : {}),
@@ -541,11 +637,12 @@ export async function handleChargeRefunded(
 // A book order's money back, for an approved request (a guest's, or one
 // whose account is gone): the order is marked first (its link stops), then
 // refunded by its payment (or its checkout's, for orders from before they
-// kept it). A signed-in buyer's purchase is marked too. Null when it was
-// refunded meanwhile.
+// kept it). A signed-in buyer's purchase is marked too. An order this same
+// request marked in an approval that stopped halfway is finished
+// (earlierAttempt). Null when it was refunded meanwhile.
 export async function refundGuideCover(
   app: FastifyInstance,
-  input: { orderId: ObjectId; reason: RefundReason | null; requestId: ObjectId },
+  input: { orderId: ObjectId; reason: RefundReason | null; requestId: ObjectId; attempt: string; userId?: ObjectId | null },
   deps: Pick<RefundDeps, 'refundPayment' | 'paymentOf'> = STRIPE_REFUNDS,
 ): Promise<{ stripeRefundId: string | null; amount: number; inStripe: boolean } | null> {
   const order = await app.collections.guideOrders.findOne({ _id: input.orderId })
@@ -554,8 +651,14 @@ export async function refundGuideCover(
     throw new Error('The book order is gone.')
   }
 
-  if (order.refundedAt) {
+  const earlier = earlierAttempt(order, input.requestId)
+
+  if (order.refundedAt && !earlier) {
     return null
+  }
+
+  if (earlier === 'refunded') {
+    return { stripeRefundId: order.refund?.stripeRefundId ?? null, amount: order.amount, inStripe: false }
   }
 
   const paymentOf = deps.paymentOf ?? sessionPayment
@@ -565,31 +668,38 @@ export async function refundGuideCover(
     throw new Error('This book order has no payment Stripe can refund it by.')
   }
 
-  const refundedAt = new Date()
-  const claimed = await app.collections.guideOrders.updateOne(
-    { _id: order._id, refundedAt: null },
-    {
-      $set: {
-        refundedAt,
-        paymentIntentId,
-        refund: { source: 'admin', requestId: input.requestId, reason: input.reason, amount: order.amount, stripeRefundId: null },
-      },
-    },
-  )
+  const refundedAt = order.refundedAt ?? new Date()
 
-  if (claimed.modifiedCount === 0) {
-    return null
+  if (!earlier) {
+    const claimed = await app.collections.guideOrders.updateOne(
+      { _id: order._id, refundedAt: null },
+      {
+        $set: {
+          refundedAt,
+          paymentIntentId,
+          refund: { source: 'admin', requestId: input.requestId, reason: input.reason, amount: order.amount, stripeRefundId: null },
+        },
+      },
+    )
+
+    if (claimed.modifiedCount === 0) {
+      return null
+    }
   }
 
   let stripeRefundId: string | null = null
   let inStripe = false
+  const metadata = refundMetadata({
+    requestId: input.requestId,
+    attempt: input.attempt,
+    product: 'outfit_guide',
+    userId: input.userId ?? order.userId ?? null,
+    purchaseId: null,
+    guideOrderId: order._id,
+  })
 
   try {
-    stripeRefundId = await deps.refundPayment(paymentIntentId, {
-      guideOrderId: order._id.toString(),
-      product: 'outfit_guide',
-      requestId: input.requestId.toString(),
-    })
+    stripeRefundId = await deps.refundPayment(paymentIntentId, metadata, refundKey(input.requestId, input.attempt, paymentIntentId))
   } catch (error) {
     if (!alreadyRefunded(error)) {
       await app.collections.guideOrders.updateOne({ _id: order._id }, { $set: { refundedAt: null, refund: null } })

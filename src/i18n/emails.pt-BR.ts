@@ -644,7 +644,8 @@ export const ptBrEmails: EmailCopy = {
         pack: 'os looks que ele adicionou e ainda restam são removidos',
         guide: 'o link de download do livro para de funcionar',
       },
-      proPaused: 'O Pro não será renovado enquanto analisamos seu pedido. Se não pudermos aprovar, ele continua como antes.',
+      proPaused:
+        'O Pro não será renovado enquanto analisamos seu pedido. Se não pudermos aprovar, reativamos a renovação; se o seu período atual terminar antes da nossa resposta, você pode assinar o Pro de novo pela sua conta.',
       withdrawal:
         'Compra feita no Brasil: você está dentro do prazo de 7 dias do direito de arrependimento (art. 49 do Código de Defesa do Consumidor), então esta compra será reembolsada integralmente.',
       reason: (label: string) => `O que você nos contou: ${label}.`,
@@ -672,6 +673,8 @@ export const ptBrEmails: EmailCopy = {
       why: (text: string) => `Motivo: ${text}`,
       stays: 'Sua compra continua ativa, e tudo o que ela inclui continua sendo seu.',
       pro: (date: string) => `O Pro continua como antes e renova em ${date}, a menos que você cancele nas configurações da sua conta.`,
+      proEnded: (date: string) =>
+        `O Pro terminou em ${date} enquanto analisávamos seu pedido, sem renovar nem cobrar de novo. Você pode assinar de novo pela sua conta quando quiser.`,
       again: 'Se achar que nos enganamos, responda a este e-mail e vamos analisar de novo.',
     },
     codes: {

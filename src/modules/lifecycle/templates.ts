@@ -1209,7 +1209,11 @@ export function refundApprovedEmail(input: RefundEmailInput): EmailContent {
 
 // `note`: the founder's words (escaped like every block); 'other' has only
 // the note. `proRenewsOn`: Pro's renewal, put back after the review.
-export function refundRejectedEmail(input: RefundEmailInput & { code: RefundRejectCode; note: string | null; proRenewsOn: string | null }): EmailContent {
+// `proEndedOn`: Pro ended during the review (its renewal was paused), said
+// instead of "stays active".
+export function refundRejectedEmail(
+  input: RefundEmailInput & { code: RefundRejectCode; note: string | null; proRenewsOn: string | null; proEndedOn?: string | null },
+): EmailContent {
   const { c } = reader({ locale: input.locale })
   const copy = c.refund.rejected
   const reason = input.code === 'other' ? null : c.refund.codes[input.code]
@@ -1222,8 +1226,8 @@ export function refundRejectedEmail(input: RefundEmailInput & { code: RefundReje
       paragraph(copy.body(input.product, input.ref)),
       ...(reason ? [paragraph(copy.why(reason))] : []),
       ...(input.note ? [quote(input.note)] : []),
-      paragraph(copy.stays),
-      ...(input.proRenewsOn ? [paragraph(copy.pro(input.proRenewsOn))] : []),
+      paragraph(input.proEndedOn ? copy.proEnded(input.proEndedOn) : copy.stays),
+      ...(input.proRenewsOn && !input.proEndedOn ? [paragraph(copy.pro(input.proRenewsOn))] : []),
       paragraph(copy.again),
     ],
   })

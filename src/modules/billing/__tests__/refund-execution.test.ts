@@ -75,6 +75,7 @@ const approve = (userId: ObjectId | null, covers: RefundCover[]) => ({
   note: null,
   requestId: new ObjectId(),
   flags: [],
+  attempt: 'a1',
 })
 
 describe('an approved refund, paid back', () => {
@@ -279,13 +280,24 @@ describe('a guest’s book, refunded after an approved request', () => {
     const requestId = new ObjectId()
     const [order, older] = guide() as { _id: ObjectId }[]
 
-    assert.deepEqual(await refundGuideCover(app, { orderId: order!._id, reason: 'mistake', requestId }, deps), { stripeRefundId: 're_pi_book', amount: 1490, inStripe: false })
+    assert.deepEqual(await refundGuideCover(app, { orderId: order!._id, reason: 'mistake', requestId, attempt: 'a1' }, deps), {
+      stripeRefundId: 're_pi_book',
+      amount: 1490,
+      inStripe: false,
+    })
     assert.ok(guide()[0]?.refundedAt)
     assert.equal((guide()[0]?.refund as { source: string }).source, 'admin')
     assert.ok(purchases()[0]?.refundedAt)
-    assert.equal(await refundGuideCover(app, { orderId: order!._id, reason: 'mistake', requestId }, deps), null)
+    // Another request: refunded already. The same one (an approval finished
+    // later): its refund, without asking Stripe again.
+    assert.equal(await refundGuideCover(app, { orderId: order!._id, reason: 'mistake', requestId: new ObjectId(), attempt: 'a2' }, deps), null)
+    assert.deepEqual(await refundGuideCover(app, { orderId: order!._id, reason: 'mistake', requestId, attempt: 'a2' }, deps), {
+      stripeRefundId: 're_pi_book',
+      amount: 1490,
+      inStripe: false,
+    })
     // An order from before orders kept their payment: its checkout's, after the 7 days too.
-    await refundGuideCover(app, { orderId: older!._id, reason: null, requestId }, deps)
+    await refundGuideCover(app, { orderId: older!._id, reason: null, requestId, attempt: 'a1' }, deps)
     assert.deepEqual(refunded, ['pi_book', 'pi_from_session'])
   })
 })

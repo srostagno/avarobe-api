@@ -195,6 +195,9 @@ export const ptBrMessages: MessageTable = {
   'We could not find this purchase.': 'Não encontramos esta compra.',
   'This order has no email to answer to. Write to us at hello@avarobe.com.':
     'Este pedido não tem um e-mail para respondermos. Escreva para hello@avarobe.com.',
+  'Your account has no email for us to answer you at. Write to us at hello@avarobe.com.':
+    'Sua conta não tem um e-mail para respondermos. Escreva para hello@avarobe.com.',
+  'Too many tries in a few minutes. Wait a little and try again.': 'Muitas tentativas em poucos minutos. Espere um pouco e tente de novo.',
   // Internal codes: kept as they are.
   'guest limit': 'guest limit',
   needs_color_report: 'needs_color_report',

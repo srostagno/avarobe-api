@@ -703,12 +703,16 @@ export async function retrieveSession(sessionId: string) {
   return stripe().checkout.sessions.retrieve(sessionId)
 }
 
-// Gives a payment back in full (an approved refund request). The idempotency
-// key makes a retried request refund it once.
-export async function refundPayment(paymentIntentId: string, metadata: Record<string, string>) {
+// Gives a payment back in full (an approved refund request). `idempotencyKey`
+// is one per approval attempt (billing/refunds.ts refundKey): a network
+// retry of the same call refunds once, and a new attempt after a Stripe
+// error is never answered with the earlier attempt's result. Refunding twice
+// is stopped by the purchase marked first and by Stripe's
+// charge_already_refunded.
+export async function refundPayment(paymentIntentId: string, metadata: Record<string, string>, idempotencyKey: string) {
   const refund = await stripe().refunds.create(
     { payment_intent: paymentIntentId, reason: 'requested_by_customer', metadata: { ...metadata, app: APP } },
-    { idempotencyKey: `avarobe_refund_${paymentIntentId}` },
+    { idempotencyKey },
   )
 
   return refund.id
@@ -723,14 +727,14 @@ async function invoicePaymentIntent(invoiceId: string) {
 
 // A Pro payment given back in full: its invoice's payment, refunded like any
 // other (tested in test mode). Returns the refund and the payment it found.
-export async function refundInvoice(invoiceId: string, metadata: Record<string, string>) {
+export async function refundInvoice(invoiceId: string, metadata: Record<string, string>, idempotencyKey: string) {
   const paymentIntentId = await invoicePaymentIntent(invoiceId)
 
   if (!paymentIntentId) {
     throw new Error(`Invoice ${invoiceId} has no paid payment to refund.`)
   }
 
-  return { refundId: await refundPayment(paymentIntentId, metadata), paymentIntentId }
+  return { refundId: await refundPayment(paymentIntentId, metadata, idempotencyKey), paymentIntentId }
 }
 
 export type PaymentFacts = {

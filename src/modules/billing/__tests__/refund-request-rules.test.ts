@@ -6,14 +6,17 @@ import { ObjectId } from 'mongodb'
 import type { PurchaseDocument, RefundRequestHistory, RefundUsage } from '../../../types/mongo.js'
 import {
   MAX_CHARS,
+  brazilBasis,
   brazilian,
   businessDueAt,
   distinctWords,
   flagsFor,
+  hardBrazil,
   isStatutory,
   newRef,
   oldGuarantee,
   requestWindow,
+  statutoryFor,
   validateRequestInput,
 } from '../refund-requests.js'
 import { brazilWithdrawalUntil } from '../refunds.js'
@@ -122,10 +125,26 @@ describe('when a refund can be requested', () => {
     assert.equal(isStatutory({ ...none, currency: 'brl' }, new Date(now + 2 * HOUR), until), false)
     assert.equal(isStatutory(none, new Date(now), until), false)
   })
+
+  it('keeps why it counts as Brazilian, and only a hard signal skips the request limit', () => {
+    const none = { currency: 'usd', signupCountry: 'US', cardCountry: 'US', locale: 'en' as const }
+    const until = new Date(now + HOUR)
+    const byLanguage = statutoryFor({ ...none, pageLocale: 'pt-BR' }, new Date(now), until)
+    const byCard = statutoryFor({ ...none, cardCountry: 'br', pageLocale: 'pt-BR' }, new Date(now), until)
+
+    assert.deepEqual(byLanguage?.basis, ['language'])
+    assert.deepEqual(byCard?.basis, ['card', 'language'])
+    assert.deepEqual(brazilBasis({ currency: 'brl', signupCountry: 'BR', cardCountry: null, locale: 'en' }), ['currency', 'signup'])
+    assert.equal(hardBrazil(byLanguage), false)
+    assert.equal(hardBrazil(byCard), true)
+    // Stored before the basis was kept: counts as hard.
+    assert.equal(hardBrazil({ basis: undefined }), true)
+    assert.equal(hardBrazil(null), false)
+  })
 })
 
 describe('the request form', () => {
-  const valid = { category: 'not_accurate', explanation: ENOUGH, acknowledge: true, statutory: false }
+  const valid = { category: 'not_accurate', explanation: ENOUGH, acknowledge: true, brief: false }
 
   it('takes a category, an explanation in their own words and the acknowledgement', () => {
     const result = validateRequestInput(valid)
@@ -156,9 +175,9 @@ describe('the request form', () => {
   })
 
   it('needs only 20 characters and 3 words for a Brazilian withdrawal', () => {
-    assert.equal(validateRequestInput({ ...valid, statutory: true, explanation: 'Não quero mais, obrigado.' }).ok, true)
-    assert.equal(validateRequestInput({ ...valid, statutory: false, explanation: 'Não quero mais, obrigado.' }).ok, false)
-    assert.equal(validateRequestInput({ ...valid, statutory: true, explanation: 'não quero' }).ok, false)
+    assert.equal(validateRequestInput({ ...valid, brief: true, explanation: 'Não quero mais, obrigado.' }).ok, true)
+    assert.equal(validateRequestInput({ ...valid, brief: false, explanation: 'Não quero mais, obrigado.' }).ok, false)
+    assert.equal(validateRequestInput({ ...valid, brief: true, explanation: 'não quero' }).ok, false)
   })
 
   it('needs the acknowledgement, and at most 2,000 characters', () => {

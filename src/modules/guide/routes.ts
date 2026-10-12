@@ -14,7 +14,15 @@ import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
 import { billingState, isAdmin, loadBillingUser } from '../billing/entitlements.js'
 import { brazilWithdrawalUntil, guideRefundableUntil } from '../billing/refunds.js'
-import { RefundRequestError, brazilian, createGuideRefundRequest, customerView, guideOrderRequest } from '../billing/refund-requests.js'
+import {
+  REQUEST_RATE_LIMIT,
+  RefundRequestError,
+  brazilian,
+  createGuideRefundRequest,
+  customerView,
+  guideOrderRequest,
+  orderCardCountry,
+} from '../billing/refund-requests.js'
 import { createGuideCheckout, retrieveSession, stripeConfigured } from '../billing/stripe.js'
 import type { GuideOrderDocument } from '../../types/mongo.js'
 import type { Locale } from '../../utils/locale.js'
@@ -52,10 +60,11 @@ async function orderView(app: FastifyInstance, order: GuideOrderDocument, locale
     guideOrderRequest(app, order._id),
     order.userId ? app.collections.users.findOne({ _id: order.userId }, { projection: { location: 1, locale: 1 } }) : null,
   ])
+  const signupCountry = account?.location?.country ?? null
   const brazil = brazilian({
     currency: order.currency,
-    signupCountry: account?.location?.country ?? null,
-    cardCountry: null,
+    signupCountry,
+    cardCountry: await orderCardCountry(app, order, { signupCountry, requested: Boolean(request) }),
     locale: account?.locale,
     pageLocale: locale,
   })
@@ -160,7 +169,7 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
   // (in its email and on the thank-you page; the download link can't ask),
   // the category, their explanation and that they know the link stops. 201
   // new, 200 the open one already there.
-  app.post('/refund-requests', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (request, reply) => {
+  app.post('/refund-requests', { config: { rateLimit: REQUEST_RATE_LIMIT } }, async (request, reply) => {
     const parsed = parseBody(refundRequestSchema, request.body ?? {})
 
     if (!parsed.ok) {
@@ -182,7 +191,7 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
 
       return reply
         .code(isNew ? 201 : 200)
-        .send({ request: customerView(created, locale), order: order ? await orderView(app, order, locale) : null })
+        .send({ request: customerView(created, locale), created: isNew, order: order ? await orderView(app, order, locale) : null })
     } catch (error) {
       if (error instanceof RefundRequestError) {
         return reply.code(error.status).send({ message: error.message, ...(error.blocked ? { code: error.blocked } : {}) })

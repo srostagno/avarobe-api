@@ -705,7 +705,8 @@ export const enEmails = {
         pack: 'the looks it added that are left are removed',
         guide: 'the book’s download link stops working',
       },
-      proPaused: 'Pro won’t renew while we review your request. If we can’t approve it, it continues as before.',
+      proPaused:
+        'Pro won’t renew while we review your request. If we can’t approve it, we turn its renewal back on; if its current period ends before we answer, you can start Pro again from your account.',
       withdrawal:
         'Bought in Brazil: you’re within your 7-day right of withdrawal (art. 49 of the Consumer Defense Code), so this purchase will be refunded in full.',
       reason: (label: string) => `What you told us: ${label}.`,
@@ -733,6 +734,9 @@ export const enEmails = {
       why: (text: string) => `Why: ${text}`,
       stays: 'Your purchase stays active, and everything it includes is still yours.',
       pro: (date: string) => `Pro continues as before and renews on ${date}, unless you cancel it in your account settings.`,
+      // Pro's paused renewal: its trial or period ended during the review.
+      proEnded: (date: string) =>
+        `Pro ended on ${date} while we reviewed your request, without renewing or charging you again. You can start it again from your account whenever you like.`,
       again: 'If you think we got something wrong, reply to this email and we’ll take another look.',
     },
     // Why it wasn't approved ('other': only the note the founder wrote).

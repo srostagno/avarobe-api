@@ -295,6 +295,15 @@ function refundPreviews(locale: Locale, region: PricingRegion): Record<string, E
       },
       { proRenewsAt: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000) },
     ),
+    // Pro's trial ran out while its renewal was paused for the review.
+    'refund-rejected-pro-ended': decisionEmailFor(
+      {
+        ...sampleRequest({ locale, region, product: 'pro_trial' }),
+        status: 'rejected',
+        decision: { outcome: 'rejected', by: 'admin', adminId: null, adminEmail: null, at: new Date(), code: 'used', note: null, cdcOverride: false },
+      },
+      { proRenewsAt: null, proEndedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+    ),
   }
 }
 
@@ -312,6 +321,13 @@ function founderPreviews(): Record<string, EmailContent> {
     reasonCategory: 'not_accurate',
   })
   const ordinary = sampleRequest({ flags: ['repeat', 'used'], history: { ...sampleRequest().history, refundsBefore: 1, requestsBefore: 1, approvedBefore: 1 } })
+  const languageOnly = sampleRequest({
+    locale: 'pt-BR',
+    product: 'pro_trial',
+    explanation: 'Não era o que eu esperava do Pro.',
+    statutory: { law: 'br_cdc_49', until: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000), basis: ['language'] },
+    proPause: { subscriptionId: 'sub_preview', wasCancelAtPeriodEnd: false, at: new Date(), restoredAt: null },
+  })
   const account = { createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), location: null, locale: 'en' as const, acquisition: null }
 
   return {
@@ -323,7 +339,20 @@ function founderPreviews(): Record<string, EmailContent> {
       test: false,
     }),
     'refund-founder': founderEmail({ request: ordinary, account, plan: plan(ordinary), removesEs: ['el Asesor de Color (reporte y acceso)'], test: false }),
-    'refund-reminders': reminderDigest([withdrawal, ordinary], new Date(Date.now() + 26 * 60 * 60 * 1000)),
+    // Only the language says Brazil (USD, a US card), and a Pro trial that
+    // ends before the review is due.
+    'refund-founder-language-pro': founderEmail({
+      request: languageOnly,
+      account: { ...account, locale: 'pt-BR' },
+      plan: { total: languageOnly.amount, currency: languageOnly.currency, endsPro: true },
+      removesEs: ['hasta 1 look (le quedan 1)'],
+      proEnd: { at: new Date(Date.now() + 20 * 60 * 60 * 1000), trial: true, ended: false },
+      test: false,
+    }),
+    'refund-reminders': reminderDigest(
+      [withdrawal, ordinary, { ...ordinary, ref: 'R-STUCK1', status: 'approved' }],
+      new Date(Date.now() + 26 * 60 * 60 * 1000),
+    ),
   }
 }
 

@@ -1,12 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto'
 
-import type { FastifyInstance } from 'fastify'
-import { ObjectId } from 'mongodb'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { type Filter, ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import { emailCopy, formatMoney } from '../../i18n/emails.js'
 import type {
+  BrazilBasis,
   GuideOrderDocument,
+  ProSubscription,
   PurchaseDocument,
   PurchaseProduct,
   RefundCover,
@@ -21,10 +23,11 @@ import type {
 import { isGuestEmail } from '../../utils/guests.js'
 import { errorMessage } from '../../utils/http.js'
 import { InvalidImageError, normalizeScreenshot } from '../../utils/images.js'
-import type { Locale } from '../../utils/locale.js'
+import { type Locale, requestLocale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { currentLocale } from '../../utils/request-locale.js'
 import { storage } from '../../utils/storage.js'
+import { translateMessage } from '../../utils/translate-message.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { shortProductName } from '../lifecycle/checkout-link.js'
 import { adminUserIds, isAdmin, proIsLive } from './entitlements.js'
@@ -36,6 +39,7 @@ import {
   STRIPE_REFUNDS,
   brazilWithdrawalUntil,
   creditUsed,
+  earlierAttempt,
   firstProAt,
   guideRefundableUntil,
   hasRefundablePayment,
@@ -45,7 +49,7 @@ import {
   refundableUntil,
 } from './refunds.js'
 import { decisionEmailFor, founderEmail, receivedEmailFor, refundKind, reminderDigest, sendClaimedEmail } from './refund-notify.js'
-import { PRODUCTS, type PaymentFacts, paymentFacts, productCopy, setProCancellation, stripeTestMode } from './stripe.js'
+import { PRODUCTS, type PaymentFacts, paymentFacts, productCopy, setProCancellation, stripeConfigured, stripeTestMode } from './stripe.js'
 
 // Refund requests (Oct 12, 2026: the founder's decision). Refunds are no
 // longer instant: the customer asks, with a reason and an explanation in
@@ -84,6 +88,19 @@ const RETRY_EMAIL_AFTER_MS = 5 * 60 * 1000
 export const REFUND_CATEGORIES: RefundReason[] = ['not_accurate', 'quality', 'technical', 'not_expected', 'duplicate', 'mistake', 'other']
 export const REJECT_CODES: RefundRejectCode[] = ['resolved', 'works_as_described', 'used', 'outside_policy', 'duplicate', 'withdrawn', 'other']
 
+// The request routes' limit per IP (5 in 10 minutes), answered in the
+// page's language (the plugin's own sentence is English with a time in it).
+// Translated here: the plugin's error is answered by Fastify's own error
+// reply, which the message translation hook doesn't see.
+export const RATE_LIMIT_MESSAGE = 'Too many tries in a few minutes. Wait a little and try again.'
+
+export const REQUEST_RATE_LIMIT = {
+  max: 5,
+  timeWindow: '10 minutes',
+  errorResponseBuilder: (request: FastifyRequest, context: { statusCode: number }) =>
+    Object.assign(new Error(translateMessage(RATE_LIMIT_MESSAGE, requestLocale(request))), { statusCode: context.statusCode }),
+}
+
 // What the web needs to build the form (GET /billing/purchases). `mode`
 // tells the new web this API reviews refunds (production's older API has
 // no `refunds`, and the web falls back to an email to hello@).
@@ -107,7 +124,7 @@ export class RefundRequestError extends Error {
   constructor(
     readonly status: 400 | 404 | 409 | 429 | 502,
     message: string,
-    readonly blocked?: 'window' | 'limit' | 'decided' | 'validation',
+    readonly blocked?: 'window' | 'limit' | 'decided' | 'validation' | 'email',
     readonly current?: RefundRequestDocument | null,
   ) {
     super(message)
@@ -130,7 +147,9 @@ export function cleanExplanation(text: string) {
     .trim()
 }
 
-export type RequestInput = { category: unknown; explanation: unknown; acknowledge: unknown; statutory: boolean }
+// `brief`: the shorter minimum applies (Brazil's withdrawal, or a reader in
+// Brazilian Portuguese, whose copy promises it).
+export type RequestInput = { category: unknown; explanation: unknown; acknowledge: unknown; brief: boolean }
 
 // The form's rules, the same as the web's (lib/refund-request.ts): a
 // category, an explanation in their own words (80 characters and 8
@@ -149,8 +168,8 @@ export function validateRequestInput(input: RequestInput):
     return { ok: false, message: 'Your explanation is too long: keep it under 2,000 characters.' }
   }
 
-  const minChars = input.statutory ? MIN_CHARS_WITHDRAWAL : MIN_CHARS
-  const minWords = input.statutory ? MIN_WORDS_WITHDRAWAL : MIN_WORDS
+  const minChars = input.brief ? MIN_CHARS_WITHDRAWAL : MIN_CHARS
+  const minWords = input.brief ? MIN_WORDS_WITHDRAWAL : MIN_WORDS
   const letters = new Set(explanation.toLowerCase().replace(/\s/g, ''))
   const junk = letters.size < 4 || !/\p{L}/u.test(explanation)
 
@@ -174,23 +193,43 @@ export type BrazilSignals = {
   pageLocale?: Locale | null
 }
 
-// Bought in Brazil, as far as we can tell: paid in reais, signed up there, a
-// Brazilian card, or using Avarobe in Brazilian Portuguese.
+// Why a purchase counts as Brazilian: paid in reais, signed up there, a
+// Brazilian card (the hard signals), or only the language: Avarobe used in
+// Brazilian Portuguese, whose copy promises 7 days to withdraw.
+export function brazilBasis(signals: BrazilSignals): BrazilBasis[] {
+  const basis: BrazilBasis[] = []
+
+  if (signals.currency?.toLowerCase() === 'brl') basis.push('currency')
+  if (signals.signupCountry?.toUpperCase() === 'BR') basis.push('signup')
+  if (signals.cardCountry?.toUpperCase() === 'BR') basis.push('card')
+  if (signals.locale === 'pt-BR' || signals.pageLocale === 'pt-BR') basis.push('language')
+
+  return basis
+}
+
+// Bought in Brazil, as far as we can tell (any basis, the language too).
 export function brazilian(signals: BrazilSignals) {
-  return (
-    signals.currency?.toLowerCase() === 'brl' ||
-    signals.signupCountry?.toUpperCase() === 'BR' ||
-    signals.cardCountry?.toUpperCase() === 'BR' ||
-    signals.locale === 'pt-BR' ||
-    signals.pageLocale === 'pt-BR'
-  )
+  return brazilBasis(signals).length > 0
+}
+
+// A hard signal of Brazil, not only the language. A request stored before
+// the basis was kept counts as hard.
+export function hardBrazil(statutory: Pick<NonNullable<RefundRequestDocument['statutory']>, 'basis'> | null | undefined) {
+  return Boolean(statutory) && (!statutory?.basis || statutory.basis.some((basis) => basis !== 'language'))
 }
 
 // Brazil's right of withdrawal applies: a Brazilian purchase, asked within
 // its 7 days (`until`, brazilWithdrawalUntil). What counts is when they
-// asked, not when it's decided.
+// asked, not when it's decided. Kept with its basis, so the admin and the
+// founder's email say when it's only the language (the request limit
+// applies to those).
+export function statutoryFor(signals: BrazilSignals, requestedAt: Date, until: Date): RefundRequestDocument['statutory'] {
+  const basis = brazilBasis(signals)
+  return basis.length > 0 && requestedAt.getTime() <= until.getTime() ? { law: 'br_cdc_49', until, basis } : null
+}
+
 export function isStatutory(signals: BrazilSignals, requestedAt: Date, until: Date) {
-  return brazilian(signals) && requestedAt.getTime() <= until.getTime()
+  return statutoryFor(signals, requestedAt, until) !== null
 }
 
 // Until when a refund of this purchase can be requested (null: it can't).
@@ -448,10 +487,10 @@ export async function refundHistory(
   const [user, purchases, guestOrders, requests, cardSeen] = await Promise.all([
     userId ? app.collections.users.findOne({ _id: userId }, { projection: { createdAt: 1, acquisition: 1 } }) : null,
     userId
-      ? app.collections.purchases.find({ userId, amountTotal: { $gt: 0 } }, { projection: { amountTotal: 1, amountUsd: 1, currency: 1, refundedAt: 1 } }).toArray()
+      ? app.collections.purchases.find({ userId, amountTotal: { $gt: 0 } }, { projection: { amountTotal: 1, amountUsd: 1, currency: 1, refundedAt: 1, refund: 1 } }).toArray()
       : [],
     input.email
-      ? app.collections.guideOrders.find({ email: input.email.toLowerCase(), userId: null, amount: { $gt: 0 } }, { projection: { amount: 1, currency: 1, refundedAt: 1 } }).toArray()
+      ? app.collections.guideOrders.find({ email: input.email.toLowerCase(), userId: null, amount: { $gt: 0 } }, { projection: { amount: 1, currency: 1, refundedAt: 1, refund: 1 } }).toArray()
       : [],
     app.collections.refundRequests.find(others, { projection: { status: 1, covers: 1, decision: 1 } }).toArray(),
     input.fingerprint
@@ -463,9 +502,12 @@ export async function refundHistory(
   ])
   // Each refunded payment once, however it's known: their purchases, a
   // guest's book orders, and refunded requests (an account deleted since).
+  // Not this request's own refund (an approval that stopped halfway marked
+  // its purchases already).
+  const ours = (refund: { requestId?: ObjectId | null } | null | undefined) => Boolean(input.excludeId && refund?.requestId?.equals(input.excludeId))
   const refunded = new Set<string>([
-    ...purchases.filter((purchase) => purchase.refundedAt).map((purchase) => `p:${purchase._id.toString()}`),
-    ...guestOrders.filter((order) => order.refundedAt).map((order) => `g:${order._id.toString()}`),
+    ...purchases.filter((purchase) => purchase.refundedAt && !ours(purchase.refund)).map((purchase) => `p:${purchase._id.toString()}`),
+    ...guestOrders.filter((order) => order.refundedAt && !ours(order.refund)).map((order) => `g:${order._id.toString()}`),
     ...requests
       .filter((request) => request.status === 'refunded')
       .flatMap((request) =>
@@ -518,7 +560,11 @@ export type RefundPlanPayment = {
   currency: string
   paidAt: string
   via: 'payment' | 'invoice' | 'snapshot'
+  // Refunded elsewhere (Stripe's dashboard, another approval): left out.
   alreadyRefunded: boolean
+  // Refunded by this request's approval that stopped halfway: not refunded
+  // again, but approving finishes it (takes back what it gave, closes it).
+  refundedByRequest: boolean
   duringReview: boolean
 }
 
@@ -610,6 +656,47 @@ export function describeRemoves(
 const adminMoney = (amount: number, currency: string) => formatMoney(amount, currency, 'en')
 const adminDay = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
 
+// When Pro's paused subscription ends (its trial or its period) before the
+// review is due, or ended during it: a rejection can't put it back then.
+// Null when its renewal isn't paused by this request or isn't at risk.
+export function proPauseEnd(
+  request: Pick<RefundRequestDocument, 'proPause' | 'status' | 'createdAt' | 'statutory'>,
+  pro: Pick<ProSubscription, 'subscriptionId' | 'status' | 'periodEnd' | 'trialEnd'> | null | undefined,
+  now: Date,
+): { at: Date; trial: boolean; ended: boolean; due: Date } | null {
+  const pause = request.proPause
+
+  if (!pause || pause.restoredAt || pause.wasCancelAtPeriodEnd || !pro || pro.subscriptionId !== pause.subscriptionId || !pro.periodEnd) {
+    return null
+  }
+
+  if (request.status !== 'pending' && request.status !== 'failed' && request.status !== 'approved') {
+    return null
+  }
+
+  const due = dueAt(request)
+  const ended = pro.periodEnd.getTime() <= now.getTime()
+
+  // A trial (still trialing, or ended at its trial's end).
+  const trial = pro.status === 'trialing' || Boolean(pro.trialEnd && Math.abs(pro.trialEnd.getTime() - pro.periodEnd.getTime()) < 60_000)
+
+  return ended || pro.periodEnd.getTime() < due.getTime() ? { at: pro.periodEnd, trial, ended, due } : null
+}
+
+function proPauseWarning(request: RefundRequestDocument, pro: ProSubscription | null, now: Date) {
+  const end = proPauseEnd(request, pro, now)
+
+  if (!end) {
+    return null
+  }
+
+  const what = end.trial ? 'trial' : 'period'
+
+  return end.ended
+    ? `Pro’s ${what} ended ${adminDay(end.at)} during the review (its renewal was paused): rejecting won’t bring it back, and the customer is told so.`
+    : `Pro’s ${what} ends ${adminDay(end.at)}, before this review is due (${adminDay(end.due)}): decide by then, or a rejection finds Pro ended (the customer is told so).`
+}
+
 // Exactly what approving does now: each payment (the request's, and any Pro
 // charge made since), what's already refunded in Stripe, the total, what it
 // takes away and what to look out for. The admin approves this total
@@ -636,11 +723,18 @@ export async function planFor(app: FastifyInstance, request: RefundRequestDocume
   const removable: { product: string; credits: number }[] = []
   const warnings: string[] = []
 
+  let total = 0
+
   for (const cover of covers) {
     const purchase = cover.purchaseId ? purchaseById.get(cover.purchaseId.toString()) : undefined
     const order = cover.guideOrderId ? orderById.get(cover.guideOrderId.toString()) : undefined
-    const alreadyRefunded = purchase ? Boolean(purchase.refundedAt) : order ? Boolean(order.refundedAt) : false
+    // Marked by this request's own approval that stopped halfway (a crash
+    // between marking it and closing the request): finished, not skipped.
+    const marked = purchase ?? order
+    const earlier = marked ? earlierAttempt(marked, request._id) : null
+    const alreadyRefunded = !earlier && Boolean(marked?.refundedAt)
     const via = purchase ? (purchase.stripePaymentIntentId ? 'payment' : 'invoice') : order ? 'payment' : 'snapshot'
+    const label = `${shortProductName(cover.product, 'en')} ${adminMoney(cover.amount, cover.currency)}`
 
     payments.push({
       purchaseId: cover.purchaseId?.toString() ?? null,
@@ -651,20 +745,40 @@ export async function planFor(app: FastifyInstance, request: RefundRequestDocume
       paidAt: cover.paidAt.toISOString(),
       via,
       alreadyRefunded,
+      refundedByRequest: earlier === 'refunded',
       duringReview: cover.duringReview,
     })
 
     if (alreadyRefunded) {
-      warnings.push(`Already refunded in Stripe: ${shortProductName(cover.product, 'en')} ${adminMoney(cover.amount, cover.currency)}`)
+      warnings.push(`Already refunded in Stripe: ${label}`)
       continue
     }
 
     toRefund.push(cover)
-    removable.push({ product: cover.product, credits: purchase?.credits ?? 0 })
+
+    if (!purchase?.refund?.revokedAt) {
+      removable.push({ product: cover.product, credits: purchase?.credits ?? 0 })
+    }
+
+    if (earlier === 'refunded') {
+      warnings.push(`Refunded by this request on ${adminDay(marked?.refundedAt ?? now)}, but the approval stopped halfway: approving finishes it (no second refund).`)
+    } else {
+      total += cover.amount
+    }
+
+    if (earlier === 'unsent') {
+      warnings.push(`An approval stopped before Stripe answered for ${label}: approving asks Stripe again (a refund that went through counts once).`)
+    }
 
     if (cover.duringReview) {
-      warnings.push(`Charged during review: ${shortProductName(cover.product, 'en')} ${adminMoney(cover.amount, cover.currency)} on ${adminDay(cover.paidAt)}`)
+      warnings.push(`Charged during review: ${label} on ${adminDay(cover.paidAt)}`)
     }
+  }
+
+  const proWarning = proPauseWarning(request, user?.pro ?? null, now)
+
+  if (proWarning) {
+    warnings.push(proWarning)
   }
 
   const accountGone = Boolean(request.userId) && !user
@@ -685,7 +799,6 @@ export async function planFor(app: FastifyInstance, request: RefundRequestDocume
     warnings.push('Partly refunded before: the rest is in Stripe')
   }
 
-  const total = toRefund.reduce((sum, cover) => sum + cover.amount, 0)
   const plan: RefundPlan = {
     total,
     currency: request.currency,
@@ -749,11 +862,98 @@ export function rejectionText(code: RefundRejectCode, locale: Locale) {
   return code === 'other' ? '' : emailRefundCopy(locale).codes[code]
 }
 
+// The card's country of the purchases a refund can still be requested for
+// and that nothing else marks as Brazilian (reais, signed up in Brazil),
+// asked of Stripe once each (quick, in parallel, best effort) and kept on
+// the purchase: a Brazilian card opens Brazil's withdrawal on the account
+// page as it does in the request (finding the same card).
+async function lookUpCardCountries(
+  app: FastifyInstance,
+  purchases: PurchaseDocument[],
+  context: { signupCountry: string | null; firstPro: Date | null; requested: Set<string> },
+  deps: Pick<RequestDeps, 'paymentFacts'>,
+  now: number,
+) {
+  if (context.signupCountry?.toUpperCase() === 'BR') {
+    return
+  }
+
+  const pending = purchases
+    .filter(
+      (purchase) =>
+        purchase.cardCountry === undefined &&
+        purchase.currency.toLowerCase() !== 'brl' &&
+        !context.requested.has(purchase._id.toString()) &&
+        requestWindow(purchase, { firstProAt: context.firstPro, brazil: true }, now),
+    )
+    .slice(0, 5)
+
+  await Promise.all(
+    pending.map(async (purchase) => {
+      const cover = coverOf(purchase)
+
+      try {
+        const facts = await deps.paymentFacts({ paymentIntentId: cover.stripePaymentIntentId, invoiceId: cover.stripeInvoiceId })
+        const country = facts?.country ? facts.country.toUpperCase() : null
+
+        purchase.cardCountry = country
+        await rememberCardCountry(app, 'purchase', purchase._id, country)
+      } catch (error) {
+        app.log.warn({ err: errorMessage(error), purchaseId: purchase._id.toString() }, 'Purchases: no card country from Stripe')
+      }
+    }),
+  )
+}
+
+// A book order's card country, as lookUpCardCountries does for purchases:
+// asked of Stripe once while its refund can be requested and nothing else
+// marks it as Brazilian, and kept on the order.
+export async function orderCardCountry(
+  app: FastifyInstance,
+  order: GuideOrderDocument,
+  context: { signupCountry: string | null; requested: boolean },
+  deps: Pick<RequestDeps, 'paymentFacts'> = STRIPE_REQUESTS,
+  now = Date.now(),
+) {
+  if (order.cardCountry !== undefined) {
+    return order.cardCountry
+  }
+
+  const skip =
+    context.requested ||
+    !order.paymentIntentId ||
+    order.currency.toLowerCase() === 'brl' ||
+    context.signupCountry?.toUpperCase() === 'BR' ||
+    !guideRefundableUntil(order, now, true) ||
+    (deps === STRIPE_REQUESTS && !stripeConfigured())
+
+  if (skip) {
+    return null
+  }
+
+  try {
+    const facts = await deps.paymentFacts({ paymentIntentId: order.paymentIntentId })
+    const country = facts?.country ? facts.country.toUpperCase() : null
+
+    await rememberCardCountry(app, 'order', order._id, country)
+    return country
+  } catch (error) {
+    app.log.warn({ err: errorMessage(error), guideOrderId: order._id.toString() }, 'Book order: no card country from Stripe')
+    return null
+  }
+}
+
 // The account page's purchases, newest first: whether a refund can still be
 // requested (`refundableUntil`, null once requested, refunded or past it,
 // so an older web never offers a one-tap refund), the request if there is
-// one, and Brazil's withdrawal while it lasts.
-export async function purchasesFor(app: FastifyInstance, userId: ObjectId, now = Date.now()) {
+// one, and Brazil's withdrawal while it lasts (the card's country looked up
+// once, so the page asks what the request will: lookUpCardCountries).
+export async function purchasesFor(
+  app: FastifyInstance,
+  userId: ObjectId,
+  now = Date.now(),
+  deps: Pick<RequestDeps, 'paymentFacts'> = STRIPE_REQUESTS,
+) {
   const [purchases, firstPro, user, requests] = await Promise.all([
     app.collections.purchases.find({ userId, amountTotal: { $gt: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
     firstProAt(app, userId),
@@ -772,8 +972,15 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId, now =
     }
   }
 
-  const brazil = (currency: string) =>
-    brazilian({ currency, signupCountry: user?.location?.country ?? null, cardCountry: null, locale: user?.locale, pageLocale: currentLocale() })
+  const signupCountry = user?.location?.country ?? null
+
+  // Without Stripe's keys (local development) there's no one to ask.
+  if (deps !== STRIPE_REQUESTS || stripeConfigured()) {
+    await lookUpCardCountries(app, purchases, { signupCountry, firstPro, requested: new Set(byPurchase.keys()) }, deps, now)
+  }
+
+  const brazil = (purchase: PurchaseDocument) =>
+    brazilian({ currency: purchase.currency, signupCountry, cardCountry: purchase.cardCountry ?? null, locale: user?.locale, pageLocale: currentLocale() })
   const weekEnd = firstPro ? firstPro.getTime() + 7 * DAY_MS : 0
   // Pro's first week is requested as a whole: each of its payments says the
   // whole amount.
@@ -783,7 +990,7 @@ export async function purchasesFor(app: FastifyInstance, userId: ObjectId, now =
 
   return purchases.map((purchase) => {
     const request = byPurchase.get(purchase._id.toString()) ?? null
-    const br = brazil(purchase.currency)
+    const br = brazil(purchase)
     const until = request ? null : requestWindow(purchase, { firstProAt: firstPro, brazil: br }, now)
     const withdrawal = br && !purchase.refundedAt ? requestWindow(purchase, { firstProAt: firstPro, brazil: true }, now) : null
     const proFirst = isPro(purchase.product) && purchase.createdAt.getTime() < weekEnd
@@ -845,6 +1052,25 @@ const WRITE_TO_US = {
   orderWindow: 'This order is past the 7 days to request a refund. Write to us at hello@avarobe.com.',
   decided: 'We already answered a refund request for this purchase. Write to us at hello@avarobe.com.',
   limit: 'You’ve sent several refund requests recently. Write to us at hello@avarobe.com.',
+  noEmail: 'Your account has no email for us to answer you at. Write to us at hello@avarobe.com.',
+  orderNoEmail: 'This order has no email to answer to. Write to us at hello@avarobe.com.',
+}
+
+// The card's country, kept on the purchase or book order once Stripe gave
+// it (null: Stripe has none), so the account page knows a Brazilian card
+// without asking Stripe again.
+async function rememberCardCountry(app: FastifyInstance, kind: 'purchase' | 'order', id: ObjectId, country: string | null) {
+  const set = { $set: { cardCountry: country ? country.toUpperCase() : null } }
+
+  try {
+    if (kind === 'purchase') {
+      await app.collections.purchases.updateOne({ _id: id }, set)
+    } else {
+      await app.collections.guideOrders.updateOne({ _id: id }, set)
+    }
+  } catch (error) {
+    app.log.warn({ err: errorMessage(error) }, 'Refund request: card country not kept')
+  }
 }
 
 async function factsOf(cover: RefundCover, deps: RequestDeps, app: FastifyInstance) {
@@ -918,9 +1144,11 @@ async function existingRequest(app: FastifyInstance, targetKey: string, userId: 
 }
 
 // At most a few new requests a month per person (account or email), except
-// a Brazilian withdrawal, which the law gives them regardless.
+// a Brazilian withdrawal on a hard signal (reais, signed up there, a
+// Brazilian card), which the law gives them regardless. Only the page's
+// language isn't enough to skip it.
 async function overLimit(app: FastifyInstance, draft: Pick<Draft, 'userId' | 'email' | 'statutory'>, now: Date) {
-  if (draft.statutory) {
+  if (hardBrazil(draft.statutory)) {
     return false
   }
 
@@ -1176,16 +1404,27 @@ export async function createRefundRequest(
     throw new RefundRequestError(409, WRITE_TO_US.purchaseWindow, 'window')
   }
 
+  if (facts && covers[0]?.purchaseId?.equals(purchase._id) && purchase.cardCountry === undefined) {
+    await rememberCardCountry(app, 'purchase', purchase._id, facts.country)
+  }
+
+  // An account still on a guest's placeholder (its claim failed): no email
+  // to tell them we got it, or what we decided.
+  if (isGuestEmail(user.email)) {
+    blocked(app, input.userId, 'email', product)
+    throw new RefundRequestError(409, WRITE_TO_US.noEmail, 'email')
+  }
+
   const until = brazilWithdrawalUntil(purchase.createdAt)
-  const statutory = isStatutory(signals, now, until) ? { law: 'br_cdc_49' as const, until } : null
-  const valid = validateRequestInput({ category: input.category, explanation: input.explanation, acknowledge: input.acknowledge, statutory: Boolean(statutory) })
+  const statutory = statutoryFor(signals, now, until)
+  const valid = validateRequestInput({ category: input.category, explanation: input.explanation, acknowledge: input.acknowledge, brief: Boolean(statutory) })
 
   if (!valid.ok) {
     blocked(app, input.userId, 'validation', product)
     throw new RefundRequestError(400, valid.message, 'validation')
   }
 
-  const email = isGuestEmail(user.email) ? null : user.email
+  const email = user.email
 
   if (await overLimit(app, { userId: input.userId, email, statutory }, now)) {
     blocked(app, input.userId, 'limit', product)
@@ -1274,7 +1513,7 @@ export async function createGuideRefundRequest(
   const email = order.email ?? (account && !isGuestEmail(account.email) ? account.email : null)
 
   if (!email) {
-    throw new RefundRequestError(409, 'This order has no email to answer to. Write to us at hello@avarobe.com.')
+    throw new RefundRequestError(409, WRITE_TO_US.orderNoEmail, 'email')
   }
 
   const cover = purchase ? coverOf(purchase, order._id) : guideCover(order)
@@ -1293,9 +1532,13 @@ export async function createGuideRefundRequest(
     throw new RefundRequestError(409, WRITE_TO_US.orderWindow, 'window')
   }
 
+  if (facts && order.cardCountry === undefined) {
+    await rememberCardCountry(app, 'order', order._id, facts.country)
+  }
+
   const until = brazilWithdrawalUntil(order.createdAt)
-  const statutory = isStatutory(signals, now, until) ? { law: 'br_cdc_49' as const, until } : null
-  const valid = validateRequestInput({ category: input.category, explanation: input.explanation, acknowledge: input.acknowledge, statutory: Boolean(statutory) })
+  const statutory = statutoryFor(signals, now, until)
+  const valid = validateRequestInput({ category: input.category, explanation: input.explanation, acknowledge: input.acknowledge, brief: Boolean(statutory) })
 
   if (!valid.ok) {
     blocked(app, order.userId, 'validation', 'outfit_guide')
@@ -1370,7 +1613,7 @@ const replyToRefunds = () => (env.REFUNDS_EMAIL[0] ? { email: env.REFUNDS_EMAIL[
 // REFUNDS_EMAIL, with reply-to the customer.
 async function sendFounderEmail(app: FastifyInstance, request: RefundRequestDocument) {
   return claimed(app, request, 'founderAt', async () => {
-    const { plan, user, removable } = await planFor(app, request)
+    const { plan, user, removable, now } = await planFor(app, request)
     const account = request.userId
       ? await app.collections.users.findOne({ _id: request.userId }, { projection: { email: 1, createdAt: 1, location: 1, locale: 1, acquisition: 1 } })
       : null
@@ -1379,6 +1622,7 @@ async function sendFounderEmail(app: FastifyInstance, request: RefundRequestDocu
       account,
       plan,
       removesEs: describeRemoves(removable, user, 'es'),
+      proEnd: proPauseEnd(request, user?.pro, now),
       test: stripeTestMode() || (request.email ? isAdmin({ email: request.email }) : false) || (account ? isAdmin(account) : false),
     })
 
@@ -1408,9 +1652,10 @@ async function sendDecisionEmail(app: FastifyInstance, request: RefundRequestDoc
     request.status === 'rejected' && request.proPause?.restoredAt && request.userId
       ? ((await app.collections.users.findOne({ _id: request.userId }, { projection: { pro: 1 } }))?.pro?.periodEnd ?? null)
       : null
+  const proEndedAt = request.status === 'rejected' ? (request.proPause?.endedAt ?? null) : null
 
   return claimed(app, request, 'decisionAt', () =>
-    sendClaimedEmail(app.log, { to: email, content: decisionEmailFor(request, { proRenewsAt }), replyTo: replyToRefunds() }),
+    sendClaimedEmail(app.log, { to: email, content: decisionEmailFor(request, { proRenewsAt, proEndedAt }), replyTo: replyToRefunds() }),
   )
 }
 
@@ -1419,15 +1664,46 @@ async function notifyReceived(app: FastifyInstance, request: RefundRequestDocume
   await sendReceivedEmail(app, request)
 }
 
-// After a decision: its email, and the scrub of a deleted account's request.
+// After a decision: its email, and the scrub of a deleted account's request
+// once that email went out (the address is what it's sent to: a failed
+// email is tried again by the lifecycle tick, then scrubbed regardless after
+// a day, scrubLeftovers).
 async function afterDecision(app: FastifyInstance, request: RefundRequestDocument) {
   await sendDecisionEmail(app, request).catch((error: unknown) => {
     app.log.error({ err: errorMessage(error), requestId: request._id.toString() }, 'Refund decision email failed')
   })
 
   if (request.accountDeletedAt) {
-    await scrub(app, request._id)
+    const now = await app.collections.refundRequests.findOne({ _id: request._id }, { projection: { email: 1, emails: 1 } })
+
+    if (!now?.email || now.emails.decisionAt) {
+      await scrub(app, request._id)
+    }
   }
+}
+
+// Deleted accounts' decided requests still holding their personal details:
+// their decision email went out (a scrub that failed) or kept failing for a
+// day. Scrubbed now.
+async function scrubLeftovers(app: FastifyInstance, now: Date) {
+  const dayAgo = new Date(now.getTime() - DAY_MS)
+  const left = await app.collections.refundRequests
+    .find(
+      { accountDeletedAt: { $ne: null }, scrubbedAt: null, status: { $in: ['refunded', 'rejected'] } },
+      { projection: { email: 1, emails: 1, decision: 1 } },
+    )
+    .limit(50)
+    .toArray()
+  let scrubbed = 0
+
+  for (const request of left) {
+    if (!request.email || request.emails.decisionAt || !request.decision || request.decision.at < dayAgo) {
+      await scrub(app, request._id)
+      scrubbed += 1
+    }
+  }
+
+  return scrubbed
 }
 
 // ---------------------------------------------------------------- deciding
@@ -1451,7 +1727,10 @@ const decidedAlready = (request: RefundRequestDocument) =>
 // read) refunded in Stripe and what it gave taken away (refundCovers), the
 // request refunded and the customer told. Claimed first, so two clicks or
 // two admins refund once; a request stuck in "approved" (a crash) can be
-// approved again after a few minutes. Stripe refusing everything leaves it
+// approved again after a few minutes, which finishes what that approval
+// left (its plan says what; 0 when only closing it is left). Everything
+// refunded elsewhere already (Stripe's dashboard, its webhook missed):
+// closed as refunded in Stripe, with 0. Stripe refusing everything leaves it
 // failed, nothing taken away, for a Try again. No 7-day check here: it was
 // asked within them.
 export async function approveRefundRequest(
@@ -1472,14 +1751,19 @@ export async function approveRefundRequest(
 
   const { plan, covers } = await planFor(app, request, now)
 
-  // Refunded in Stripe already, all of it (its webhook missed): closed so.
-  if (covers.length === 0 && plan.payments.length > 0) {
-    const closed = await closeAsRefundedInStripe(app, request, now)
-    return closed ?? (await loadRequest(app, request._id))
-  }
-
   if (plan.total !== input.expectedAmount) {
     throw new RefundRequestError(409, 'The amount changed since you opened this request. Reload it.', undefined, request)
+  }
+
+  // Refunded in Stripe already, all of it (its webhook missed): closed so.
+  if (covers.length === 0 && plan.payments.length > 0) {
+    const closed = await closeAsRefundedInStripe(app, request, now, { stale: true })
+
+    if (!closed) {
+      throw new RefundRequestError(409, 'Someone else is deciding this request. Reload it.', undefined, await app.collections.refundRequests.findOne({ _id: request._id }))
+    }
+
+    return closed
   }
 
   const decision = {
@@ -1505,9 +1789,11 @@ export async function approveRefundRequest(
     throw new RefundRequestError(409, 'Someone else is deciding this request. Reload it.', undefined, await app.collections.refundRequests.findOne({ _id: request._id }))
   }
 
+  // This approval's own id, in each refund's Stripe idempotency key.
+  const attempt = `${now.getTime().toString(36)}${randomBytes(3).toString('hex')}`
   const result = await refundCovers(
     app,
-    { userId: request.userId, covers, reason: request.reasonCategory, note: input.note, requestId: request._id, flags: request.flags },
+    { userId: request.userId, covers, reason: request.reasonCategory, note: input.note, requestId: request._id, flags: request.flags, attempt },
     deps,
   )
   const at = new Date()
@@ -1520,7 +1806,12 @@ export async function approveRefundRequest(
       { $set: { status: 'failed', updatedAt: at }, $push: { attempts: { at, adminId: input.adminId, ok: false, error: message } } },
     )
     void trackServerEvent(app, { name: 'refund_failed', userId: request.userId, props: { product: request.product, stripe: message.slice(0, 80) } })
-    throw new RefundRequestError(502, `Stripe didn't refund it: ${message}. Try again, or refund it in Stripe.`, undefined, await app.collections.refundRequests.findOne({ _id: request._id }))
+    throw new RefundRequestError(
+      502,
+      `Stripe didn't refund it: ${message.replace(/\.$/, '')}. Try again, or refund it in Stripe.`,
+      undefined,
+      await app.collections.refundRequests.findOne({ _id: request._id }),
+    )
   }
 
   const partial = result.failed.length > 0
@@ -1647,7 +1938,18 @@ async function restorePro(app: FastifyInstance, request: RefundRequestDocument, 
   const user = await app.collections.users.findOne({ _id: request.userId }, { projection: { pro: 1 } })
   const pro = user?.pro
 
-  if (!pro || pro.subscriptionId !== pause.subscriptionId || !proIsLive(pro, now.getTime()) || !pro.periodEnd || pro.periodEnd <= now) {
+  // The same subscription ended during the review (its trial or period ran
+  // out while its renewal was paused): nothing to put back, and the email
+  // says so (proEndedOn).
+  if (pro && pro.subscriptionId === pause.subscriptionId && (!proIsLive(pro, now.getTime()) || (pro.periodEnd && pro.periodEnd <= now))) {
+    return app.collections.refundRequests.findOneAndUpdate(
+      { _id: request._id, 'proPause.restoredAt': null },
+      { $set: { 'proPause.endedAt': pro.periodEnd && pro.periodEnd <= now ? pro.periodEnd : now } },
+      { returnDocument: 'after' },
+    )
+  }
+
+  if (!pro || pro.subscriptionId !== pause.subscriptionId || !pro.periodEnd) {
     return null
   }
 
@@ -1687,10 +1989,15 @@ export async function noteRefundRequest(app: FastifyInstance, input: { id: Objec
 // ---------------------------------------------------------------- Stripe
 
 // A request closed because its money went back in Stripe's dashboard: the
-// customer gets the approved email once.
-async function closeAsRefundedInStripe(app: FastifyInstance, request: RefundRequestDocument, now: Date) {
+// customer gets the approved email once. `stale`: the admin closing it, a
+// request stuck in "approved" included (never the webhook: an approval in
+// progress closes its own).
+async function closeAsRefundedInStripe(app: FastifyInstance, request: RefundRequestDocument, now: Date, options: { stale?: boolean } = {}) {
+  const open: Filter<RefundRequestDocument> = options.stale
+    ? { $or: [{ status: { $in: [...DECIDABLE] } }, { status: 'approved', updatedAt: { $lt: new Date(now.getTime() - STALE_APPROVAL_MS) } }] }
+    : { status: { $in: [...DECIDABLE] } }
   const closed = await app.collections.refundRequests.findOneAndUpdate(
-    { _id: request._id, status: { $in: [...DECIDABLE] } },
+    { _id: request._id, ...open },
     {
       $set: {
         status: 'refunded',
@@ -1774,9 +2081,11 @@ export async function closeRequestsOnStripeRefund(
 // ---------------------------------------------------------------- reminders
 
 // The lifecycle tick (every few minutes, LIFECYCLE_EMAILS): emails that
-// didn't go out tried again for a day, and one digest to the founder of the
-// requests waiting too long (24 h; 12 h for a Brazilian withdrawal), each
-// reminded once.
+// didn't go out tried again for a day, deleted accounts' decided requests
+// scrubbed once their email went out (scrubLeftovers), and one digest to the
+// founder of the requests waiting too long (24 h; 12 h for a Brazilian
+// withdrawal) and of approvals that stopped halfway (STALE_APPROVAL_MS), each
+// told once.
 export async function sendRefundReminders(app: FastifyInstance, now = new Date()) {
   const retryBefore = new Date(now.getTime() - RETRY_EMAIL_AFTER_MS)
   const dayAgo = new Date(now.getTime() - DAY_MS)
@@ -1799,28 +2108,44 @@ export async function sendRefundReminders(app: FastifyInstance, now = new Date()
     await afterDecision(app, request)
   }
 
-  const waiting = await app.collections.refundRequests
-    .find({ status: { $in: [...DECIDABLE] }, 'emails.reminderAt': null, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER_STATUTORY_MS) } })
-    .sort({ createdAt: 1 })
-    .limit(100)
-    .toArray()
+  const scrubbed = await scrubLeftovers(app, now)
+  const retried = unsentNew.length + unsentDecisions.length
+  const [waiting, stuck] = await Promise.all([
+    app.collections.refundRequests
+      .find({ status: { $in: [...DECIDABLE] }, 'emails.reminderAt': null, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER_STATUTORY_MS) } })
+      .sort({ createdAt: 1 })
+      .limit(100)
+      .toArray(),
+    app.collections.refundRequests
+      .find({ status: 'approved', 'emails.stuckAt': null, updatedAt: { $lte: new Date(now.getTime() - STALE_APPROVAL_MS) } })
+      .sort({ createdAt: 1 })
+      .limit(50)
+      .toArray(),
+  ])
   const due = waiting.filter((request) => now.getTime() - request.createdAt.getTime() >= (request.statutory ? REMIND_AFTER_STATUTORY_MS : REMIND_AFTER_MS))
+  const claim = async (request: RefundRequestDocument, field: 'reminderAt' | 'stuckAt') =>
+    (await app.collections.refundRequests.updateOne({ _id: request._id, [`emails.${field}`]: null }, { $set: { [`emails.${field}`]: now } })).modifiedCount === 1
   const reminded: RefundRequestDocument[] = []
+  const stuckTold: RefundRequestDocument[] = []
 
   for (const request of due) {
-    const claim = await app.collections.refundRequests.updateOne({ _id: request._id, 'emails.reminderAt': null }, { $set: { 'emails.reminderAt': now } })
-
-    if (claim.modifiedCount === 1) {
+    if (await claim(request, 'reminderAt')) {
       reminded.push(request)
     }
   }
 
-  if (reminded.length === 0) {
-    return { retried: unsentNew.length + unsentDecisions.length, reminded: 0 }
+  for (const request of stuck) {
+    if (await claim(request, 'stuckAt')) {
+      stuckTold.push(request)
+    }
+  }
+
+  if (reminded.length === 0 && stuckTold.length === 0) {
+    return { retried, scrubbed, reminded: 0 }
   }
 
   try {
-    const content = reminderDigest(reminded, now)
+    const content = reminderDigest([...stuckTold, ...reminded], now)
 
     for (const to of env.REFUNDS_EMAIL) {
       await sendClaimedEmail(app.log, { to, content })
@@ -1828,10 +2153,11 @@ export async function sendRefundReminders(app: FastifyInstance, now = new Date()
   } catch (error) {
     app.log.error({ err: errorMessage(error) }, 'Refund reminder not sent')
     await app.collections.refundRequests.updateMany({ _id: { $in: reminded.map((request) => request._id) } }, { $set: { 'emails.reminderAt': null } })
-    return { retried: unsentNew.length + unsentDecisions.length, reminded: 0 }
+    await app.collections.refundRequests.updateMany({ _id: { $in: stuckTold.map((request) => request._id) } }, { $set: { 'emails.stuckAt': null } })
+    return { retried, scrubbed, reminded: 0 }
   }
 
-  return { retried: unsentNew.length + unsentDecisions.length, reminded: reminded.length }
+  return { retried, scrubbed, reminded: reminded.length + stuckTold.length }
 }
 
 // ---------------------------------------------------------------- deletion

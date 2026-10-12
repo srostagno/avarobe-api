@@ -196,6 +196,9 @@ export const esMessages: MessageTable = {
   'We could not find this purchase.': 'No encontramos esta compra.',
   'This order has no email to answer to. Write to us at hello@avarobe.com.':
     'Este pedido no tiene un correo al que responder. Escríbenos a hello@avarobe.com.',
+  'Your account has no email for us to answer you at. Write to us at hello@avarobe.com.':
+    'Tu cuenta no tiene un correo al que podamos responderte. Escríbenos a hello@avarobe.com.',
+  'Too many tries in a few minutes. Wait a little and try again.': 'Demasiados intentos en pocos minutos. Espera un poco y vuelve a intentarlo.',
   // Internal codes: kept as they are.
   'guest limit': 'guest limit',
   needs_color_report: 'needs_color_report',

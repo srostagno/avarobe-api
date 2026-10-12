@@ -61,8 +61,9 @@ export function receivedEmailFor(request: RefundRequestDocument) {
 }
 
 // The decision: approved (what went back) or rejected (why, the founder's
-// note, and Pro's renewal when it was put back).
-export function decisionEmailFor(request: RefundRequestDocument, extra: { proRenewsAt: Date | null }) {
+// note, and Pro: its renewal when it was put back, or the day it ended while
+// its renewal was paused for the review).
+export function decisionEmailFor(request: RefundRequestDocument, extra: { proRenewsAt: Date | null; proEndedAt?: Date | null }) {
   if (request.status === 'refunded') {
     return refundApprovedEmail(customerInput(request, request.refund?.amount || request.amount))
   }
@@ -74,6 +75,7 @@ export function decisionEmailFor(request: RefundRequestDocument, extra: { proRen
     code: request.decision?.code ?? 'other',
     note: request.decision?.note ?? null,
     proRenewsOn: extra.proRenewsAt ? dayMonth(extra.proRenewsAt, input.locale, READER_TIME_ZONE[input.locale]) : null,
+    proEndedOn: extra.proEndedAt ? dayMonth(extra.proEndedAt, input.locale, READER_TIME_ZONE[input.locale]) : null,
   })
 }
 
@@ -196,18 +198,29 @@ function usageLines(request: RefundRequestDocument) {
 // customer): who, what and when, how much, how it was used, why in their
 // own words (escaped and quoted), the signals and exactly what approving
 // does, with the link to decide in the admin.
+// A Brazilian withdrawal known only by the language (Avarobe in Brazilian
+// Portuguese, whose copy promises 7 days to withdraw): paid in another
+// currency, with no Brazilian card or sign-up.
+export function languageOnly(statutory: RefundRequestDocument['statutory']) {
+  return Boolean(statutory?.basis?.length) && Boolean(statutory?.basis?.every((basis) => basis === 'language'))
+}
+
 export function founderEmail(input: {
   request: RefundRequestDocument
   account: Pick<UserDocument, 'createdAt' | 'location' | 'locale' | 'acquisition'> | null
   plan: RefundPlanLike
   removesEs: string[]
+  // Pro's paused subscription ends before the review is due (proPauseEnd).
+  proEnd?: { at: Date; trial: boolean; ended: boolean } | null
   test: boolean
 }): EmailContent {
   const { request, account, plan } = input
   const history = request.history
   const product = shortProductName(request.product, 'es')
   const price = money(request.amount, request.currency)
-  const prefixes = [request.statutory ? '[BR art. 49] ' : '', request.oldGuarantee ? '[Garantía antigua] ' : '', input.test ? '[PRUEBA] ' : ''].join('')
+  const byLanguage = languageOnly(request.statutory)
+  const statutoryTag = request.statutory ? (byLanguage ? '[BR art. 49 · solo idioma] ' : '[BR art. 49] ') : ''
+  const prefixes = [statutoryTag, request.oldGuarantee ? '[Garantía antigua] ' : '', input.test ? '[PRUEBA] ' : ''].join('')
   const subject = `${prefixes}Reembolso ${request.ref}: ${product} · ${price} · ${request.email ?? 'sin correo'}`.replace(/[\r\n]+/g, ' ')
   const location = account?.location ? `${account.location.country}${account.location.region ? `-${account.location.region}` : ''}` : (request.market.signupCountry ?? request.market.requestCountry ?? 'país desconocido')
   const card = request.market.card
@@ -219,9 +232,14 @@ export function founderEmail(input: {
 
   const lines = [
     `Nueva solicitud de reembolso ${request.ref} · pendiente`,
-    ...(request.statutory
+    ...(request.statutory && !byLanguage
       ? [
           `DERECHO DE ARREPENTIMIENTO (Brasil, CDC art. 49): la pidió dentro de los 7 días, así que hay que reembolsarla. Decide dentro de 1 día hábil (plazo de la compra: ${BRAZIL_TIME.format(request.statutory.until)} hora de Brasil).`,
+        ]
+      : []),
+    ...(request.statutory && byLanguage
+      ? [
+          `DERECHO DE ARREPENTIMIENTO (Brasil, CDC art. 49), solo por el idioma: usa Avarobe en portugués, cuyo texto promete 7 días para desistir, pero pagó en ${request.currency.toUpperCase()}${request.market.card?.country ? ` con tarjeta de ${request.market.card.country}` : ''} y ${request.market.signupCountry ? `se registró en ${request.market.signupCountry}` : 'no sabemos dónde se registró'}. La pidió dentro de los 7 días (hasta ${BRAZIL_TIME.format(request.statutory.until)} hora de Brasil): rechazarla exige confirmar la excepción.`,
         ]
       : []),
     ...(request.oldGuarantee ? ['Compra hecha con la garantía antigua (Términos del 8 de octubre): corresponde aprobarla.'] : []),
@@ -260,6 +278,13 @@ export function founderEmail(input: {
     'SI APRUEBAS',
     `Se devuelven ${money(plan.total, plan.currency)} a la tarjeta y se quita: ${removes}.${plan.endsPro ? ' Pro termina hoy.' : ''}`,
     ...(request.proPause && !request.proPause.wasCancelAtPeriodEnd ? ['Pro: la renovación quedó pausada mientras decides.'] : []),
+    ...(input.proEnd
+      ? [
+          input.proEnd.ended
+            ? `Pro: ${input.proEnd.trial ? 'su prueba' : 'su periodo'} terminó el ${chileTime(input.proEnd.at)} con la renovación pausada; si rechazas, Pro no vuelve (se le dice).`
+            : `Pro: ${input.proEnd.trial ? 'su prueba' : 'su periodo'} termina el ${chileTime(input.proEnd.at)}, antes del plazo de revisión. Decide antes: si rechazas después, Pro ya habrá terminado (se le dice).`,
+        ]
+      : []),
     ...(request.internalNote ? ['', `Nota: ${request.internalNote}`] : []),
     '',
     request.email ? 'Para escribirle, responde a este correo.' : 'No dejó correo: escríbele desde su cuenta si hace falta.',
@@ -269,7 +294,7 @@ export function founderEmail(input: {
 }
 
 // One digest of the requests waiting too long (24 h; 12 h for a Brazilian
-// withdrawal), each with its link.
+// withdrawal) and of approvals that stopped halfway, each with its link.
 export function reminderDigest(requests: RefundRequestDocument[], now: Date): EmailContent {
   const statutory = requests.filter((request) => request.statutory).length
   const subject = `${statutory ? '[BR art. 49] ' : ''}Reembolsos por decidir: ${requests.length}`
@@ -277,7 +302,7 @@ export function reminderDigest(requests: RefundRequestDocument[], now: Date): Em
     `${plural(requests.length, 'solicitud de reembolso espera', 'solicitudes de reembolso esperan')} tu decisión:`,
     '',
     ...requests.flatMap((request) => [
-      `${request.ref} · ${shortProductName(request.product, 'es')} · ${money(request.amount, request.currency)} · ${request.email ?? 'sin correo'} · pedida hace ${Math.round((now.getTime() - request.createdAt.getTime()) / 3_600_000)} h${request.statutory ? ' · BR art. 49: hay que reembolsarla' : ''}${request.status === 'failed' ? ' · Stripe falló, reintenta' : ''}`,
+      `${request.ref} · ${shortProductName(request.product, 'es')} · ${money(request.amount, request.currency)} · ${request.email ?? 'sin correo'} · pedida hace ${Math.round((now.getTime() - request.createdAt.getTime()) / 3_600_000)} h${request.statutory ? (languageOnly(request.statutory) ? ' · BR art. 49 (solo idioma)' : ' · BR art. 49: hay que reembolsarla') : ''}${request.status === 'failed' ? ' · Stripe falló, reintenta' : ''}${request.status === 'approved' ? ' · la aprobación quedó a medias: ábrela y apruébala de nuevo para terminarla' : ''}`,
       `${env.APP_URL}/studio/admin/refunds?request=${request._id.toString()}`,
       '',
     ]),

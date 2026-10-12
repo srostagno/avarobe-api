@@ -232,7 +232,9 @@ describe('Admin → Refunds', () => {
     const post = (path: string, payload: unknown) => app.inject({ method: 'POST', url: `/admin/refund-requests/${path}`, headers: auth(adminId), payload: payload as Record<string, unknown> })
 
     assert.equal((await post(`${id}/approve`, {})).statusCode, 400)
-    assert.equal((await post(`${id}/approve`, { expectedAmount: 0 })).statusCode, 400)
+    assert.equal((await post(`${id}/approve`, { expectedAmount: -1 })).statusCode, 400)
+    // 0 only closes a request with nothing left to refund: this one has 499.
+    assert.equal((await post(`${id}/approve`, { expectedAmount: 0 })).statusCode, 409)
     assert.equal((await post(`${id}/reject`, { code: 'because' })).statusCode, 400)
     assert.equal((await post(`${id}/reject`, { code: 'other', note: 'short' })).statusCode, 400)
     assert.equal((await post(`${id}/approve`, { expectedAmount: 999 })).statusCode, 409)
