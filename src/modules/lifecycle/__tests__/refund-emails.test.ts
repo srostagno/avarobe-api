@@ -249,6 +249,15 @@ describe('the founder’s email', () => {
     assert.ok(mail.text.includes('Compra hecha con la garantía antigua'))
   })
 
+  it('names pesos by their code, never a bare "$" that reads as dollars', () => {
+    const mxn = founderEmail({ request: request({ amount: 7900, currency: 'mxn', amountUsd: 435 }), account, plan: { total: 7900, currency: 'mxn', endsPro: false }, removesEs: [], test: false })
+    const cop = founderEmail({ request: request({ amount: 1190000, currency: 'cop', amountUsd: 298 }), account, plan: { total: 1190000, currency: 'cop', endsPro: false }, removesEs: [], test: false })
+
+    assert.equal(plain(mxn.subject), 'Reembolso R-7F3K2Q: Asesor de Color · MXN 79.00 · nora@example.com')
+    assert.ok(plain(mxn.text).includes('Se devuelven MXN 79.00 a la tarjeta'))
+    assert.equal(plain(cop.subject), 'Reembolso R-7F3K2Q: Asesor de Color · COP 11.900 · nora@example.com')
+  })
+
   it('reminds of the requests waiting, each with its link', () => {
     const doc = request({ statutory: { law: 'br_cdc_49', until: new Date() } })
     const digest = reminderDigest([doc], new Date('2026-10-09T05:00:00Z'))

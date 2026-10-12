@@ -92,9 +92,24 @@ const CATEGORY_ES: Record<RefundReason, string> = {
 const LANGUAGE_ES: Record<Locale, string> = { en: 'inglés', 'pt-BR': 'portugués', es: 'español' }
 
 const usd = (cents: number) => `US$ ${(cents / 100).toFixed(2)}`
-// "R$ 14,90", "US$ 4.99", "MXN 79.00": each currency as the founder reads it.
-const money = (amount: number, currency: string) =>
-  currency.toLowerCase() === 'brl' ? formatMoney(amount, currency, 'pt-BR') : currency.toLowerCase() === 'usd' ? usd(amount) : formatMoney(amount, currency, 'es')
+// "R$ 14,90", "US$ 4.99", "MXN 79.00", "COP 11.900": each currency as the
+// founder reads it, never a bare "$" that reads as dollars (Spanish writes
+// pesos with "$").
+const money = (amount: number, currency: string) => {
+  const code = currency.toLowerCase()
+
+  if (code === 'brl') return formatMoney(amount, currency, 'pt-BR')
+  if (code === 'usd') return usd(amount)
+
+  const whole = code === 'cop'
+
+  return new Intl.NumberFormat(whole ? 'es-CO' : 'es-MX', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    currencyDisplay: 'code',
+    ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+  }).format(amount / 100)
+}
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 const BRAZIL_TIME = new Intl.DateTimeFormat('es-CL', {
