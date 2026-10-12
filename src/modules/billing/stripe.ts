@@ -1068,6 +1068,7 @@ function reportSession(app: FastifyInstance, session: Stripe.Checkout.Session, p
     product,
     amount: session.amount_total ?? 0,
     currency: session.currency ?? 'usd',
+    checkout: { email: session.customer_details?.email ?? session.customer_email, country: session.customer_details?.address?.country },
   }).catch(() => undefined)
 }
 
@@ -1080,6 +1081,7 @@ function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoi
     product,
     amount: invoice.amount_paid,
     currency: invoice.currency,
+    checkout: { email: invoice.customer_email, country: invoice.customer_address?.country },
   }).catch(() => undefined)
 }
 

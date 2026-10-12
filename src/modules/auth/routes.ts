@@ -130,14 +130,15 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     request: FastifyRequest,
     data: { attribution?: { fbp?: string; fbc?: string; gaClientId?: string }; eventId?: string },
     method: 'password' | 'passkey' | 'guest',
-    userId: ObjectId,
+    user: Pick<UserDocument, '_id' | 'email' | 'location'>,
   ) {
     const metadata = attributionMetadata(data.attribution, request)
+    const userId = user._id
 
     void trackServerEvent(app, { name: 'signup_completed', userId, props: { method } })
 
     if (data.eventId) {
-      void reportRegistration(app, { metadata, eventId: data.eventId, method })
+      void reportRegistration(app, { metadata, eventId: data.eventId, method, user })
     }
 
     void recordRegisteredClick(app, data.attribution?.fbc, userId).catch((error: unknown) =>
@@ -301,7 +302,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
-      reportSignup(request, parsed.data, 'guest', user._id)
+      reportSignup(request, parsed.data, 'guest', user)
 
       return reply.send({ user: serializeUser(user), ...(waiting ? { notify: 'colors' } : {}) })
     },
@@ -389,7 +390,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
 
         await issueAuthSession(app, reply, request, { id: claimed.user._id.toString(), email: claimed.user.email })
-        reportSignup(request, parsed.data, 'password', claimed.user._id)
+        reportSignup(request, parsed.data, 'password', claimed.user)
 
         return reply.code(201).send({ user: serializeUser(claimed.user), verification })
       }
@@ -459,7 +460,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
-      reportSignup(request, parsed.data, 'password', user._id)
+      reportSignup(request, parsed.data, 'password', user)
 
       return reply.code(201).send({ user: serializeUser(user), verification })
     },
@@ -523,7 +524,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         }
       }
 
-      reportSignup(request, parsed.data, 'passkey', user._id)
+      reportSignup(request, parsed.data, 'passkey', user)
 
       try {
         const result = await sendVerification(request.log, user, true)

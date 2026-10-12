@@ -127,6 +127,7 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
         product: 'outfit_guide',
         amount: fresh.amount,
         currency: fresh.currency,
+        checkout: { email, country: session.customer_details?.address?.country },
       }).catch(() => undefined)
     }
   } catch (error) {

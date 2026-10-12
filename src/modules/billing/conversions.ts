@@ -1,14 +1,19 @@
+import { createHash } from 'node:crypto'
+
 import type { FastifyInstance } from 'fastify'
+import { ObjectId } from 'mongodb'
 import type Stripe from 'stripe'
 
 import { env } from '../../config/env.js'
+import { isGuestEmail } from '../../utils/guests.js'
 import { errorMessage } from '../../utils/http.js'
 
 // Purchases reported from the server, so ad blockers and iOS don't lose them:
 // GA4 Measurement Protocol and Meta's Conversions API. Both deduplicate with
 // the browser events (GA by transaction_id, Meta by event_id = session id).
-// They only run when the browser sent its analytics ids at checkout, which
-// it doesn't do for visitors who opted out.
+// They only run when the browser said at checkout that tracking is allowed
+// (it sends its ids object, even empty), which it doesn't do for visitors who
+// opted out or send Global Privacy Control: then nothing is kept or sent.
 
 export function serverConversionsEnabled() {
   return Boolean((env.GA_API_SECRET && env.GA_MEASUREMENT_ID) || (env.META_CAPI_TOKEN && env.META_PIXEL_ID))
@@ -16,6 +21,15 @@ export function serverConversionsEnabled() {
 
 // What the browser hands over at checkout, kept in the session metadata.
 export type Attribution = { gaClientId?: string; fbp?: string; fbc?: string }
+
+// In the metadata of a checkout (or sign-up) whose browser allowed tracking,
+// with or without ids yet: Meta may then match the purchase by the email.
+// Checkouts from before it have it implied by their browser ids.
+export const TRACKING_ALLOWED = { tracking: 'allowed' } as const
+
+export function trackingAllowed(metadata: Record<string, string>) {
+  return metadata.tracking === TRACKING_ALLOWED.tracking || Boolean(metadata.ga_cid || metadata.fbp || metadata.fbc)
+}
 
 // Stripe caps each metadata value at 500 characters.
 const METADATA_MAX = 500
@@ -43,40 +57,82 @@ export function storedAdIds(user: Parameters<typeof storedMetaClick>[0]) {
   return fbc ? { fbc } : undefined
 }
 
-// `storedFbc` (storedMetaClick) stands in for a click id the browser didn't
-// send, only when it sent its ids at all: a browser that opted out (or with
-// Global Privacy Control) sends none, and then nothing goes to Meta.
+// Only for a browser that allowed tracking: it sends its ids object (empty
+// when it has none yet: Safari after the jump, a link from an email), and
+// then the metadata says so, with the IP and user agent. `storedFbc`
+// (storedMetaClick) stands in for a click id it didn't send. A browser that
+// opted out (or with Global Privacy Control) sends none, and then nothing is
+// kept and nothing goes to Meta or GA.
 export function attributionMetadata(
   attribution: Attribution | undefined,
   request: { ip: string; headers: Record<string, string | string[] | undefined> },
   storedFbc?: string,
 ): Record<string, string> {
-  const fit = (value: string | undefined) => (value && value.length <= METADATA_MAX ? value : undefined)
-  const gaClientId = fit(attribution?.gaClientId)
-  const fbp = fit(attribution?.fbp)
-  const fbc = fit(attribution?.fbc) ?? (attribution ? fit(storedFbc) : undefined)
-
-  if (!gaClientId && !fbp && !fbc) {
+  if (!attribution) {
     return {}
   }
 
+  const fit = (value: string | undefined) => (value && value.length <= METADATA_MAX ? value : undefined)
+  const gaClientId = fit(attribution.gaClientId)
+  const fbp = fit(attribution.fbp)
+  const fbc = fit(attribution.fbc) ?? fit(storedFbc)
   const userAgent = request.headers['user-agent']
 
   return {
     ...(gaClientId ? { ga_cid: gaClientId } : {}),
     ...(fbp ? { fbp } : {}),
     ...(fbc ? { fbc } : {}),
+    ...TRACKING_ALLOWED,
     ip: request.ip,
     ua: (typeof userAgent === 'string' ? userAgent : '').slice(0, 400),
   }
 }
 
-// What Meta can match a server event on: the browser cookie, the ad click
-// id, and the IP and user agent (required for website events). The event
-// goes out when either id is there: a buyer without the _fbp cookie (it
-// happened with the first trial) is still worth reporting by click id.
-function metaUserData(metadata: Record<string, string>) {
-  if (!metadata.fbp && !metadata.fbc) {
+// Who bought or signed up, for Meta to match the event on (customer
+// information parameters): the email, our account id and the country.
+export type MetaCustomer = { email?: string | null; userId?: string | null; country?: string | null }
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
+
+// A real address, trimmed and lowercased as Meta asks: never a guest's
+// placeholder (utils/guests.ts), which is nobody's.
+export function customerEmail(email: string | null | undefined) {
+  const normalized = email?.trim().toLowerCase()
+
+  return normalized && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !isGuestEmail(normalized) ? normalized : undefined
+}
+
+// Hashed one way (SHA-256) before they leave: Meta compares them with its
+// own hashes and never gets the email itself. external_id is our account id
+// (a guest's own id too), country the lowercase ISO code. No phone: we keep
+// none.
+export function metaCustomerData(customer: MetaCustomer | null | undefined) {
+  const email = customerEmail(customer?.email)
+  const userId = customer?.userId?.trim()
+  const country = customer?.country?.trim().toLowerCase()
+
+  return {
+    ...(email ? { em: [sha256(email)] } : {}),
+    ...(userId ? { external_id: [sha256(userId)] } : {}),
+    ...(country && /^[a-z]{2}$/.test(country) ? { country: [sha256(country)] } : {}),
+  }
+}
+
+// What Meta can match a server event on, only when the browser allowed
+// tracking: the _fbp cookie, the ad click id, the IP and user agent, and the
+// person's hashed email, account id and country. It goes out with either
+// browser id (a buyer without the _fbp cookie, like the first trial, is
+// still worth reporting by click id) or, without them, with the email and
+// the user agent Meta requires for website events (Safari after the jump,
+// a checkout from one of our emails). Otherwise there's nothing to send.
+export function metaUserData(metadata: Record<string, string>, customer?: MetaCustomer | null) {
+  if (!trackingAllowed(metadata)) {
+    return null
+  }
+
+  const identifiers = metaCustomerData(customer)
+
+  if (!metadata.fbp && !metadata.fbc && (!identifiers.em || !metadata.ua)) {
     return null
   }
 
@@ -85,7 +141,41 @@ function metaUserData(metadata: Record<string, string>) {
     ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
     ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
     ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
+    ...identifiers,
   }
+}
+
+// What Stripe has of the buyer: the email it asked for (a guest's only one)
+// and the card's billing country.
+export type CheckoutBuyer = { email?: string | null; country?: string | null }
+
+// The pricing regions that are one country (billing/pricing.ts).
+const REGION_COUNTRY: Record<string, string> = { br: 'BR', mx: 'MX', co: 'CO' }
+
+// The buyer for Meta: the account's email when it's real (a guest's is a
+// placeholder until Stripe's is claimed), else Stripe's; the account id;
+// and the country they signed up from, else the card's, else the
+// purchase's region when that's one country.
+export function purchaseCustomer(
+  user: { email?: string | null; location?: { country?: string | null } | null } | null | undefined,
+  metadata: Record<string, string>,
+  checkout?: CheckoutBuyer,
+): MetaCustomer {
+  return {
+    email: customerEmail(user?.email) ?? customerEmail(checkout?.email) ?? null,
+    userId: metadata.userId && ObjectId.isValid(metadata.userId) ? metadata.userId : null,
+    country: user?.location?.country ?? checkout?.country ?? REGION_COUNTRY[metadata.region ?? ''] ?? null,
+  }
+}
+
+async function buyerAccount(app: FastifyInstance, userId: string | undefined) {
+  if (!userId || !ObjectId.isValid(userId)) {
+    return null
+  }
+
+  return app.collections.users
+    .findOne({ _id: new ObjectId(userId) }, { projection: { email: 1, location: 1 } })
+    .catch(() => null)
 }
 
 async function post(url: string, body: unknown): Promise<unknown> {
@@ -112,14 +202,20 @@ type PurchaseReport = {
   // When it was bought, if not now (a purchase reported late; Meta takes
   // events up to 7 days old).
   eventTime?: Date
+  // What Stripe has of the buyer (reportPurchase adds the account's).
+  checkout?: CheckoutBuyer
+}
+
+function metaConfigured() {
+  return Boolean(env.META_CAPI_TOKEN && env.META_PIXEL_ID)
 }
 
 // The purchase to Meta's Conversions API, or null when it can't go: no
-// token, or no browser ids to match it on.
-export function sendMetaPurchase(input: PurchaseReport) {
-  const userData = metaUserData(input.metadata ?? {})
+// token, tracking not allowed, or nothing to match it on (metaUserData).
+export function sendMetaPurchase(input: Omit<PurchaseReport, 'checkout'> & { customer?: MetaCustomer | null }) {
+  const userData = metaUserData(input.metadata ?? {}, input.customer)
 
-  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !userData) {
+  if (!metaConfigured() || !userData) {
     return null
   }
 
@@ -131,8 +227,10 @@ export function sendMetaPurchase(input: PurchaseReport) {
         event_id: input.transactionId,
         action_source: 'website',
         event_source_url: `${env.APP_URL}/studio/billing/success`,
-        // No email or other identifiers: the privacy notice promises Meta
-        // never gets them. Browser ids, IP and user agent only.
+        // Browser ids, IP and user agent, and the email, account id and
+        // country hashed (SHA-256): the privacy notice says Meta gets
+        // these hashed identifiers to measure our ads, only when tracking
+        // is allowed, and never the email itself.
         user_data: userData,
         custom_data: {
           value: input.amount / 100,
@@ -168,10 +266,14 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
     )
   }
 
-  const meta = sendMetaPurchase(input)
+  // The account is looked up only for a purchase that can go to Meta.
+  if (metaConfigured() && trackingAllowed(metadata)) {
+    const user = await buyerAccount(app, metadata.userId)
+    const meta = sendMetaPurchase({ ...input, customer: purchaseCustomer(user, metadata, input.checkout) })
 
-  if (meta) {
-    tasks.push(meta)
+    if (meta) {
+      tasks.push(meta)
+    }
   }
 
   const results = await Promise.allSettled(tasks)
@@ -185,16 +287,26 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
 
 // A new account, reported to Meta from the server too (the pixel sends the
 // same event from the browser with the same event id, and Meta keeps one).
-// Browser ids, IP and user agent only: never the email.
+// Only when the browser allowed tracking, like purchases: browser ids, IP
+// and user agent, and the hashed email, account id and country only when
+// the account has a real email.
 export async function reportRegistration(
   app: FastifyInstance,
-  input: { metadata: Record<string, string>; eventId: string; method: string },
+  input: {
+    metadata: Record<string, string>
+    eventId: string
+    method: string
+    user: { _id: { toString(): string }; email: string; location?: { country?: string | null } | null }
+  },
 ) {
-  const metadata = input.metadata
+  const { metadata, user } = input
+  const email = customerEmail(user.email)
+  const userData = metaUserData(
+    metadata,
+    email ? { email, userId: user._id.toString(), country: user.location?.country ?? null } : null,
+  )
 
-  const userData = metaUserData(metadata)
-
-  if (!env.META_CAPI_TOKEN || !env.META_PIXEL_ID || !userData) {
+  if (!metaConfigured() || !userData) {
     return
   }
 

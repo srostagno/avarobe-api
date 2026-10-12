@@ -372,7 +372,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           region,
           placement: parsed.data.placement,
           // An admin's own test purchase never reaches Meta or Google as a
-          // conversion: without the browser ids there's nothing to report.
+          // conversion: without the browser ids or the tracking flag there's
+          // nothing to report.
           attribution: isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request, storedMetaClick(location)),
         })
         void trackServerEvent(app, {

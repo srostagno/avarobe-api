@@ -1,9 +1,10 @@
 // Sends a purchase Meta never got to the Conversions API, with the time it
-// was bought (Meta takes events up to 7 days old). Only when the checkout
-// carried browser ids, which the web sends only if the buyer allowed
-// tracking (no opt-out, no GPC). The event id is the one the live report
-// uses (the checkout, or the first invoice for Pro), so Meta drops it if
-// the purchase did arrive after all.
+// was bought (Meta takes events up to 7 days old). Only when the buyer
+// allowed tracking at checkout (no opt-out, no GPC: the checkout says so, or
+// carries browser ids), with the same hashed email, account id and country
+// as the live report. The event id is the one the live report uses (the
+// checkout, or the first invoice for Pro), so Meta drops it if the purchase
+// did arrive after all.
 //
 //   corepack pnpm exec tsx scripts/report-past-purchase.ts [stripe session id]
 //
@@ -13,7 +14,7 @@ import { MongoClient } from 'mongodb'
 import Stripe from 'stripe'
 
 import { env } from '../src/config/env.js'
-import { sendMetaPurchase } from '../src/modules/billing/conversions.js'
+import { purchaseCustomer, sendMetaPurchase, trackingAllowed } from '../src/modules/billing/conversions.js'
 import type { PurchaseDocument, UserDocument } from '../src/types/mongo.js'
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000
@@ -64,17 +65,18 @@ try {
 
   const metadata = { ...session.metadata }
 
-  if (!metadata.ga_cid && !metadata.fbp && !metadata.fbc) {
-    throw new Error('The checkout carried no browser ids (tracking off for this buyer). Not sending.')
+  if (!trackingAllowed(metadata)) {
+    throw new Error('The buyer did not allow tracking at checkout (opt-out or GPC). Not sending.')
   }
+
+  const user = await db.collection<UserDocument>('users').findOne({ _id: purchase.userId })
 
   // Older checkouts dropped long _fbc cookies; rebuild it from the ad click
   // the account came in on.
   if (!metadata.fbc) {
-    const user = await db.collection<UserDocument>('users').findOne({ _id: purchase.userId })
     const fbclid = user?.acquisition?.fbclid
 
-    if (fbclid) {
+    if (user && fbclid) {
       metadata.fbc = `fb.1.${user.createdAt.getTime()}.${fbclid}`
     }
   }
@@ -86,10 +88,14 @@ try {
     amount: purchase.amountTotal,
     currency: purchase.currency,
     eventTime: purchase.createdAt,
+    customer: purchaseCustomer(user, metadata, {
+      email: session.customer_details?.email ?? session.customer_email,
+      country: session.customer_details?.address?.country,
+    }),
   })
 
   if (!sent) {
-    throw new Error('Nothing to match the purchase on in Meta (no _fbp, _fbc or ad click). Not sent.')
+    throw new Error('Nothing to match the purchase on in Meta (no _fbp, _fbc, ad click or email). Not sent.')
   }
 
   console.log(
