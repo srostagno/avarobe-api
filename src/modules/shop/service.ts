@@ -4,8 +4,8 @@ import { ObjectId } from 'mongodb'
 import type { LookDocument, LookPiece, ShopMatch } from '../../types/mongo.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
-import { isLocalStore, isStore, marketById } from './markets.js'
-import { SEARCH_PASSES, searchPiece } from './serpapi.js'
+import { isLocalStore, isShoppable, isStore, marketById } from './markets.js'
+import { cleanPrice, SEARCH_PASSES, searchPiece } from './serpapi.js'
 
 const CACHE_DAYS = 3
 
@@ -38,9 +38,12 @@ export async function findPieceMatches(
   const market = marketById(input.marketId)
   const filter = { userId: input.userId, lookId: input.look._id, pieceId: input.piece.id, market: market.id }
   let search = await app.collections.shopSearches.findOne(filter)
-  let presentation: string | null | undefined
+  // Womenswear or menswear: the search asks for that department, and the
+  // other one's results are left out.
+  const avatar = await app.collections.avatars.findOne({ _id: input.look.avatarId }, { projection: { 'body.presentation': 1 } })
+  const presentation = avatar?.body?.presentation ?? null
   const visible = (results: ShopMatch[]) =>
-    results.filter((match) => isStore(match) && (!input.localOnly || isLocalStore(match, market)))
+    results.filter((match) => isStore(match) && isShoppable(match, presentation) && (!input.localOnly || isLocalStore(match, market)))
 
   while (
     visible(search?.results ?? []).length < input.offset + input.limit &&
@@ -64,14 +67,6 @@ export async function findPieceMatches(
     let found: ShopMatch[]
 
     try {
-      if (presentation === undefined) {
-        const avatar = await app.collections.avatars.findOne(
-          { _id: input.look.avatarId },
-          { projection: { 'body.presentation': 1 } },
-        )
-        presentation = avatar?.body?.presentation ?? null
-      }
-
       found = await searchPiece({
         piece: input.piece,
         image: await storage.read(input.piece.imageKey ?? ''),
@@ -118,7 +113,8 @@ export async function findPieceMatches(
   return {
     market: market.id,
     localOnly: input.localOnly,
-    matches: results.slice(input.offset, input.offset + input.limit),
+    // Results cached before prices lost their "*" lose it here.
+    matches: results.slice(input.offset, input.offset + input.limit).map((match) => ({ ...match, price: cleanPrice(match.price) })),
     // More exist if cached results remain or another search pass can run.
     hasMore: results.length > input.offset + input.limit || !(search?.exhausted ?? false),
   }

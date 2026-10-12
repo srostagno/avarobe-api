@@ -18,6 +18,7 @@ import {
   PRO_GRACE_MS,
   PRO_LIVE_STATUSES,
   proIsLive,
+  rolloverCapApplies,
   rolloverCredits,
   rolloverCreditsExpression,
   styleAddonCents,
@@ -121,7 +122,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   event_pass: {
     lookupKey: 'avarobe_event_pass_v1',
     name: 'Avarobe Event Stylist',
-    description: 'Dressed for one event: three looks on you for its dress code, the pieces in stores, and how to finish them.',
+    description: 'Dressed for one event: three looks on you for its dress code, similar pieces in stores, and how to finish them.',
     amount: () => env.PRICE_EVENT_CENTS,
     credits: () => 0,
     events: 1,
@@ -144,7 +145,7 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
   pro_monthly: {
     lookupKey: 'avarobe_pro_monthly_v1',
     name: 'Avarobe Pro (monthly)',
-    description: 'New looks every month, all three advisors (Color, Style, Hair & Grooming), try-ons, every piece in stores and more.',
+    description: 'New looks every month, all three advisors (Color, Style, Hair & Grooming), try-ons, similar pieces in stores and more.',
     amount: () => env.PRICE_PRO_MONTHLY_CENTS,
     credits: () => env.PRO_MONTHLY_CREDITS,
     recurring: 'month',
@@ -784,7 +785,8 @@ type Grant = {
   // first payment holds some back).
   credits?: number
   // A Pro renewal or plan switch: its looks roll over only up to
-  // PRO_ROLLOVER_CAP (rolloverCredits). The purchase records what it added.
+  // PRO_ROLLOVER_CAP (rolloverCredits), once a payment since the cap marked
+  // the subscription (rolloverCapApplies). The purchase records what it added.
   rollover?: boolean
   // The terms accepted at checkout (session.consent), when known.
   terms?: 'accepted' | null
@@ -818,7 +820,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
       }
 
       const balance = user.credits ?? env.FREE_CREDITS
-      const credits = grant.rollover ? rolloverCredits(balance, due) : due
+      const credits = grant.rollover && rolloverCapApplies(user.pro) ? rolloverCredits(balance, due) : due
 
       // A concurrent grant of the same payment fails here on the unique
       // index, which aborts this transaction (handled below).
@@ -1040,9 +1042,10 @@ function reportFirstInvoice(app: FastifyInstance, invoice: Stripe.Invoice, invoi
 // refillAnnualCredits, starting a month after every annual payment. A new
 // annual subscription's first month comes in two parts (annualFirstWeek).
 // Renewals and switches roll over up to PRO_ROLLOVER_CAP; the first payment
-// adds its looks in full.
+// adds its looks in full, and so does the next payment of a subscription paid
+// before the cap (rolloverCapApplies).
 // Every payment starts a new month of avatar renders (the object is
-// replaced) and marks the subscription as under the avatar cap.
+// replaced) and marks the subscription as under the avatar and rollover caps.
 async function grantProPayment(
   app: FastifyInstance,
   input: {
@@ -1086,6 +1089,7 @@ async function grantProPayment(
         cancelAtPeriodEnd: user.pro?.subscriptionId === input.subscriptionId ? user.pro.cancelAtPeriodEnd : false,
         nextCreditsAt: interval === 'year' ? addMonths(now, 1) : null,
         avatarCap: true,
+        rolloverCap: true,
         ...(firstWeek ? { heldCredits: { amount: firstWeek.held, at: new Date(now.getTime() + firstWeek.days * 24 * 60 * 60 * 1000) } } : {}),
       },
     }),
@@ -1155,6 +1159,7 @@ async function grantProTrial(
         nextCreditsAt: null,
         trialEnd: input.trialEnd,
         avatarCap: true,
+        rolloverCap: true,
       },
     }),
   })
@@ -1389,7 +1394,8 @@ export async function startProNow(app: FastifyInstance, subscriptionId: string) 
 
 // The monthly looks of annual plans, a month apart until the paid year ends
 // (the renewal payment grants the next year's first month), each with a new
-// month of avatar renders; they roll over up to PRO_ROLLOVER_CAP. Also the
+// month of avatar renders; they roll over up to PRO_ROLLOVER_CAP (in full
+// for a subscription last paid before the cap, rolloverCapApplies). Also the
 // rest of a new annual plan's first month, once its week is up (in full,
 // like the first payment); dropped without looks if Pro ended meanwhile (a
 // refund, a cancellation).
@@ -1456,13 +1462,13 @@ export async function refillAnnualCredits(app: FastifyInstance, now = new Date()
           },
         },
       ],
-      { returnDocument: 'before', projection: { credits: 1 } },
+      { returnDocument: 'before', projection: { credits: 1, 'pro.rolloverCap': 1 } },
     )
 
     if (before) {
       refilled += 1
 
-      if (rolloverCredits(before.credits ?? env.FREE_CREDITS, env.PRO_MONTHLY_CREDITS) < env.PRO_MONTHLY_CREDITS) {
+      if (rolloverCapApplies(before.pro) && rolloverCredits(before.credits ?? env.FREE_CREDITS, env.PRO_MONTHLY_CREDITS) < env.PRO_MONTHLY_CREDITS) {
         capped += 1
       }
     }

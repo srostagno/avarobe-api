@@ -34,6 +34,18 @@ function invoice(userId: ObjectId, fields: { id: string; reason: string; product
   } as unknown as Stripe.Invoice
 }
 
+// A monthly plan paid since the cap (its renewals roll over up to it).
+const MARKED: Partial<ProSubscription> = {
+  subscriptionId: 'sub_1',
+  customerId: 'cus_1',
+  status: 'active',
+  interval: 'month',
+  periodEnd: new Date(Date.now() + 2 * DAY),
+  cancelAtPeriodEnd: false,
+  avatarCap: true,
+  rolloverCap: true,
+}
+
 function setup(credits: number | undefined, pro?: Partial<ProSubscription>) {
   const userId = new ObjectId()
   const { app, collection, logs } = fakeApp({
@@ -61,14 +73,22 @@ function annual(next: Date): Partial<ProSubscription> {
     nextCreditsAt: next,
     avatarRuns: 12,
     avatarCap: true,
+    rolloverCap: true,
   }
 }
 
 describe('unused looks roll over up to 60', () => {
-  const before = { cap: env.PRO_ROLLOVER_CAP, monthly: env.PRO_MONTHLY_CREDITS, first: env.PRO_ANNUAL_FIRST_WEEK_CREDITS, pack: env.LOOK_PACK_CREDITS }
+  const before = {
+    cap: env.PRO_ROLLOVER_CAP,
+    grandfather: env.PRO_ROLLOVER_GRANDFATHER,
+    monthly: env.PRO_MONTHLY_CREDITS,
+    first: env.PRO_ANNUAL_FIRST_WEEK_CREDITS,
+    pack: env.LOOK_PACK_CREDITS,
+  }
 
   beforeEach(() => {
     env.PRO_ROLLOVER_CAP = 60
+    env.PRO_ROLLOVER_GRANDFATHER = true
     env.PRO_MONTHLY_CREDITS = 30
     env.PRO_ANNUAL_FIRST_WEEK_CREDITS = 10
     env.LOOK_PACK_CREDITS = 10
@@ -77,6 +97,7 @@ describe('unused looks roll over up to 60', () => {
   afterEach(() => {
     Object.assign(env, {
       PRO_ROLLOVER_CAP: before.cap,
+      PRO_ROLLOVER_GRANDFATHER: before.grandfather,
       PRO_MONTHLY_CREDITS: before.monthly,
       PRO_ANNUAL_FIRST_WEEK_CREDITS: before.first,
       LOOK_PACK_CREDITS: before.pack,
@@ -93,13 +114,13 @@ describe('unused looks roll over up to 60', () => {
   })
 
   it('gives a renewal its whole month while she has room, and stops at 60', async () => {
-    const roomy = setup(10)
+    const roomy = setup(10, MARKED)
     await handleInvoicePaid(roomy.app, invoice(roomy.userId, { id: 'in_1', reason: 'subscription_cycle' }))
     assert.equal(roomy.user().credits, 40)
     assert.equal(roomy.purchases()[0]?.credits, 30)
     assert.equal(roomy.purchases()[0]?.creditsOverCap, undefined)
 
-    const near = setup(45)
+    const near = setup(45, MARKED)
     await handleInvoicePaid(near.app, invoice(near.userId, { id: 'in_2', reason: 'subscription_cycle' }))
     assert.equal(near.user().credits, 60)
     // The purchase records what it added (a refund takes back no more).
@@ -110,7 +131,7 @@ describe('unused looks roll over up to 60', () => {
   })
 
   it('keeps a balance already above 60 as it is', async () => {
-    const { app, userId, user, purchases } = setup(75)
+    const { app, userId, user, purchases } = setup(75, MARKED)
 
     await handleInvoicePaid(app, invoice(userId, { id: 'in_1', reason: 'subscription_cycle' }))
     assert.equal(user().credits, 75)
@@ -119,7 +140,7 @@ describe('unused looks roll over up to 60', () => {
   })
 
   it('caps the switch from monthly to annual like a renewal', async () => {
-    const { app, userId, user } = setup(50)
+    const { app, userId, user } = setup(50, MARKED)
 
     await handleInvoicePaid(app, invoice(userId, { id: 'in_s', reason: 'subscription_update', product: 'pro_annual' }))
     assert.equal(user().credits, 60)
@@ -172,10 +193,56 @@ describe('unused looks roll over up to 60', () => {
 
   it('follows the setting', async () => {
     env.PRO_ROLLOVER_CAP = 40
-    const { app, userId, user } = setup(25)
+    const { app, userId, user } = setup(25, MARKED)
 
     await handleInvoicePaid(app, invoice(userId, { id: 'in_1', reason: 'subscription_cycle' }))
     assert.equal(user().credits, 40)
+  })
+
+  it('gives a subscription paid before the cap its next payment in full, then caps the one after', async () => {
+    const { app, userId, user, purchases } = setup(55, { ...MARKED, rolloverCap: undefined })
+
+    await handleInvoicePaid(app, invoice(userId, { id: 'in_1', reason: 'subscription_cycle' }))
+    assert.equal(user().credits, 85)
+    assert.equal(purchases()[0]?.credits, 30)
+    assert.equal(purchases()[0]?.creditsOverCap, undefined)
+    // That payment marks it: the next renewal rolls over only up to 60.
+    assert.equal(user().pro?.rolloverCap, true)
+
+    await handleInvoicePaid(app, invoice(userId, { id: 'in_2', reason: 'subscription_cycle' }))
+    assert.equal(user().credits, 85)
+    assert.equal(purchases()[1]?.credits, 0)
+    assert.equal(purchases()[1]?.creditsOverCap, 30)
+  })
+
+  it('gives an annual plan paid before the cap its monthly looks in full until it renews', async () => {
+    const next = new Date(Date.now() - 60_000)
+    const { app, user, logs } = setup(50, { ...annual(next), rolloverCap: undefined })
+
+    assert.equal(await refillAnnualCredits(app), 1)
+    assert.equal(user().credits, 80)
+    assert.equal(user().pro?.avatarRuns, 0)
+    assert.ok(!logs.some((line) => line.msg === 'Annual Pro looks held at the rollover cap'))
+  })
+
+  it('caps everyone right away with the grandfathering off', async () => {
+    env.PRO_ROLLOVER_GRANDFATHER = false
+
+    const monthly = setup(45, { ...MARKED, rolloverCap: undefined })
+    await handleInvoicePaid(monthly.app, invoice(monthly.userId, { id: 'in_1', reason: 'subscription_cycle' }))
+    assert.equal(monthly.user().credits, 60)
+
+    const yearly = setup(50, { ...annual(new Date(Date.now() - 60_000)), rolloverCap: undefined })
+    await refillAnnualCredits(yearly.app)
+    assert.equal(yearly.user().credits, 60)
+  })
+
+  it('marks every new subscription, so its renewals roll over up to 60', async () => {
+    const { app, userId, user } = setup(0)
+
+    await handleInvoicePaid(app, invoice(userId, { id: 'in_m', reason: 'subscription_create' }))
+    assert.equal(user().pro?.rolloverCap, true)
+    assert.equal(user().credits, 30)
   })
 
   it('never caps a look pack', async () => {

@@ -161,6 +161,11 @@ const envSchema = z.object({
   // first payment (and the rest of annual's first month) and look packs
   // always add in full.
   PRO_ROLLOVER_CAP: z.coerce.number().int().min(1).default(60),
+  // Subscriptions paid before the cap shipped get their next payment's looks
+  // (and, on annual, every month's looks until then) in full; payments from
+  // then on mark pro.rolloverCap and the cap applies after that one, as the
+  // Terms say. 'off' applies the cap to everyone right away.
+  PRO_ROLLOVER_GRANDFATHER: z.enum(['on', 'off']).optional(),
   // The Pro credit in the cross-sell emails leaves out buyers of the three
   // advisors together (their bundle costs more than the credit can count):
   // 'on' by default, 'off' offers it to them too.
@@ -264,6 +269,7 @@ export const env = {
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   PRO_AVATAR_GRANDFATHER: (raw.PRO_AVATAR_GRANDFATHER ?? 'on') === 'on',
+  PRO_ROLLOVER_GRANDFATHER: (raw.PRO_ROLLOVER_GRANDFATHER ?? 'on') === 'on',
   PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE: (raw.PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE ?? 'on') === 'on',
   PRO_TOUR_EMAIL_LINK: (raw.PRO_TOUR_EMAIL_LINK ?? 'on') === 'on',
   EMAIL_POSTAL_ADDRESS: optionalTrimmed(raw.EMAIL_POSTAL_ADDRESS),

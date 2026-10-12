@@ -97,6 +97,10 @@ type LensPayload = {
   products?: LensResult[]
 }
 
+export function cleanPrice(value: string | null | undefined) {
+  return value?.replace(/\s*\*+\s*$/, '').trim() || null
+}
+
 function toMatch(result: LensResult): ShopMatch | null {
   if (!result.link || !result.title) {
     return null
@@ -123,7 +127,9 @@ function toMatch(result: LensResult): ShopMatch | null {
     source: result.source?.trim() || domain,
     sourceIcon: result.source_icon ?? null,
     thumbnail: result.thumbnail ?? null,
-    price: result.price?.value?.trim() || null,
+    // Google marks some prices with a trailing "*" that nothing explains
+    // (prices are always the store's): left off.
+    price: cleanPrice(result.price?.value),
     extractedPrice: typeof result.price?.extracted_value === 'number' ? result.price.extracted_value : null,
     currency: result.price?.currency ?? null,
     inStock: typeof result.in_stock === 'boolean' ? result.in_stock : null,

@@ -217,6 +217,10 @@ export type ProSubscription = {
   // Set on every Pro payment since the avatar cap (Oct 2026): a
   // subscription paid before it keeps unlimited renders until its next one.
   avatarCap?: boolean
+  // Set on every Pro payment since the rollover cap (Oct 2026): from then
+  // on renewals and annual's monthly looks add only up to PRO_ROLLOVER_CAP.
+  // A subscription paid before it gets its next payment's looks in full.
+  rolloverCap?: boolean
   // Annual's first payment: the rest of the first month's looks, held until
   // `at` (PRO_ANNUAL_FIRST_WEEK_DAYS after paying), then added by the refill.
   heldCredits?: { amount: number; at: Date } | null

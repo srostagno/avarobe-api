@@ -67,6 +67,75 @@ export function isStore(match: ShopMatch) {
   return !NOT_STORES.some((pattern) => match.domain.includes(pattern))
 }
 
+// Second-hand sites: one used item each, usually gone.
+const USED_GOODS = ['enjoei.', 'poshmark.', 'depop.', 'vinted.', 'thredup.', 'grailed.', 'tradesy.', 'vestiairecollective.']
+
+// Whole words in a title, in the languages of the markets (lookarounds, as
+// \b doesn't see accented letters).
+const words = (list: string) => new RegExp(`(?<!\\p{L})(?:${list})(?!\\p{L})`, 'iu')
+
+const KIDS = words('infantil|infantis|kids?|menin[oa]s?|niñ[oa]s?|boys?|girls?|bebês?|bebés?|baby|babies|toddlers?')
+const MENS = words('masculin[oa]s?|hombres?|caballeros?|men[\'’]?s|for men|homme|herren')
+const WOMENS = words('feminin[oa]s?|mujer(?:es)?|damas?|women[\'’]?s|for women|femme|damen|senhoras?')
+const KIDS_PATH = /\/(?:kids|infantil|menin[oa]s?|nin[oa]s?|boys|girls|baby|bebe)(?:[/-]|$)/i
+const MENS_PATH = /\/(?:men|mens|masculino|hombre|homme|herren)(?:[/-]|$)/i
+const WOMENS_PATH = /\/(?:women|womens|feminino|mujer|femme|damen)(?:[/-]|$)/i
+
+// A listing, category or sale page rather than one product: Mercado Livre's
+// and Mercado Libre's search lists, a sale banner ("Up To 60% Off", "30% OFF
+// de todos os estilos"), a title that is a web address ("Compra tshirt en
+// www.tienda.com.co"), a sale or category section in the address.
+function isListing(match: ShopMatch, url: URL | null) {
+  const host = url?.hostname.toLowerCase() ?? match.domain
+
+  return (
+    /^(?:lista|listado)\./.test(host) ||
+    /\bwww\.[a-z0-9-]+\.[a-z]{2,}/i.test(match.title) ||
+    /\bup to \d{1,3}\s?%/i.test(match.title) ||
+    /\d{1,3}\s?% off (?:de|on) (?:todos|todas|all|everything)\b/i.test(match.title) ||
+    /^(?:sale|ofertas?|promo(?:ção|ción)?)\s*:/i.test(match.title) ||
+    /\/(?:browse\/sale|sale-[a-z-]+|category|categoria|categorias)(?:[/?]|$)/i.test(url?.pathname ?? '')
+  )
+}
+
+// What the store search shows (beyond isStore): no second-hand sites, no
+// listing or sale pages, and nothing from the wrong department for the
+// avatar's clothes (children's always; men's for womenswear, women's for
+// menswear, when we know which).
+export function isShoppable(match: ShopMatch, presentation: string | null | undefined) {
+  if (USED_GOODS.some((pattern) => match.domain.includes(pattern))) {
+    return false
+  }
+
+  let url: URL | null = null
+
+  try {
+    url = new URL(match.link)
+  } catch {
+    url = null
+  }
+
+  if (isListing(match, url)) {
+    return false
+  }
+
+  const path = url?.pathname ?? ''
+
+  if (KIDS.test(match.title) || KIDS_PATH.test(path)) {
+    return false
+  }
+
+  if (presentation === 'womenswear') {
+    return !MENS.test(match.title) && !MENS_PATH.test(path)
+  }
+
+  if (presentation === 'menswear') {
+    return !WOMENS.test(match.title) && !WOMENS_PATH.test(path)
+  }
+
+  return true
+}
+
 // Country codes in the first two path segments: /cl/, /es-cl/, /es_cl/,
 // /falabella-cl/.
 function pathCountries(url: URL) {

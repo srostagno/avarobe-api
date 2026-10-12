@@ -46,7 +46,7 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     event_pass: {
       name: 'Stylist de Eventos',
-      description: 'Um evento resolvido: três looks em você para o dress code, as peças nas lojas e como finalizar.',
+      description: 'Um evento resolvido: três looks em você para o dress code, peças parecidas nas lojas e como finalizar.',
     },
     magazine: {
       name: 'Sua revista personalizada',
@@ -58,7 +58,7 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     pro_monthly: {
       name: 'Avarobe Pro (mensal)',
-      description: 'Looks novos todo mês, os três consultores (Cores, Estilo, Cabelo e Barba), provas virtuais, cada peça nas lojas e mais.',
+      description: 'Looks novos todo mês, os três consultores (Cores, Estilo, Cabelo e Barba), provas virtuais, peças parecidas nas lojas e mais.',
     },
     pro_annual: {
       name: 'Avarobe Pro (anual)',
@@ -108,7 +108,7 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     event_pass: {
       name: 'Estilista de Eventos',
-      description: 'Un evento resuelto: tres looks en ti para su código de vestimenta, las prendas en tiendas y cómo rematarlos.',
+      description: 'Un evento resuelto: tres looks en ti para su código de vestimenta, prendas parecidas en tiendas y cómo rematarlos.',
     },
     magazine: {
       name: 'Tu revista personal',
@@ -120,7 +120,7 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     },
     pro_monthly: {
       name: 'Avarobe Pro (mensual)',
-      description: 'Looks nuevos cada mes, los tres asesores (Color, Estilo, Cabello y Barba), pruebas virtuales, cada prenda en tiendas y más.',
+      description: 'Looks nuevos cada mes, los tres asesores (Color, Estilo, Cabello y Barba), pruebas virtuales, prendas parecidas en tiendas y más.',
     },
     pro_annual: {
       name: 'Avarobe Pro (anual)',

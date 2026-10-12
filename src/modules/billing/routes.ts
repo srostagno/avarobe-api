@@ -151,6 +151,7 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
       cancelAtPeriodEnd: Boolean(options.ending),
       nextCreditsAt: interval === 'year' ? addMonths(now, 1) : null,
       avatarCap: true,
+      rolloverCap: true,
     },
   })
 
@@ -176,6 +177,7 @@ function stageFields(stage: (typeof SIMULATED_STAGES)[number]) {
           nextCreditsAt: null,
           trialEnd,
           avatarCap: true,
+          rolloverCap: true,
         },
       }
     }
@@ -780,10 +782,12 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       try {
         if (isSimulated(subscriptionId)) {
           const now = new Date()
-          // A plan switch's looks roll over up to the cap, as Stripe's do.
+          // A plan switch's looks roll over up to the cap, as Stripe's do
+          // (the credits expression reads the marks from before this payment).
           await app.collections.users.updateOne({ _id: userId }, [
             {
               $set: {
+                'pro.rolloverCap': true,
                 'pro.interval': 'year',
                 'pro.periodEnd': addMonths(now, 12),
                 'pro.cancelAtPeriodEnd': false,
@@ -838,6 +842,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           await app.collections.users.updateOne({ _id: userId }, [
             {
               $set: {
+                'pro.rolloverCap': true,
                 'pro.status': 'active',
                 'pro.periodEnd': addMonths(new Date(), 1),
                 'pro.cancelAtPeriodEnd': false,

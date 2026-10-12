@@ -3,7 +3,8 @@
 // collections understand the small part of MongoDB those jobs use: filters
 // with dotted paths, null matching a missing field, $exists, $ne, $in, $nin,
 // $lt/$lte/$gt/$gte, $or, $nor and $and; updates with $set, $unset, $inc and
-// $setOnInsert, pipeline $set with $ifNull, $min, $max and $add, upserts (and their duplicate-key
+// $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
+// from the document as it was before the stage, as in MongoDB), upserts (and their duplicate-key
 // error, on _id and on the unique fields of UNIQUE: avatars.userId, as in
 // plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
 // passes on a query the fake didn't understand.
@@ -184,6 +185,18 @@ function evaluate(doc: Doc, expression: unknown): unknown {
     return values.length > 0 ? values.reduce((most, value) => (order(value, most) > 0 ? value : most)) : null
   }
 
+  if (isPlain(expression) && Array.isArray(expression.$eq)) {
+    const [left, right] = (expression.$eq as unknown[]).map((value) => evaluate(doc, value))
+
+    return order(left ?? null, right ?? null) === 0
+  }
+
+  if (isPlain(expression) && Array.isArray(expression.$cond)) {
+    const [condition, yes, no] = expression.$cond as unknown[]
+
+    return evaluate(doc, condition) === true ? evaluate(doc, yes) : evaluate(doc, no)
+  }
+
   // Numbers only; null when any is missing, as in MongoDB.
   if (isPlain(expression) && Array.isArray(expression.$add)) {
     const values = (expression.$add as unknown[]).map((value) => evaluate(doc, value))
@@ -209,8 +222,11 @@ function evaluate(doc: Doc, expression: unknown): unknown {
 function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
   if (Array.isArray(update)) {
     for (const stage of update) {
-      for (const [path, expression] of Object.entries(stage.$set as Doc)) {
-        write(doc, path, clone(evaluate(doc, expression)))
+      // Every field of a stage reads the document from before the stage.
+      const values = Object.entries(stage.$set as Doc).map(([path, expression]) => [path, clone(evaluate(doc, expression))] as const)
+
+      for (const [path, value] of values) {
+        write(doc, path, value)
       }
     }
 

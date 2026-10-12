@@ -43,7 +43,7 @@ export const esEmails: EmailCopy = {
       'Los tres asesores: Color, Estilo y Cabello y Barba, mientras tengas Pro. Con el anual, se quedan contigo.',
       `${limits.credits} looks al mes: cada look, prueba de outfit o de un Edit, o peinado que describas usa 1. Un evento con el Estilista de Eventos usa ${limits.eventLooks}. Los looks que no uses se quedan en tu cuenta, hasta ${limits.rollover}.`,
       `¿Me quedará bien? Revisa cualquier prenda con tus colores, hasta ${limits.checks} al día.`,
-      'Cada prenda de un look, encontrada en tiendas.',
+      'Prendas parecidas para cada look, encontradas en tiendas.',
       'La opinión completa de tu estilista sobre cada look.',
       `Hasta ${limits.avatarRuns} cambios de avatar al mes.`,
       'Pruébate los Edits de cada temporada.',
@@ -226,7 +226,7 @@ export const esEmails: EmailCopy = {
     products: {
       style: 'Los cortes y escotes que favorecen tu cuerpo, probados en tu avatar, con una guía de ajuste y un clóset cápsula.',
       hair: 'Todos los cortes de cabello que van con tu cara, en ti, con lo que debes decirle a tu estilista.',
-      event: 'Tres looks completos en ti para tu próximo evento, con cada prenda en tiendas.',
+      event: 'Tres looks completos en ti para tu próximo evento, con prendas parecidas para encontrar en tiendas.',
       bundle: 'Color, Estilo y Cabello y Barba juntos, por menos.',
       pro: (looks: number) => `Tu estilista todo el año: ${looks} looks al mes en ti y los tres asesores. Cancela cuando quieras.`,
       book: '120 combinaciones de outfits que siempre funcionan, en PDF.',
@@ -434,7 +434,7 @@ export const esEmails: EmailCopy = {
     ],
     eventFeatures: [
       'Tres looks completos para su código de vestimenta, en ti',
-      'Prendas parecidas en tiendas, con el precio de cada tienda',
+      'Prendas parecidas en tiendas, con el precio cuando la tienda lo muestra',
       'Zapatos, bolsas, peinado y maquillaje para completar cada look',
       'Un checklist para el día',
     ],
@@ -584,7 +584,7 @@ export const esEmails: EmailCopy = {
     event: {
       subject: '¿Tienes algún evento pronto?',
       preheader: (price: string) =>
-        `Elige el evento: tres looks completos para su código de vestimenta, en ti, con cada prenda en tiendas. ${price} por evento.`,
+        `Elige el evento: tres looks completos para su código de vestimenta, en ti, con prendas parecidas para encontrar en tiendas. ${price} por evento.`,
       heading: '¿Tienes algún evento pronto?',
       introPhoto: (upcoming: string) =>
         `Ese es tu look más reciente, en ti. ${upcoming} Elige el evento y el Estilista de Eventos arma tres outfits completos para su código de vestimenta, en ti, con prendas parecidas para encontrar en tiendas y cómo completar el look.`,

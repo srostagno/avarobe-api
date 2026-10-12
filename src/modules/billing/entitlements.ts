@@ -139,13 +139,27 @@ export function rolloverCredits(balance: number, amount: number, cap = env.PRO_R
   return Math.max(0, Math.min(amount, cap - balance))
 }
 
+// Whether the cap applies to this subscription's renewals and monthly
+// looks: once a payment since the cap marked it (pro.rolloverCap). One paid
+// before gets its next payment's looks, and annual's monthly looks until
+// then, in full (PRO_ROLLOVER_GRANDFATHER, as the Terms say).
+export function rolloverCapApplies(pro: Pick<ProSubscription, 'rolloverCap'> | null | undefined) {
+  return !env.PRO_ROLLOVER_GRANDFATHER || pro?.rolloverCap === true
+}
+
 // The same, as an update pipeline's value for `credits`, so a month's drop
-// applies it atomically on the stored balance (missing: FREE_CREDITS, as
-// everywhere): max(balance, min(cap, balance + amount)).
+// applies it atomically on the stored document (missing balance:
+// FREE_CREDITS, as everywhere): max(balance, min(cap, balance + amount))
+// once the cap applies to it, balance + amount before.
 export function rolloverCreditsExpression(amount: number, cap = env.PRO_ROLLOVER_CAP) {
   const balance = { $ifNull: ['$credits', env.FREE_CREDITS] }
+  const capped = { $max: [balance, { $min: [cap, { $add: [balance, amount] }] }] }
 
-  return { $max: [balance, { $min: [cap, { $add: [balance, amount] }] }] }
+  if (!env.PRO_ROLLOVER_GRANDFATHER) {
+    return capped
+  }
+
+  return { $cond: [{ $eq: ['$pro.rolloverCap', true] }, capped, { $add: [balance, amount] }] }
 }
 
 // Add-on prices: the other report at what completes the bundle.

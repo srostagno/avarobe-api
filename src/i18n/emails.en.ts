@@ -56,7 +56,7 @@ export const enEmails = {
       'All three advisors: Color, Style and Hair & Grooming, while you’re on Pro. With annual, they’re yours to keep.',
       `${limits.credits} looks a month: each styled look, outfit or Edit try-on, or hairstyle you describe uses 1. An event with the Event Stylist uses ${limits.eventLooks}. Unused looks stay in your account, up to ${limits.rollover}.`,
       `Will it suit me? Check any piece against your colors, up to ${limits.checks} a day.`,
-      'Every piece of a look, found in stores.',
+      'Similar pieces for every look, found in stores.',
       'Your stylist’s full take on each look.',
       `Up to ${limits.avatarRuns} avatar changes a month.`,
       'Try on the seasonal Edits.',
@@ -248,7 +248,7 @@ export const enEmails = {
     products: {
       style: 'The cuts and necklines that flatter your body, tried on your avatar, with a fit guide and a capsule.',
       hair: 'Every haircut that suits your face, shown on you, with what to tell your stylist.',
-      event: 'Three complete looks on you for your next event, every piece in stores.',
+      event: 'Three complete looks on you for your next event, with similar pieces to find in stores.',
       bundle: 'Color, Style and Hair & Grooming together, for less.',
       pro: (looks: number) => `Your stylist all year: ${looks} looks a month on you and all three advisors. Cancel anytime.`,
       book: '120 outfit combinations that always work, as a PDF.',
@@ -475,7 +475,7 @@ export const enEmails = {
     ],
     eventFeatures: [
       'Three complete looks for its dress code, on you',
-      'Similar pieces found in stores, with each store’s price',
+      'Similar pieces found in stores, with prices where the store shows them',
       'Shoes, bags, hair and makeup to finish each look',
       'A checklist for the day',
     ],
@@ -637,7 +637,7 @@ export const enEmails = {
     event: {
       subject: 'Something coming up?',
       preheader: (price: string) =>
-        `Pick the event: three complete looks for its dress code, on you, with every piece in stores. ${price} an event.`,
+        `Pick the event: three complete looks for its dress code, on you, with similar pieces to find in stores. ${price} an event.`,
       heading: 'Something coming up?',
       // With their latest look as the picture.
       introPhoto: (upcoming: string) =>
