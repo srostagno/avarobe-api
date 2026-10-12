@@ -1,9 +1,11 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -19,6 +21,9 @@ export type Storage = {
   put(key: string, body: Buffer, contentType: string): Promise<void>
   read(key: string): Promise<Buffer>
   remove(key: string): Promise<void>
+  // Every file under one person's folder (`users/<userId>/`), returning how
+  // many went; for a deleted account, after its known files.
+  removeFolder(userId: string): Promise<number>
   signedUrl(key: string): Promise<string>
 }
 
@@ -26,6 +31,14 @@ const KEY_PATTERN = /^users\/[a-f0-9]{24}\/[A-Za-z0-9._-]+$/
 
 export function isValidStorageKey(key: string) {
   return KEY_PATTERN.test(key)
+}
+
+function userFolder(userId: string) {
+  if (!/^[a-f0-9]{24}$/.test(userId)) {
+    throw new Error(`Invalid user folder: ${userId}`)
+  }
+
+  return `users/${userId}/`
 }
 
 function mediaSigningSecret() {
@@ -60,6 +73,14 @@ function createLocalStorage(): Storage {
     },
     async remove(key) {
       await rm(localPathFor(key), { force: true })
+    },
+    async removeFolder(userId) {
+      const folder = path.resolve(env.STORAGE_LOCAL_DIR, userFolder(userId))
+      const files = await readdir(folder).catch(() => [])
+
+      await rm(folder, { recursive: true, force: true })
+
+      return files.length
     },
     async signedUrl(key) {
       const exp = Math.floor(Date.now() / 1000) + env.MEDIA_URL_TTL_SECONDS
@@ -102,6 +123,25 @@ function createS3Storage(): Storage {
       await client.send(
         new DeleteObjectCommand({ Bucket: bucket, Key: objectKey(key) }),
       )
+    },
+    async removeFolder(userId) {
+      const prefix = objectKey(userFolder(userId))
+      let token: string | undefined
+      let removed = 0
+
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }))
+        const keys = (page.Contents ?? []).map((object) => object.Key).filter((key): key is string => Boolean(key?.startsWith(prefix)))
+
+        if (keys.length > 0) {
+          await client.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true } }))
+          removed += keys.length
+        }
+
+        token = page.IsTruncated ? page.NextContinuationToken : undefined
+      } while (token)
+
+      return removed
     },
     async signedUrl(key) {
       return getSignedUrl(

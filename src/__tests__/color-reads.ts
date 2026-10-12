@@ -23,6 +23,7 @@ export function memoryStorage() {
     put: storage.put.bind(storage),
     read: storage.read.bind(storage),
     remove: storage.remove.bind(storage),
+    removeFolder: storage.removeFolder.bind(storage),
     signedUrl: storage.signedUrl.bind(storage),
   }
   const files = new Map<string, Buffer>()
@@ -43,6 +44,16 @@ export function memoryStorage() {
   storage.remove = async (key) => {
     removed.push(key)
     files.delete(key)
+  }
+  storage.removeFolder = async (userId) => {
+    const folder = [...files.keys()].filter((key) => key.startsWith(`users/${userId}/`))
+
+    for (const key of folder) {
+      removed.push(key)
+      files.delete(key)
+    }
+
+    return folder.length
   }
   storage.signedUrl = async (key) => `https://media.test/${key}`
 

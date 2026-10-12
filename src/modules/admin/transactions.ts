@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import type { AnalyticsEventDocument, UserDocument } from '../../types/mongo.js'
-import { isGuestEmail } from '../../utils/guests.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { adminUserIds } from '../billing/entitlements.js'
 import { toUsdCents } from '../billing/pricing.js'
 import { addDays, pacificDay, pacificStart } from './email-activity.js'
@@ -43,7 +43,7 @@ export type TransactionRow = {
   refundSource: 'app' | 'stripe' | 'admin' | null
   account: string | null
   email: string | null
-  // The account was deleted since (its purchases are kept, anonymized).
+  // The account was deleted since (its row and purchases are kept).
   accountDeleted: boolean
   country: string | null
   region: string | null
@@ -146,7 +146,7 @@ export async function transactionsReport(app: FastifyInstance, range: { from: st
     app.collections.users
       .find(
         { _id: { $in: userIds } },
-        { projection: { email: 1, guest: 1, createdAt: 1, location: 1, locale: 1, acquisition: 1 } },
+        { projection: { email: 1, guest: 1, createdAt: 1, location: 1, locale: 1, acquisition: 1, deletedAt: 1 } },
       )
       .toArray(),
     // Everything these buyers ever paid, to number each payment.
@@ -192,7 +192,7 @@ export async function transactionsReport(app: FastifyInstance, range: { from: st
   })
 }
 
-type Buyer = Pick<UserDocument, '_id' | 'email' | 'createdAt' | 'location' | 'locale' | 'acquisition'>
+type Buyer = Pick<UserDocument, '_id' | 'email' | 'createdAt' | 'location' | 'locale' | 'acquisition' | 'deletedAt'>
 type CheckoutEvent = Pick<AnalyticsEventDocument, 'userId' | 'name' | 'at' | 'props' | 'mobile' | 'inApp'>
 
 // The report from what was read: each payment with its buyer's details,
@@ -266,8 +266,8 @@ export function buildTransactions(input: {
       refunded: Boolean(payment.refundedAt),
       refundSource: payment.refundSource,
       account: key ? key.slice(-6) : null,
-      email: email && !isGuestEmail(email) ? email : null,
-      accountDeleted: Boolean(key) && !user,
+      email: email && !isPlaceholderEmail(email) ? email : null,
+      accountDeleted: Boolean(key) && (!user || Boolean(user.deletedAt)),
       country: user?.location?.country ?? null,
       region: user?.location?.region ?? null,
       locale: user?.locale ?? null,

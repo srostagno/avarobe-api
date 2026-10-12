@@ -836,6 +836,7 @@ export async function sendReportReminders(app: FastifyInstance, now = new Date()
         $lte: new Date(now.getTime() - REPORT_REMINDER_AFTER_MS),
       },
       'lifecycleEmails.report_unopened': { $exists: false },
+      deletedAt: null,
     })
     .limit(BATCH)
     .toArray()

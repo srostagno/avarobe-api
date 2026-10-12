@@ -8,7 +8,7 @@ import { fakeApp, type LogLine } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
 import type { ProSubscription, PurchaseDocument, RefundRequestDocument } from '../../../types/mongo.js'
 import { translateMessage } from '../../../utils/translate-message.js'
-import { forgetPurchases } from '../../me/content.js'
+import { deleteAccount } from '../../me/delete-account.js'
 import { decisionEmailFor, founderEmail } from '../refund-notify.js'
 import {
   RATE_LIMIT_MESSAGE,
@@ -546,11 +546,9 @@ describe('an account deleted with a request open', () => {
     const w = world({ user: { colorReportAt: ago(DAY) }, purchases: [{ product: 'color_report', stripePaymentIntentId: 'pi_color' }] })
     const { request } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests)
 
-    // As DELETE /me does: requests first, then the account; its purchases
-    // stay, anonymized.
-    await forgetRefundRequests(w.app, w.userId)
-    await forgetPurchases(w.app, w.userId)
-    await w.collection('users').deleteOne({ _id: w.userId })
+    // As DELETE /me does: the row and its purchases stay, the person can't
+    // sign in.
+    await deleteAccount(w.app, w.userId)
 
     const plan = await planRefund(w.app, w.requests()[0]!)
     assert.ok(plan.warnings.includes('Account deleted: money back only'))

@@ -4,7 +4,7 @@ import { ObjectId } from 'mongodb'
 import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { createLink, linkSentRecently, type LinkAdIds } from '../../utils/auth-links.js'
 import { deliverLinkEmail } from '../../utils/email.js'
-import { isGuestEmail } from '../../utils/guests.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import type { Locale } from '../../utils/locale.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { storedAdIds } from '../billing/conversions.js'
@@ -56,7 +56,7 @@ export async function sendCheckoutLink(
   input: CheckoutLinkInput,
   now = new Date(),
 ): Promise<CheckoutLinkResult> {
-  if (isGuestEmail(user.email)) {
+  if (isPlaceholderEmail(user.email)) {
     return { status: 'unsent' }
   }
 

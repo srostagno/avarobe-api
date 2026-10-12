@@ -6,8 +6,9 @@ import { ObjectId } from 'mongodb'
 import { memoryStorage, routeApp } from '../../../__tests__/color-reads.js'
 import { fakeApp } from '../../../__tests__/fake-app.js'
 import type { PurchaseDocument } from '../../../types/mongo.js'
-import { deleteStaleGuests } from '../../auth/guests.js'
+import { deletedEmail, emailHash } from '../../../utils/deleted-accounts.js'
 import meRoutes from '../../me/routes.js'
+import { refundHistory } from '../refund-requests.js'
 import { handleChargeRefunded, refundsReport } from '../refunds.js'
 
 const MINUTE = 60 * 1000
@@ -39,8 +40,18 @@ const bundle = (userId: ObjectId, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 
+// A deleted account's row, as me/delete-account.ts leaves it.
+const deletedUser = (userId: ObjectId, email = 'buyer@example.com') => ({
+  _id: userId,
+  email: deletedEmail(userId),
+  emailHash: emailHash(email),
+  firstName: '',
+  createdAt: ago(DAY),
+  deletedAt: ago(MINUTE),
+})
+
 describe('deleting an account', () => {
-  it('keeps its purchases for the books, without what was personal', async () => {
+  it('keeps its purchases exactly as they were, marked', async () => {
     const userId = new ObjectId()
     const otherId = new ObjectId()
     const paid = bundle(userId)
@@ -52,15 +63,7 @@ describe('deleting an account', () => {
       amountUsd: 499,
       createdAt: ago(3 * DAY),
       refundedAt,
-      refund: { source: 'app', reason: 'not_expected', note: 'In my own words, about me', amount: 499, stripeRefundId: 're_color', flags: ['repeat'], priorRefunds: 1 },
-    })
-    const approved = bundle(userId, {
-      product: 'magazine',
-      stripePaymentIntentId: 'pi_magazine',
-      amountTotal: 990,
-      amountUsd: 990,
-      refundedAt,
-      refund: { source: 'admin', requestId: new ObjectId(), reason: 'quality', note: 'Blurry pages, approved', amount: 990, stripeRefundId: 're_magazine', revokedAt: refundedAt },
+      refund: { source: 'app', reason: 'not_expected', note: 'In my own words', amount: 499, stripeRefundId: 're_color', flags: ['repeat'], priorRefunds: 1 },
     })
     const theirs = bundle(otherId)
     const { app, collection, auth } = await routeApp(
@@ -70,80 +73,41 @@ describe('deleting an account', () => {
           { _id: userId, email: 'buyer@example.com', firstName: 'Ana', createdAt: ago(DAY), colorReportAt: ago(15 * MINUTE) },
           { _id: otherId, email: 'other@example.com', firstName: 'Lia', createdAt: ago(DAY) },
         ],
-        purchases: [paid, oneTap, approved, theirs],
+        purchases: [paid, oneTap, theirs],
       },
     )
 
     const response = await app.inject({ method: 'DELETE', url: '/me', headers: auth(userId) })
 
     assert.equal(response.statusCode, 200)
-    assert.equal(collection('users').docs.some((user) => (user._id as ObjectId).equals(userId)), false)
 
     const purchases = collection('purchases').docs as unknown as PurchaseDocument[]
     const find = (id: ObjectId) => purchases.find((purchase) => purchase._id.equals(id))!
     const kept = find(paid._id)
+    const { accountDeletedAt, ...rest } = kept
 
-    assert.equal(purchases.length, 4)
-    // The sale, as it was.
-    assert.ok(kept.userId.equals(userId))
-    assert.equal(kept.product, 'advisors_bundle')
-    assert.equal(kept.amountTotal, 1990)
-    assert.equal(kept.currency, 'usd')
-    assert.equal(kept.amountUsd, 1990)
-    assert.equal(kept.createdAt.getTime(), paid.createdAt.getTime())
-    assert.equal(kept.stripeSessionId, paid.stripeSessionId)
-    assert.equal(kept.stripePaymentIntentId, 'pi_bundle')
-    assert.equal(kept.placement, 'colors_sticky')
-    assert.equal(kept.terms, 'accepted')
-    assert.equal(kept.refundedAt, null)
-    // Marked, and nothing personal left.
-    assert.ok(kept.accountDeletedAt instanceof Date)
-    assert.equal(kept.colorRead, null)
-    assert.equal(kept.cardCountry, null)
+    assert.equal(purchases.length, 3)
+    assert.ok(accountDeletedAt instanceof Date)
+    assert.deepEqual(rest, paid)
 
-    // Refunds stay, but what she wrote in a one-tap refund goes; an admin's
-    // note stays, as on her refund requests.
     const tapped = find(oneTap._id)
+    assert.ok(tapped.accountDeletedAt)
+    assert.deepEqual(tapped.refund, oneTap.refund)
     assert.equal(tapped.refundedAt?.getTime(), refundedAt.getTime())
-    assert.deepEqual(
-      tapped.refund,
-      { source: 'app', reason: 'not_expected', note: null, amount: 499, stripeRefundId: 're_color', flags: ['repeat'], priorRefunds: 1 },
-    )
-    const decided = find(approved._id)
-    assert.equal(decided.refund?.note, 'Blurry pages, approved')
-    assert.equal(decided.refund?.stripeRefundId, 're_magazine')
-    assert.ok(decided.accountDeletedAt)
 
     // Someone else's purchase is left alone.
-    const other = find(theirs._id)
-    assert.equal(other.accountDeletedAt, undefined)
-    assert.deepEqual(other.colorRead, { season: 'Soft Autumn', readId: 'read_1' })
-    assert.equal(other.cardCountry, 'US')
-  })
-
-  it('does the same for a guest deleted after its days, whose checkout’s email had an account', async () => {
-    const guestId = new ObjectId()
-    const { app, collection } = fakeApp({
-      users: [{ _id: guestId, guest: true, email: 'x1@guest.avarobe.invalid', createdAt: ago(30 * DAY) }],
-      purchases: [bundle(guestId)],
-    })
-
-    assert.equal(await deleteStaleGuests(app), 1)
-
-    const [kept] = collection('purchases').docs as unknown as PurchaseDocument[]
-    assert.equal(collection('users').docs.length, 0)
-    assert.equal(kept?.amountTotal, 1990)
-    assert.ok(kept?.accountDeletedAt)
-    assert.equal(kept?.colorRead, null)
-    assert.equal(kept?.cardCountry, null)
+    assert.equal(find(theirs._id).accountDeletedAt, undefined)
   })
 })
 
 describe('a deleted account’s purchase', () => {
-  it('is marked when it’s refunded in Stripe later, with no account to take anything from', async () => {
+  it('is marked when it’s refunded in Stripe later', async () => {
     const userId = new ObjectId()
     const cancelled: string[] = []
-    const { app, collection } = fakeApp({ purchases: [bundle(userId, { accountDeletedAt: ago(MINUTE), colorRead: null, cardCountry: null })] })
+    const { app, collection } = fakeApp({
+      users: [deletedUser(userId)],
+      purchases: [bundle(userId, { accountDeletedAt: ago(MINUTE) })],
+    })
 
     await handleChargeRefunded(app, { payment_intent: 'pi_bundle', refunded: true, amount_refunded: 1990 }, async () => null, {
       cancelProNow: async (id) => {
@@ -157,17 +121,19 @@ describe('a deleted account’s purchase', () => {
     assert.equal(purchase?.refund?.amount, 1990)
     assert.ok(purchase?.accountDeletedAt)
     assert.deepEqual(cancelled, [])
-    assert.equal(collection('users').docs.length, 0)
   })
 
-  it('shows in Admin → Refunds as from a deleted account', async () => {
+  it('shows in Admin → Refunds as from a deleted account, never with its alias', async () => {
     const goneId = new ObjectId()
+    const oldId = new ObjectId()
     const liveId = new ObjectId()
     const refund = { source: 'stripe', reason: null, note: null, amount: 1990, stripeRefundId: null }
     const { app } = fakeApp({
-      users: [{ _id: liveId, email: 'live@example.com', createdAt: ago(DAY) }],
+      users: [deletedUser(goneId), { _id: liveId, email: 'live@example.com', createdAt: ago(DAY) }],
       purchases: [
-        bundle(goneId, { accountDeletedAt: ago(MINUTE), colorRead: null, cardCountry: null, refundedAt: ago(MINUTE), refund }),
+        bundle(goneId, { accountDeletedAt: ago(MINUTE), refundedAt: ago(MINUTE), refund }),
+        // An account deleted before its row was kept (before Oct 2026).
+        bundle(oldId, { stripePaymentIntentId: 'pi_old', refundedAt: ago(MINUTE), refund }),
         bundle(liveId, { stripePaymentIntentId: 'pi_live', refundedAt: ago(MINUTE), refund }),
       ],
     })
@@ -175,11 +141,36 @@ describe('a deleted account’s purchase', () => {
     const report = await refundsReport(app, 7)
     const byUser = new Map(report.rows.map((row) => [row.userId, row]))
 
-    assert.equal(report.refunds, 2)
-    assert.equal(report.purchases, 2)
+    assert.equal(report.refunds, 3)
     assert.equal(byUser.get(goneId.toString())?.accountDeleted, true)
     assert.equal(byUser.get(goneId.toString())?.email, null)
+    assert.equal(byUser.get(oldId.toString())?.accountDeleted, true)
     assert.equal(byUser.get(liveId.toString())?.accountDeleted, false)
     assert.equal(byUser.get(liveId.toString())?.email, 'live@example.com')
+  })
+
+  it('counts in the refund history of the same person coming back with a new account', async () => {
+    const goneId = new ObjectId()
+    const newId = new ObjectId()
+    const strangerId = new ObjectId()
+    const refund = { source: 'app', reason: 'not_expected', note: null, amount: 1990, stripeRefundId: 're_1' }
+    const { app } = fakeApp({
+      users: [
+        deletedUser(goneId, 'Buyer@Example.com'),
+        deletedUser(strangerId, 'someone@example.com'),
+        { _id: newId, email: 'buyer@example.com', firstName: 'Ana', createdAt: ago(MINUTE) },
+      ],
+      purchases: [
+        bundle(goneId, { accountDeletedAt: ago(DAY), refundedAt: ago(2 * DAY), refund }),
+        bundle(strangerId, { accountDeletedAt: ago(DAY), refundedAt: ago(2 * DAY), refund }),
+        bundle(newId, { product: 'color_report', amountTotal: 499, amountUsd: 499 }),
+      ],
+    })
+
+    const history = await refundHistory(app, { userId: newId, email: 'buyer@example.com', emailHash: emailHash('buyer@example.com'), fingerprint: null })
+
+    assert.equal(history.refundsBefore, 1)
+    assert.equal(history.purchases, 2)
+    assert.equal(history.paidUsd, 1990 + 499)
   })
 })

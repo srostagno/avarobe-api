@@ -5,7 +5,7 @@ import Stripe from 'stripe'
 import { env } from '../../config/env.js'
 import type { ProSubscription, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { PRODUCT_COPY } from '../../i18n/products.js'
-import { isGuestEmail } from '../../utils/guests.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { appUrl, isLocale, type Locale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
@@ -548,7 +548,7 @@ export async function createCheckout(input: {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
   const locale = input.user.locale ?? 'en'
-  const guest = isGuestEmail(input.user.email)
+  const guest = isPlaceholderEmail(input.user.email)
   const metadata = {
     ...input.attribution,
     app: APP,

@@ -28,10 +28,12 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 
     const user = await request.server.collections.users.findOne(
       { _id: userId },
-      { projection: { _id: 1 } },
+      { projection: { _id: 1, deletedAt: 1 } },
     )
 
-    if (!user) {
+    // A deleted account's row stays (me/delete-account.ts): its access
+    // tokens still in a browser stop working at once.
+    if (!user || user.deletedAt) {
       return reply.code(401).send({ message: 'Unauthorized' })
     }
 

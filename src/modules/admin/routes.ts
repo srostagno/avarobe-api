@@ -162,6 +162,8 @@ async function reviewLook(look: LookDocument) {
   return {
     id: look._id.toString(),
     account: look.userId.toString().slice(-6),
+    // Its account was deleted: the look stays, its pictures are gone.
+    photosDeleted: Boolean(look.photosDeletedAt),
     avatarId: look.avatarId.toString(),
     createdAt: look.createdAt,
     status: look.status,
@@ -264,7 +266,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const [bought, owners, reported] = await Promise.all([
       purchasesByUser(app, page.map((avatar) => avatar.userId)),
       app.collections.users
-        .find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { ...BILLING_PROJECTION, location: 1 } })
+        .find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { ...BILLING_PROJECTION, location: 1, deletedAt: 1 } })
         .toArray(),
       // The report itself stays out of the listing; only whether it's there.
       app.collections.avatars
@@ -301,6 +303,9 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         return {
           id: avatar._id.toString(),
           account: avatar.userId.toString().slice(-6),
+          // The account was deleted: its row and colors stay, every picture
+          // is gone (me/delete-account.ts).
+          accountDeleted: Boolean(ownerByUser.get(avatar.userId.toString())?.deletedAt),
           // Where they signed up from (country and state, never the IP).
           country: location?.country ?? null,
           region: location?.region ?? null,

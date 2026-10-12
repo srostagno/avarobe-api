@@ -96,6 +96,14 @@ export type UserDocument = {
   // The language they use Avarobe in (utils/locale.ts): AI text, emails and
   // links are made in it. Missing means English (accounts from before).
   locale?: Locale
+  // Deleted by its owner (or a guest that never saved, after GUEST_TTL_DAYS),
+  // since Oct 2026 (me/delete-account.ts): the row stays for our records
+  // with `email` an alias that can't receive mail (utils/deleted-accounts.ts),
+  // no name and no way to sign in, and the photos gone. `emailHash`: sha256
+  // of the real email, trimmed and lowercased (as on refund requests), to
+  // recognize someone who comes back.
+  deletedAt?: Date | null
+  emailHash?: string | null
 }
 
 // A cross-sell email's own picture of her: a gift look, her ideal cut, an
@@ -290,9 +298,8 @@ export type PurchaseDocument = {
   // be requested (a Brazilian card is one of the signals of Brazil's right
   // of withdrawal); null when Stripe has none. Missing: not looked up yet.
   cardCountry?: string | null
-  // The account was deleted (me/content.ts, forgetPurchases): the sale stays
-  // for the books, the admin's revenue and refunds, without what was
-  // personal. `userId` is then an id that leads to no one.
+  // The account was deleted (me/delete-account.ts): the sale stays as it was,
+  // for the books, the admin's revenue and refunds.
   accountDeletedAt?: Date | null
 }
 
@@ -824,6 +831,9 @@ export type AvatarDocument = {
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
+  // The account was deleted: every photo and render is gone, files and keys
+  // (selfie-type keys left as ''), the colors and reports stay.
+  photosDeletedAt?: Date | null
 }
 
 export type HairLength = 'short' | 'medium' | 'long'
@@ -894,6 +904,8 @@ export type HairstyleDocument = {
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
+  // The account was deleted: its pictures are gone, the haircut stays.
+  photosDeletedAt?: Date | null
 }
 
 export type ScaleReading = { value: number; label: string }
@@ -1171,6 +1183,8 @@ export type LookDocument = {
   // When its render last started, if not at creation (a retry or unlock).
   renderStartedAt?: Date | null
   readyAt: Date | null
+  // The account was deleted: its pictures are gone, the look stays.
+  photosDeletedAt?: Date | null
 }
 
 // The Event Stylist: three looks for one event (a wedding, an interview, a
@@ -1235,6 +1249,8 @@ export type MagazineDocument = {
   createdAt: Date
   updatedAt: Date
   readyAt: Date | null
+  // The account was deleted: its pictures are gone, the words stay.
+  photosDeletedAt?: Date | null
 }
 
 // The Outfit Formula Book: one paid checkout, with or without an account. The
@@ -1374,6 +1390,9 @@ export type ColorCheckDocument = {
   } | null
   createdAt: Date
   updatedAt: Date
+  // The account was deleted: both pictures are gone (garmentKey ''), the
+  // reading stays.
+  photosDeletedAt?: Date | null
 }
 
 // Operations alerts to the founder (modules/ops/alerts.ts), one document per

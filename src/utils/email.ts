@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify'
 
 import { env } from '../config/env.js'
 import { emailCopy } from '../i18n/emails.js'
-import { isGuestEmail } from './guests.js'
+import { isPlaceholderEmail } from './deleted-accounts.js'
 import type { Locale } from './locale.js'
 import { seasonName } from './seasons.js'
 
@@ -18,7 +18,8 @@ function isConfigured() {
 // EMAIL_DEV_ALLOWLIST, so tests with made-up addresses don't bounce and hurt
 // the sending domain; everyone else gets the link back in the response.
 function shouldDeliver(email: string) {
-  if (isGuestEmail(email)) {
+  // A guest's placeholder or a deleted account's alias: nobody's inbox.
+  if (isPlaceholderEmail(email)) {
     return false
   }
 

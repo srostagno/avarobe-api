@@ -104,19 +104,29 @@ describe('transactions report', () => {
     assert.equal(rows[0]!.inApp, false)
   })
 
-  it('keeps a deleted account’s payment in revenue, as from a deleted account rather than a guest', () => {
-    const gone = payment({ userId: new ObjectId(), product: 'advisors_bundle', currency: 'usd', amount: 1990, usd: 1990 })
+  it('keeps a deleted account’s payment in revenue, as from a deleted account rather than a guest, never with its alias', () => {
+    const deletedId = new ObjectId()
+    const kept = payment({ userId: deletedId, product: 'advisors_bundle', currency: 'usd', amount: 1990, usd: 1990 })
+    // Deleted before rows were kept (before Oct 2026): no row at all.
+    const gone = payment({ userId: new ObjectId(), product: 'magazine', currency: 'usd', amount: 990, usd: 990 })
     const guest = payment({ userId: lia, currency: 'usd', amount: 499, usd: 499 })
-    const { rows, summary } = report([gone, guest])
-    const deleted = rows.find((r) => r.product === 'advisors_bundle')!
+    const { rows, summary } = report([kept, gone, guest], {
+      users: [
+        ...users,
+        { _id: deletedId, email: `deleted-${deletedId.toString()}@deleted.avarobe.invalid`, createdAt: new Date('2026-10-01T10:00:00Z'), location: { country: 'US', region: 'TX', source: 'edge' as const, at: new Date() }, locale: 'en' as const, acquisition: null, deletedAt: new Date() },
+      ],
+    })
+    const byProduct = new Map(rows.map((r) => [r.product, r]))
 
-    assert.equal(deleted.accountDeleted, true)
-    assert.equal(deleted.email, null)
-    assert.equal(deleted.country, null)
-    assert.equal(deleted.order, 1)
-    assert.equal(rows.find((r) => r.product === 'color_report')!.accountDeleted, false)
-    assert.equal(summary.revenueUsd, 2489)
-    assert.equal(summary.buyers, 2)
+    assert.equal(byProduct.get('advisors_bundle')!.accountDeleted, true)
+    assert.equal(byProduct.get('advisors_bundle')!.email, null)
+    // What the row kept still shows.
+    assert.equal(byProduct.get('advisors_bundle')!.country, 'US')
+    assert.equal(byProduct.get('magazine')!.accountDeleted, true)
+    assert.equal(byProduct.get('magazine')!.country, null)
+    assert.equal(byProduct.get('color_report')!.accountDeleted, false)
+    assert.equal(summary.revenueUsd, 1990 + 990 + 499)
+    assert.equal(summary.buyers, 3)
   })
 
   it('leaves refunds out of revenue and the splits, and counts buyers and new buyers', () => {

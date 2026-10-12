@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 
 import { env } from '../../config/env.js'
 import type { AvatarDocument, ColorsNotify } from '../../types/mongo.js'
-import { isGuestEmail } from '../../utils/guests.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import type { AiFailure } from '../../utils/openai.js'
 import { withLocale } from '../../utils/request-locale.js'
 import { failStaleColorReads } from '../../utils/stale-jobs.js'
@@ -123,7 +123,7 @@ async function giveUp(app: FastifyInstance, avatar: Pick<AvatarDocument, '_id' |
 async function recipientOf(app: FastifyInstance, avatar: Pick<AvatarDocument, 'userId'>) {
   const user = await app.collections.users.findOne({ _id: avatar.userId })
 
-  return user && !user.guest && !isGuestEmail(user.email) ? user : null
+  return user && !user.guest && !user.deletedAt && !isPlaceholderEmail(user.email) ? user : null
 }
 
 let running = false

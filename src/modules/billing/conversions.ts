@@ -5,7 +5,7 @@ import { ObjectId } from 'mongodb'
 import type Stripe from 'stripe'
 
 import { env } from '../../config/env.js'
-import { isGuestEmail } from '../../utils/guests.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { errorMessage } from '../../utils/http.js'
 import { isAdmin } from './entitlements.js'
 
@@ -98,11 +98,12 @@ export type MetaCustomer = { email?: string | null; userId?: string | null; coun
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
 // A real address, trimmed and lowercased as Meta asks: never a guest's
-// placeholder (utils/guests.ts), which is nobody's.
+// placeholder or a deleted account's alias (utils/deleted-accounts.ts),
+// which are nobody's.
 export function customerEmail(email: string | null | undefined) {
   const normalized = email?.trim().toLowerCase()
 
-  return normalized && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !isGuestEmail(normalized) ? normalized : undefined
+  return normalized && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !isPlaceholderEmail(normalized) ? normalized : undefined
 }
 
 // A two-letter ISO country code, uppercase, or nothing.

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { type Filter, ObjectId } from 'mongodb'
@@ -20,6 +20,7 @@ import type {
   RefundUsage,
   UserDocument,
 } from '../../types/mongo.js'
+import { emailHash, isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { isGuestEmail } from '../../utils/guests.js'
 import { errorMessage } from '../../utils/http.js'
 import { InvalidImageError, normalizeScreenshot } from '../../utils/images.js'
@@ -374,9 +375,7 @@ export function newRef() {
   return `R-${[...bytes].map((byte) => CROCKFORD[byte % 32]).join('')}`
 }
 
-export function emailHash(email: string) {
-  return createHash('sha256').update(email.trim().toLowerCase()).digest('hex')
-}
+export { emailHash }
 
 // When a request should be decided by: 2 business days, 1 for a Brazilian
 // withdrawal (the issuer is told at once, Decreto 7.962 art. 5 §3).
@@ -476,18 +475,25 @@ export async function refundUsage(
 }
 
 // Who's asking, for the founder: earlier refunds and requests (by account
-// or email), what they paid, how they came, and the same card on someone
-// else's request.
+// or email, an account of theirs deleted before included), what they paid,
+// how they came, and the same card on someone else's request.
 export async function refundHistory(
   app: FastifyInstance,
   input: { userId: ObjectId | null; email: string | null; emailHash: string; fingerprint: string | null; excludeId?: ObjectId | null },
 ): Promise<RefundRequestHistory> {
   const userId = input.userId
   const others = { $or: [...(userId ? [{ userId }] : []), { emailHash: input.emailHash }], ...(input.excludeId ? { _id: { $ne: input.excludeId } } : {}) }
+  // The same email's accounts deleted before (their row keeps its hash).
+  const earlier = await app.collections.users
+    .find({ emailHash: input.emailHash, deletedAt: { $ne: null }, ...(userId ? { _id: { $ne: userId } } : {}) }, { projection: { _id: 1 } })
+    .toArray()
+  const accounts = [...(userId ? [userId] : []), ...earlier.map((account) => account._id)]
   const [user, purchases, guestOrders, requests, cardSeen] = await Promise.all([
     userId ? app.collections.users.findOne({ _id: userId }, { projection: { createdAt: 1, acquisition: 1 } }) : null,
-    userId
-      ? app.collections.purchases.find({ userId, amountTotal: { $gt: 0 } }, { projection: { amountTotal: 1, amountUsd: 1, currency: 1, refundedAt: 1, refund: 1 } }).toArray()
+    accounts.length > 0
+      ? app.collections.purchases
+          .find({ userId: { $in: accounts }, amountTotal: { $gt: 0 } }, { projection: { amountTotal: 1, amountUsd: 1, currency: 1, refundedAt: 1, refund: 1 } })
+          .toArray()
       : [],
     input.email
       ? app.collections.guideOrders.find({ email: input.email.toLowerCase(), userId: null, amount: { $gt: 0 } }, { projection: { amount: 1, currency: 1, refundedAt: 1, refund: 1 } }).toArray()
@@ -713,7 +719,7 @@ export async function planFor(app: FastifyInstance, request: RefundRequestDocume
     purchaseIds.length ? app.collections.purchases.find({ _id: { $in: purchaseIds } }).toArray() : [],
     orderIds.length ? app.collections.guideOrders.find({ _id: { $in: orderIds } }).toArray() : [],
     request.userId
-      ? app.collections.users.findOne({ _id: request.userId }, { projection: { credits: 1, eventCredits: 1, magazineCredits: 1, pro: 1 } })
+      ? app.collections.users.findOne({ _id: request.userId }, { projection: { credits: 1, eventCredits: 1, magazineCredits: 1, pro: 1, deletedAt: 1 } })
       : null,
   ])
   const purchaseById = new Map(purchases.map((purchase) => [purchase._id.toString(), purchase]))
@@ -781,7 +787,8 @@ export async function planFor(app: FastifyInstance, request: RefundRequestDocume
     warnings.push(proWarning)
   }
 
-  const accountGone = Boolean(request.userId) && !user
+  // Deleted: its row stays (me/delete-account.ts), or, before Oct 2026, it's gone.
+  const accountGone = Boolean(request.userId) && (!user || Boolean(user.deletedAt))
 
   if (accountGone) {
     warnings.push('Account deleted: money back only')
@@ -1510,7 +1517,7 @@ export async function createGuideRefundRequest(
     throw new RefundRequestError(409, WRITE_TO_US.orderWindow, 'window')
   }
 
-  const email = order.email ?? (account && !isGuestEmail(account.email) ? account.email : null)
+  const email = order.email ?? (account && !isPlaceholderEmail(account.email) ? account.email : null)
 
   if (!email) {
     throw new RefundRequestError(409, WRITE_TO_US.orderNoEmail, 'email')

@@ -238,7 +238,7 @@ async function requestDetail(app: FastifyInstance, request: RefundRequestDocumen
       email: request.email,
       firstName: request.firstName,
       userId: request.userId?.toString() ?? null,
-      accountDeleted: Boolean(request.userId) && !user,
+      accountDeleted: Boolean(request.userId) && (!user || Boolean(user.deletedAt)),
       createdAt: user?.createdAt.toISOString() ?? null,
       country: user?.location?.country ?? request.market.signupCountry ?? request.market.requestCountry ?? null,
       region: user?.location?.region ?? null,

@@ -9,11 +9,10 @@ import { LOCALES } from '../../utils/locale.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
-import { forgetRefundRequests } from '../billing/refund-requests.js'
 import { cancelProNow } from '../billing/stripe.js'
 import { ONCE_PER_PERSON, REPEAT_AFTER_MS, SURVEY_QUESTIONS, type SurveyQuestion } from '../survey/questions.js'
 
-import { deleteUserContent, forgetPurchases } from './content.js'
+import { deleteAccount } from './delete-account.js'
 
 const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
@@ -178,9 +177,10 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     return { user: serializeUser(user) }
   })
 
-  // Deletes the account and every photo and render tied to it. Promised in
-  // the privacy notice, so it hard-deletes rather than soft-deleting. Its
-  // purchases stay for the books, anonymized (forgetPurchases).
+  // Deletes the account: every photo and render of the person and her name
+  // go, she can't sign in anymore, and the rest stays for our records
+  // without her email in readable form (delete-account.ts), as the privacy
+  // notice says.
   app.delete('/', async (request, reply) => {
     const userId = requireUserId(request)
     const user = await app.collections.users.findOne({ _id: userId }, { projection: { pro: 1 } })
@@ -196,19 +196,9 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const { files } = await deleteUserContent(app, userId)
-    // Refund requests stay for the books: screenshots go, decided ones are
-    // scrubbed, open ones can still be decided (money back only).
-    await forgetRefundRequests(app, userId)
-    await Promise.all([
-      app.collections.refreshTokens.deleteMany({ userId }),
-      app.collections.passkeys.deleteMany({ userId }),
-      app.collections.authChallenges.deleteMany({ userId }),
-      forgetPurchases(app, userId),
-    ])
-    await app.collections.users.deleteOne({ _id: userId })
+    const deleted = await deleteAccount(app, userId)
 
-    request.log.info({ userId: userId.toString(), files }, 'Account deleted')
+    request.log.info({ userId: userId.toString(), files: deleted?.files ?? 0, swept: deleted?.swept ?? 0 }, 'Account deleted')
     clearAuthCookies(reply)
 
     return { ok: true }

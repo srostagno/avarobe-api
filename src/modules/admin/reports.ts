@@ -49,6 +49,8 @@ async function summary(app: FastifyInstance, avatar: AvatarDocument, user: UserD
   return {
     userId: user._id.toString(),
     account: user._id.toString().slice(-6),
+    // The account was deleted: the report stays, its pictures are gone.
+    accountDeleted: Boolean(user.deletedAt),
     state: user.location?.region ?? null,
     season: avatar.colorAnalysis?.season ?? null,
     presentation: avatar.body?.presentation ?? null,

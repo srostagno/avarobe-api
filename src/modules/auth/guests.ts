@@ -8,7 +8,7 @@ import { type Locale, requestLocale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { signupLocation } from '../analytics/geo.js'
 import { toAcquisition, trackServerEvent } from '../analytics/service.js'
-import { deleteUserContent, forgetPurchases } from '../me/content.js'
+import { deleteAccount } from '../me/delete-account.js'
 
 // Trying Avarobe before an account (Oct 2026). 74% of visitors left at the
 // sign-up form (Oct 1–7) and the emails it collected sold nothing, so the
@@ -108,29 +108,40 @@ export async function claimGuest(
   }
 }
 
-// Guests who never saved, after GUEST_TTL_DAYS: their selfie, colors and
-// anything they made, their sessions, and the account itself. Nobody can
-// sign back in to a guest once its cookies are gone, so it would only sit
-// there. What a guest paid for (its checkout's email had an account already)
-// stays for the books, anonymized like a deleted account's.
+// Guests who never saved, after GUEST_TTL_DAYS: deleted like an account
+// (me/delete-account.ts): their photos go, the row and the rest stay for our
+// records. Nobody can sign back in to a guest once its cookies are gone. A
+// guest who paid for anything (its checkout's email had an account already)
+// is never touched: what it bought stays on it as it is.
 export async function deleteStaleGuests(app: FastifyInstance, now = new Date()) {
   const stale = await app.collections.users
-    .find({ guest: true, createdAt: { $lt: new Date(now.getTime() - env.GUEST_TTL_DAYS * DAY_MS) } }, { projection: { _id: 1 } })
+    .find(
+      { guest: true, deletedAt: null, paidAt: null, createdAt: { $lt: new Date(now.getTime() - env.GUEST_TTL_DAYS * DAY_MS) } },
+      { projection: { _id: 1 } },
+    )
     .limit(200)
     .toArray()
+  const ids = stale.map((guest) => guest._id)
+  // A refund takes `paidAt` away; the purchase stays.
+  const [bought, books] = ids.length > 0
+    ? await Promise.all([
+        app.collections.purchases.distinct('userId', { userId: { $in: ids } }),
+        app.collections.guideOrders.distinct('userId', { userId: { $in: ids } }),
+      ])
+    : [[], []]
+  const paid = new Set([...bought, ...books].filter((id): id is ObjectId => Boolean(id)).map((id) => id.toString()))
+  let deleted = 0
 
   for (const { _id: userId } of stale) {
-    await deleteUserContent(app, userId)
-    await Promise.all([
-      app.collections.refreshTokens.deleteMany({ userId }),
-      app.collections.passkeys.deleteMany({ userId }),
-      app.collections.authChallenges.deleteMany({ userId }),
-      forgetPurchases(app, userId, now),
-    ])
-    await app.collections.users.deleteOne({ _id: userId, guest: true })
+    if (paid.has(userId.toString())) {
+      continue
+    }
+
+    await deleteAccount(app, userId, now)
+    deleted += 1
   }
 
-  return stale.length
+  return deleted
 }
 
 export function startGuestCleanup(app: FastifyInstance) {

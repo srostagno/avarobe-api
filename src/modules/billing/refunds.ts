@@ -11,6 +11,7 @@ import type {
   RefundRequestFlag,
   UserDocument,
 } from '../../types/mongo.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { errorMessage } from '../../utils/http.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { adminUserIds } from './entitlements.js'
@@ -760,9 +761,11 @@ export async function refundsReport(app: FastifyInstance, days: number) {
     }),
   ])
   const users = await app.collections.users
-    .find({ _id: { $in: refunded.map((purchase) => purchase.userId) } }, { projection: { email: 1, createdAt: 1 } })
+    .find({ _id: { $in: refunded.map((purchase) => purchase.userId) } }, { projection: { email: 1, createdAt: 1, deletedAt: 1 } })
     .toArray()
-  const emails = new Map(users.map((user) => [user._id.toString(), user.email]))
+  const emails = new Map(users.filter((user) => !isPlaceholderEmail(user.email)).map((user) => [user._id.toString(), user.email]))
+  const deleted = new Set(users.filter((user) => user.deletedAt).map((user) => user._id.toString()))
+  const kept = new Set(users.map((user) => user._id.toString()))
   const requestIds = refunded.map((purchase) => purchase.refund?.requestId).filter((id): id is ObjectId => Boolean(id))
   const requests = requestIds.length
     ? await app.collections.refundRequests.find({ _id: { $in: requestIds } }, { projection: { ref: 1 } }).toArray()
@@ -786,8 +789,9 @@ export async function refundsReport(app: FastifyInstance, days: number) {
       id: purchase._id.toString(),
       userId: purchase.userId.toString(),
       email: emails.get(purchase.userId.toString()) ?? null,
-      // The account was deleted since (its purchases are kept, anonymized).
-      accountDeleted: !emails.has(purchase.userId.toString()),
+      // The account was deleted since (its row and purchases are kept, or,
+      // before Oct 2026, it's gone).
+      accountDeleted: deleted.has(purchase.userId.toString()) || !kept.has(purchase.userId.toString()),
       product: purchase.product,
       amount: purchase.refund?.amount ?? purchase.amountTotal,
       currency: purchase.currency,

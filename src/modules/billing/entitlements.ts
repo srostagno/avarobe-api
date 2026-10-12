@@ -4,6 +4,7 @@ import type { ObjectId } from 'mongodb'
 import { env } from '../../config/env.js'
 import { limitMessages } from '../../i18n/limits.js'
 import type { ProSubscription, UserDocument } from '../../types/mongo.js'
+import { emailHash } from '../../utils/deleted-accounts.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { timeZoneFor } from '../../utils/timezones.js'
 import { trackServerEvent } from '../analytics/service.js'
@@ -81,10 +82,12 @@ export function isAdmin(user: Pick<UserDocument, 'email'>) {
   return compEmails().has(user.email.toLowerCase())
 }
 
-// Admin accounts, to leave them out of numbers and reviews.
+// Admin accounts, to leave them out of numbers and reviews: a deleted one
+// (its email now an alias) by its email's hash.
 export async function adminUserIds(app: FastifyInstance): Promise<ObjectId[]> {
+  const emails = [...compEmails()]
   const users = await app.collections.users
-    .find({ email: { $in: [...compEmails()] } }, { projection: { _id: 1 } })
+    .find({ $or: [{ email: { $in: emails } }, { emailHash: { $in: emails.map(emailHash) } }] }, { projection: { _id: 1 } })
     .toArray()
 
   return users.map((user) => user._id)
