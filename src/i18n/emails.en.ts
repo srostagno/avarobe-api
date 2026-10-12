@@ -438,8 +438,8 @@ export const enEmails = {
       'Thank you for your order. Your copy of The Outfit Formula Book is ready: 120 combinations that always work, the Color, Shape and Finish method, a color pairs cheat sheet and printable planners.',
     button: 'Download my guide (PDF)',
     keep: 'Save it to your phone or print it. This link is yours and works anytime, so keep this email.',
-    // The 7-day refund, from this email (no account needed).
-    refund: 'Changed your mind? Get a refund within 7 days',
+    // A refund request, from this email (no account needed).
+    refund: 'Changed your mind? Request a refund within 7 days',
     colors: 'Curious which of these colors are yours? Avarobe finds your color season from one selfie, free.',
   },
 
@@ -671,6 +671,78 @@ export const enEmails = {
       paletteCaption: 'Your colors. Every formula in the book works with them.',
       // The book is in English: said where the email isn't.
       language: '',
+    },
+  },
+
+  // Refund requests (billing/refund-requests.ts): when one arrives and when
+  // it's decided. Transactional: no unsubscribe link. Prices and dates come
+  // formatted for the reader; the product is its short name.
+  refund: {
+    eyebrow: 'Avarobe',
+    // Under the email. {email} becomes the address (a link in the HTML part).
+    help: 'Questions? Reply to this email, or write to {email}.',
+    // What they picked in the form ("What you told us: …").
+    categories: {
+      not_accurate: 'My colors or season don’t match me',
+      quality: 'The results looked wrong or low quality',
+      technical: 'Something didn’t work or I couldn’t get in',
+      not_expected: 'It isn’t what the page described',
+      duplicate: 'I paid twice or already had it',
+      mistake: 'I bought it by mistake',
+      other: 'Something else',
+    },
+    received: {
+      subject: 'We got your refund request',
+      preheader: 'We’ll reply within 2 business days.',
+      heading: 'Your request is in.',
+      intro: (product: string, price: string, date: string, ref: string) =>
+        `We received your request for a refund of your ${product} (${price}, bought ${date}). Your reference is ${ref}.`,
+      next: 'A person reviews every request, and we’ll email you our answer within 2 business days. Until then nothing changes: your purchase keeps working.',
+      ifApproved: (price: string, removed: string) => `If we approve it, ${price} goes back to your card in 5–10 business days and ${removed}.`,
+      removed: {
+        report: 'what it unlocked, its report included, is removed from your account',
+        pro: 'Pro ends, and the looks it added that are left are removed',
+        pack: 'the looks it added that are left are removed',
+        guide: 'the book’s download link stops working',
+      },
+      proPaused: 'Pro won’t renew while we review your request. If we can’t approve it, it continues as before.',
+      withdrawal:
+        'Bought in Brazil: you’re within your 7-day right of withdrawal (art. 49 of the Consumer Defense Code), so this purchase will be refunded in full.',
+      reason: (label: string) => `What you told us: ${label}.`,
+      reply: 'Want to add something? Reply to this email.',
+    },
+    approved: {
+      subject: 'Your refund is on its way',
+      preheader: (price: string) => `${price} back to your card in 5–10 business days.`,
+      heading: 'Refund approved.',
+      body: (price: string, product: string, ref: string) =>
+        `We approved your refund of ${price} for your ${product}. It reaches your card in 5–10 business days, depending on your bank. Reference: ${ref}.`,
+      removed: {
+        report: 'What it unlocked, its report included, has been removed from your account.',
+        pro: 'Pro has ended, and the looks it added that were left have been removed.',
+        pack: 'The looks it added that were left have been removed.',
+        guide: 'The book’s download link no longer works.',
+      },
+      thanks: 'Thanks for trying Avarobe. If you’d like to tell us more, reply to this email.',
+    },
+    rejected: {
+      subject: 'About your refund request',
+      preheader: (ref: string) => `Our answer to your request ${ref}.`,
+      heading: 'We couldn’t approve your refund.',
+      body: (product: string, ref: string) => `We reviewed your request for a refund of your ${product} (${ref}) and couldn’t approve it.`,
+      why: (text: string) => `Why: ${text}`,
+      stays: 'Your purchase stays active, and everything it includes is still yours.',
+      pro: (date: string) => `Pro continues as before and renews on ${date}, unless you cancel it in your account settings.`,
+      again: 'If you think we got something wrong, reply to this email and we’ll take another look.',
+    },
+    // Why it wasn't approved ('other': only the note the founder wrote).
+    codes: {
+      resolved: 'We fixed the problem you told us about, so your purchase works as it should.',
+      works_as_described: 'We checked your account, and the product works and delivers what its page describes.',
+      used: 'The purchase has been used in full (for example, the report was opened and its looks were made), and what you described doesn’t point to a problem with it.',
+      outside_policy: 'This purchase isn’t covered by our refund policy (see Refunds in our Terms).',
+      duplicate: 'We already handled a refund request for this purchase.',
+      withdrawn: 'You told us you’d rather keep it.',
     },
   },
 

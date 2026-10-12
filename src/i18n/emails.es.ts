@@ -398,7 +398,7 @@ export const esEmails: EmailCopy = {
       'Gracias por tu compra. Tu ejemplar de El Libro de Fórmulas de Outfits está listo: 120 combinaciones que siempre funcionan, el método Color, Forma y Acabado, una guía rápida de pares de colores y planificadores para imprimir.',
     button: 'Descargar mi guía (PDF)',
     keep: 'Guárdala en tu celular o imprímela. Este enlace es tuyo y funciona siempre, así que conserva este correo.',
-    refund: '¿Cambiaste de opinión? Pide tu reembolso dentro de los 7 días',
+    refund: '¿Cambiaste de opinión? Solicita un reembolso dentro de los 7 días',
     colors: '¿Quieres saber cuáles de estos colores son los tuyos? Avarobe descubre tu estación de color con una selfie, gratis.',
   },
 
@@ -614,6 +614,72 @@ export const esEmails: EmailCopy = {
       paletteHeading: '120 fórmulas de outfits, y aquí está tu paleta para usarlas.',
       paletteCaption: 'Tus colores. Cada fórmula del libro funciona con ellos.',
       language: 'El libro está en inglés.',
+    },
+  },
+
+  refund: {
+    eyebrow: 'Avarobe',
+    help: '¿Dudas? Responde a este correo o escríbenos a {email}.',
+    categories: {
+      not_accurate: 'Mis colores o mi estación no coinciden conmigo',
+      quality: 'Los resultados se veían mal o de baja calidad',
+      technical: 'Algo no funcionó o no pude acceder',
+      not_expected: 'No es lo que describía la página',
+      duplicate: 'Pagué dos veces o ya lo tenía',
+      mistake: 'Lo compré por error',
+      other: 'Otra cosa',
+    },
+    received: {
+      subject: 'Recibimos tu solicitud de reembolso',
+      preheader: 'Te respondemos en un plazo de 2 días hábiles.',
+      heading: 'Tu solicitud llegó.',
+      intro: (product: string, price: string, date: string, ref: string) =>
+        `Recibimos tu solicitud de reembolso de la compra “${product}” (${price}, del ${date}). Tu referencia es ${ref}.`,
+      next: 'Una persona revisa cada solicitud, y te enviaremos nuestra respuesta por correo en un plazo de 2 días hábiles. Mientras tanto nada cambia: tu compra sigue funcionando.',
+      ifApproved: (price: string, removed: string) => `Si la aprobamos, ${price} vuelve a tu tarjeta en 5 a 10 días hábiles y ${removed}.`,
+      removed: {
+        report: 'lo que desbloqueó, incluido su reporte, se quita de tu cuenta',
+        pro: 'Pro termina, y se quitan los looks que agregó y que aún te quedan',
+        pack: 'se quitan los looks que agregó y que aún te quedan',
+        guide: 'el enlace de descarga del libro deja de funcionar',
+      },
+      proPaused: 'Pro no se renovará mientras revisamos tu solicitud. Si no podemos aprobarla, sigue como antes.',
+      withdrawal:
+        'Compra hecha en Brasil: estás dentro de tu plazo de 7 días del derecho de arrepentimiento (art. 49 del Código de Defensa del Consumidor), así que esta compra se reembolsará por completo.',
+      reason: (label: string) => `Lo que nos contaste: ${label}.`,
+      reply: '¿Quieres agregar algo? Responde a este correo.',
+    },
+    approved: {
+      subject: 'Tu reembolso va en camino',
+      preheader: (price: string) => `${price} de vuelta en tu tarjeta en 5 a 10 días hábiles.`,
+      heading: 'Reembolso aprobado.',
+      body: (price: string, product: string, ref: string) =>
+        `Aprobamos el reembolso de ${price} de la compra “${product}”. Llega a tu tarjeta en 5 a 10 días hábiles, según tu banco. Referencia: ${ref}.`,
+      removed: {
+        report: 'Lo que desbloqueó, incluido su reporte, se quitó de tu cuenta.',
+        pro: 'Pro terminó, y se quitaron los looks que agregó y que aún te quedaban.',
+        pack: 'Se quitaron los looks que agregó y que aún te quedaban.',
+        guide: 'El enlace de descarga del libro ya no funciona.',
+      },
+      thanks: 'Gracias por probar Avarobe. Si quieres contarnos más, responde a este correo.',
+    },
+    rejected: {
+      subject: 'Sobre tu solicitud de reembolso',
+      preheader: (ref: string) => `Nuestra respuesta a tu solicitud ${ref}.`,
+      heading: 'No pudimos aprobar tu reembolso.',
+      body: (product: string, ref: string) => `Revisamos tu solicitud de reembolso de la compra “${product}” (${ref}) y no pudimos aprobarla.`,
+      why: (text: string) => `Motivo: ${text}`,
+      stays: 'Tu compra sigue activa y todo lo que incluye sigue siendo tuyo.',
+      pro: (date: string) => `Pro sigue como antes y se renueva el ${date}, salvo que lo canceles en la configuración de tu cuenta.`,
+      again: 'Si crees que nos equivocamos, responde a este correo y lo revisaremos de nuevo.',
+    },
+    codes: {
+      resolved: 'Solucionamos el problema que nos contaste, así que tu compra funciona como debe.',
+      works_as_described: 'Revisamos tu cuenta, y el producto funciona y entrega lo que describe su página.',
+      used: 'La compra ya se usó por completo (por ejemplo, se abrió el reporte y se hicieron sus looks), y lo que describiste no indica un problema con ella.',
+      outside_policy: 'Esta compra no está cubierta por nuestra política de reembolsos (consulta Reembolsos en nuestros Términos).',
+      duplicate: 'Ya atendimos una solicitud de reembolso para esta compra.',
+      withdrawn: 'Nos dijiste que prefieres conservarla.',
     },
   },
 

@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import type { PurchaseDocument, UserDocument } from '../../../types/mongo.js'
-import { refundableUntil, revokePurchase } from '../refunds.js'
+import { brazilWithdrawalUntil, guideRefundableUntil, refundableUntil, revokePurchase } from '../refunds.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const now = Date.parse('2026-10-08T12:00:00Z')
@@ -49,7 +49,7 @@ function fakeApp(user: Partial<UserDocument>, purchases: PurchaseDocument[]) {
   return { app, updates }
 }
 
-describe('the 7-day refund', () => {
+describe('the 7 days to request a refund', () => {
   it('covers every purchase for 7 days after paying', () => {
     for (const product of ['color_report', 'advisors_bundle', 'look_pack', 'outfit_guide', 'event_pass', 'magazine', 'pro_monthly', 'pro_annual', 'pro_trial'] as const) {
       assert.ok(refundableUntil(purchase({ product, createdAt: new Date(now - 6 * DAY) }), {}, now), product)
@@ -73,6 +73,29 @@ describe('the 7-day refund', () => {
     // A switch to annual 3 days into the first week of Pro.
     const first = new Date(now - 5 * DAY)
     assert.ok(refundableUntil(purchase({ product: 'pro_annual', createdAt: new Date(now - 2 * DAY) }), { firstProAt: first }, now))
+  })
+
+  it('in Brazil, count calendar days: the purchase day is left out, to midnight in São Paulo', () => {
+    // Monday Oct 5 at 09:00 in São Paulo.
+    const paidAt = new Date('2026-10-05T12:00:00Z')
+
+    assert.equal(brazilWithdrawalUntil(paidAt).toISOString(), '2026-10-13T02:59:59.999Z')
+    // Monday Oct 12 at 22:00 in São Paulo: past 7 × 24 h, within Brazil's 7 days.
+    const evening = Date.parse('2026-10-13T01:00:00Z')
+    assert.equal(refundableUntil(purchase({ createdAt: paidAt }), {}, evening), null)
+    assert.ok(refundableUntil(purchase({ createdAt: paidAt }), { brazil: true }, evening))
+    assert.equal(refundableUntil(purchase({ createdAt: paidAt }), { brazil: true }, Date.parse('2026-10-13T03:00:00Z')), null)
+    // A purchase just after midnight there still gets its whole 7th day.
+    assert.equal(brazilWithdrawalUntil(new Date('2026-10-05T03:05:00Z')).toISOString(), '2026-10-13T02:59:59.999Z')
+  })
+
+  it('give the book the same days, from its link', () => {
+    const order = { amount: 1490, createdAt: new Date('2026-10-05T12:00:00Z'), refundedAt: null }
+    const evening = Date.parse('2026-10-13T01:00:00Z')
+
+    assert.equal(guideRefundableUntil(order, evening), null)
+    assert.ok(guideRefundableUntil(order, evening, true))
+    assert.equal(guideRefundableUntil({ ...order, refundedAt: new Date() }, evening, true), null)
   })
 
   it('takes the Color Advisor back, and the paid mark when nothing else was bought', async () => {

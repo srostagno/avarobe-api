@@ -70,6 +70,18 @@ export function longDate(date: Date, locale: Locale | null | undefined, timeZone
   return date.toLocaleDateString(INTL_LOCALE[lang], { weekday: 'long', month: 'long', day: 'numeric', timeZone })
 }
 
+// "October 7", "7 de outubro", "7 de octubre": a day inside a sentence
+// ("bought October 7"), with no weekday.
+export function dayMonth(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
+  const lang = locale ?? 'en'
+
+  if (lang === 'en') {
+    return date.toLocaleDateString(INTL_LOCALE.en, { month: 'long', day: 'numeric', timeZone })
+  }
+
+  return date.toLocaleDateString(INTL_LOCALE[lang], { day: 'numeric', month: 'long', timeZone })
+}
+
 // "October 2026", "outubro de 2026", "octubre de 2026".
 export function monthYear(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
   return date.toLocaleDateString(INTL_LOCALE[locale ?? 'en'], { month: 'long', year: 'numeric', timeZone })

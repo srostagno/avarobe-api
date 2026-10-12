@@ -2,7 +2,7 @@ import { env } from '../../config/env.js'
 import { DAILY_CHECKS } from '../../constants/checks.js'
 import { emailCopy, formatMoney, inPersonPrice, longDate, weekdayName, type EmailCopy } from '../../i18n/emails.js'
 import type { ProLimits } from '../../i18n/emails.en.js'
-import type { ColorSwatch, LifecycleEmailKind, PurchaseProduct } from '../../types/mongo.js'
+import type { ColorSwatch, LifecycleEmailKind, PurchaseProduct, RefundReason, RefundRejectCode } from '../../types/mongo.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
 import { seasonName } from '../../utils/seasons.js'
 import { EVENT_LOOKS, annualFirstWeek } from '../billing/entitlements.js'
@@ -125,6 +125,14 @@ function heading(text: string): Block {
 function paragraph(text: string): Block {
   return {
     html: `<p style="margin:0 0 18px 0;font-family:${SANS};font-size:16px;line-height:26px;color:${COLOR.inkSoft};">${esc(text)}</p>`,
+    text,
+  }
+}
+
+// Someone's own words (the founder's note on a refund), line breaks kept.
+function quote(text: string): Block {
+  return {
+    html: `<p style="margin:0 0 18px 0;padding:0 0 0 14px;border-left:3px solid ${COLOR.line};font-family:${SANS};font-size:16px;line-height:26px;color:${COLOR.inkSoft};">${esc(text).replace(/\n/g, '<br>')}</p>`,
     text,
   }
 }
@@ -344,7 +352,7 @@ function greeting(c: EmailCopy, firstName: string): Block {
   return paragraph(firstName.trim() ? c.common.hi(firstName.trim()) : c.common.hiThere)
 }
 
-function footer(recipient: Recipient, promotional: boolean, receipt?: string): Block {
+function footer(recipient: Recipient, promotional: boolean, receipt?: string, helpLine?: string): Block {
   const { c, locale } = reader(recipient)
   const site = home(locale)
   const link = (label: string, url: string) =>
@@ -355,7 +363,7 @@ function footer(recipient: Recipient, promotional: boolean, receipt?: string): B
   // A purchase delivery, maybe to someone without an account.
   if (receipt) {
     const why = c.footer.bought(receipt, recipient.email)
-    const [before = '', after = ''] = c.footer.help.split('{email}')
+    const [before = '', after = ''] = (helpLine ?? c.footer.help).split('{email}')
     const help = `${before}hello@avarobe.com${after}`
     const address = env.EMAIL_POSTAL_ADDRESS
     return {
@@ -390,15 +398,18 @@ function footer(recipient: Recipient, promotional: boolean, receipt?: string): B
 function layout(input: {
   subject: string
   preheader: string
-  hero: { src: string; alt: string }
+  // The picture on top; transactional notes (a refund) go without.
+  hero?: { src: string; alt: string }
   blocks: Block[]
   recipient: Recipient
   promotional?: boolean
   // A purchase delivery: the footer says what they bought, not the account.
   receipt?: string
+  // The footer's help line instead of the delivery's ({email}: hello@).
+  help?: string
 }): EmailContent {
   const { c, locale } = reader(input.recipient)
-  const foot = footer(input.recipient, input.promotional ?? false, input.receipt)
+  const foot = footer(input.recipient, input.promotional ?? false, input.receipt, input.help)
   // Invisible filler after the preheader, so inbox previews don't run into
   // the body text.
   const filler = '&#847;&zwnj;&nbsp;'.repeat(60)
@@ -426,7 +437,7 @@ function layout(input: {
 <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
 <tr><td class="px" style="padding:0 8px 18px 8px;"><a href="${esc(home(locale))}" style="font-family:${SERIF};font-size:30px;line-height:34px;font-style:italic;color:${COLOR.ink};text-decoration:none;">avarobe</a></td></tr>
 <tr><td bgcolor="${COLOR.surface}" style="background:${COLOR.surface};border:1px solid ${COLOR.line};border-radius:22px;">
-<img src="${esc(input.hero.src)}" alt="${esc(input.hero.alt)}" width="598" style="display:block;width:100%;max-width:598px;height:auto;border:0;border-radius:21px 21px 0 0;">
+${input.hero ? `<img src="${esc(input.hero.src)}" alt="${esc(input.hero.alt)}" width="598" style="display:block;width:100%;max-width:598px;height:auto;border:0;border-radius:21px 21px 0 0;">` : ''}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="px" style="padding:34px 40px 30px 40px;">
 ${input.blocks.map((block) => block.html).join('\n')}
 </td></tr></table>
@@ -1104,7 +1115,8 @@ export function trialEndingEmail(input: Recipient & { trialEnd: Date; looksLeft:
 // ---------------------------------------------------------------- products
 
 // The Outfit Formula Book's delivery: the download link, for good.
-// `refundUrl`: the 7-day refund page for this order (no account needed).
+// `refundUrl`: where to request a refund of this order within 7 days (no
+// account needed).
 export function outfitGuideEmail(input: { email: string; firstName: string; downloadUrl: string; refundUrl?: string; locale?: Locale }): EmailContent {
   const recipient: Recipient = { firstName: input.firstName, email: input.email, unsubscribeUrl: '', locale: input.locale }
   const { c, locale } = reader(recipient)
@@ -1126,6 +1138,93 @@ export function outfitGuideEmail(input: { email: string; firstName: string; down
       button(c.common.findMyColors, `${appUrl(locale, '/color-analysis')}?utm_source=guide&utm_medium=email&utm_campaign=outfit_formula_book`),
       ...(input.refundUrl ? [textLink(c.guide.refund, input.refundUrl)] : []),
       signature(c),
+    ],
+  })
+}
+
+// ---------------------------------------------------------------- refunds
+
+// A refund request's emails (billing/refund-requests.ts, refund-notify.ts):
+// when it arrives and when it's decided. Transactional (no unsubscribe), in
+// the language they asked in, with no picture. The product is its short
+// name, the price in its own currency, the date a day in their language.
+export type RefundEmailInput = {
+  email: string
+  firstName: string
+  locale: Locale
+  ref: string
+  product: string
+  price: string
+  purchasedOn: string
+  // What approval takes away, by product: an advisor (or pass or magazine),
+  // Pro, a look pack, the book.
+  kind: 'report' | 'pro' | 'pack' | 'guide'
+}
+
+function refundLayout(input: RefundEmailInput, content: { subject: string; preheader: string; heading: string; blocks: Block[] }) {
+  const recipient: Recipient = { firstName: input.firstName, email: input.email, unsubscribeUrl: '', locale: input.locale }
+  const { c } = reader(recipient)
+
+  return layout({
+    subject: content.subject,
+    preheader: content.preheader,
+    recipient,
+    receipt: input.product,
+    help: c.refund.help,
+    blocks: [eyebrow(c.refund.eyebrow), heading(content.heading), greeting(c, input.firstName), ...content.blocks, signature(c)],
+  })
+}
+
+export function refundReceivedEmail(input: RefundEmailInput & { category: RefundReason; proPaused: boolean; statutory: boolean }): EmailContent {
+  const { c } = reader({ locale: input.locale })
+  const copy = c.refund.received
+
+  return refundLayout(input, {
+    subject: copy.subject,
+    preheader: copy.preheader,
+    heading: copy.heading,
+    blocks: [
+      paragraph(copy.intro(input.product, input.price, input.purchasedOn, input.ref)),
+      ...(input.statutory ? [paragraph(copy.withdrawal)] : []),
+      paragraph(copy.next),
+      paragraph(copy.ifApproved(input.price, copy.removed[input.kind])),
+      ...(input.proPaused ? [paragraph(copy.proPaused)] : []),
+      small(copy.reason(c.refund.categories[input.category])),
+      small(copy.reply),
+    ],
+  })
+}
+
+export function refundApprovedEmail(input: RefundEmailInput): EmailContent {
+  const { c } = reader({ locale: input.locale })
+  const copy = c.refund.approved
+
+  return refundLayout(input, {
+    subject: copy.subject,
+    preheader: copy.preheader(input.price),
+    heading: copy.heading,
+    blocks: [paragraph(copy.body(input.price, input.product, input.ref)), paragraph(copy.removed[input.kind]), paragraph(copy.thanks)],
+  })
+}
+
+// `note`: the founder's words (escaped like every block); 'other' has only
+// the note. `proRenewsOn`: Pro's renewal, put back after the review.
+export function refundRejectedEmail(input: RefundEmailInput & { code: RefundRejectCode; note: string | null; proRenewsOn: string | null }): EmailContent {
+  const { c } = reader({ locale: input.locale })
+  const copy = c.refund.rejected
+  const reason = input.code === 'other' ? null : c.refund.codes[input.code]
+
+  return refundLayout(input, {
+    subject: copy.subject,
+    preheader: copy.preheader(input.ref),
+    heading: copy.heading,
+    blocks: [
+      paragraph(copy.body(input.product, input.ref)),
+      ...(reason ? [paragraph(copy.why(reason))] : []),
+      ...(input.note ? [quote(input.note)] : []),
+      paragraph(copy.stays),
+      ...(input.proRenewsOn ? [paragraph(copy.pro(input.proRenewsOn))] : []),
+      paragraph(copy.again),
     ],
   })
 }

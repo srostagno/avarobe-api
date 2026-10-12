@@ -28,7 +28,7 @@ export type Payment = {
   usd: number
   at: Date
   refundedAt: Date | null
-  refundSource: 'app' | 'stripe' | null
+  refundSource: 'app' | 'stripe' | 'admin' | null
   guestEmail: string | null
 }
 
@@ -40,7 +40,7 @@ export type TransactionRow = {
   currency: string
   usd: number
   refunded: boolean
-  refundSource: 'app' | 'stripe' | null
+  refundSource: 'app' | 'stripe' | 'admin' | null
   account: string | null
   email: string | null
   country: string | null

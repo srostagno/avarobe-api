@@ -10,7 +10,11 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { REGION_CURRENCY, regionalAmount, type PricingRegion } from '../src/modules/billing/pricing.js'
+import { ObjectId } from 'mongodb'
+
+import { REGION_CURRENCY, regionalAmount, toUsdCents, type PricingRegion } from '../src/modules/billing/pricing.js'
+import { decisionEmailFor, founderEmail, receivedEmailFor, reminderDigest } from '../src/modules/billing/refund-notify.js'
+import type { PurchaseProduct, RefundRejectCode, RefundRequestDocument } from '../src/types/mongo.js'
 import { editText } from '../src/modules/lifecycle/assets.js'
 import { shortProductName } from '../src/modules/lifecycle/checkout-link.js'
 import { EDITS } from '../src/modules/looks/edits.js'
@@ -151,6 +155,175 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     'auth-reset': passwordResetEmail({ firstName: 'Nora', url: link, locale }),
     'auth-changed': passwordChangedEmail({ firstName: 'Nora', resetUrl: link, locale }),
     'auth-passkey': passkeyAddedEmail({ firstName: 'Nora', deviceName: 'iPhone', accountUrl: link, locale }),
+    // Refund requests (billing/refund-requests.ts): received, approved, and
+    // rejected with each reason.
+    ...refundPreviews(locale, region),
+  }
+}
+
+// A sample refund request, as billing/refund-requests.ts stores it.
+function sampleRequest(fields: Partial<RefundRequestDocument> & { region?: PricingRegion } = {}): RefundRequestDocument {
+  const { region = 'us', ...rest } = fields
+  const currency = REGION_CURRENCY[region]
+  const product: PurchaseProduct = rest.product ?? 'color_report'
+  const amount = regionalAmount(product, region)
+  const paidAt = new Date(Date.now() - 26 * 60 * 60 * 1000)
+  const purchaseId = new ObjectId()
+
+  return {
+    _id: new ObjectId(),
+    ref: 'R-7F3K2Q',
+    source: 'account',
+    userId: new ObjectId(),
+    guideOrderId: null,
+    purchaseId,
+    product,
+    covers: [{ purchaseId, guideOrderId: null, product, amount, currency, paidAt, stripePaymentIntentId: 'pi_preview', stripeInvoiceId: null }],
+    amount,
+    currency,
+    amountUsd: toUsdCents(amount, currency),
+    purchasedAt: paidAt,
+    email: 'nora@example.com',
+    emailHash: 'preview',
+    firstName: 'Nora',
+    locale: 'en',
+    targetKey: 'p:preview',
+    market: { currency, region, signupCountry: 'US', requestCountry: 'US', card: { brand: 'visa', last4: '4242', country: 'US', fingerprint: 'fp' }, disputed: false },
+    within7d: true,
+    statutory: null,
+    oldGuarantee: false,
+    reasonCategory: 'not_accurate',
+    explanation:
+      'It says Soft Autumn, but warm colors wash out my face and an in-person analysis gave me Winter.\nI opened the report once and tried the drape test in daylight.',
+    attachment: null,
+    usage: {
+      at: new Date(),
+      hoursSincePurchase: 26,
+      colorReportOpenedAt: new Date(paidAt.getTime() + 10 * 60 * 1000),
+      styleReportOpenedAt: null,
+      hairReadAt: null,
+      drapeAt: new Date(paidAt.getTime() + 15 * 60 * 1000),
+      looksMade: 1,
+      looksWithCredit: 0,
+      creditsGiven: 0,
+      creditsLeft: 1,
+      hairstylesMade: 0,
+      eventsStyled: 0,
+      magazinesMade: 0,
+      checksMade: 2,
+      avatarRuns: null,
+      guideDownloads: null,
+      guideLastDownloadAt: null,
+      lastSeenAt: new Date(Date.now() - 60 * 60 * 1000),
+      events: { page_view: 14, report_opened: 1 },
+    },
+    history: {
+      refundsBefore: 0,
+      requestsBefore: 0,
+      approvedBefore: 0,
+      rejectedBefore: 0,
+      openRequests: 0,
+      purchases: 1,
+      paidUsd: 499,
+      accountCreatedAt: new Date(paidAt.getTime() - 20 * 60 * 1000),
+      channel: 'meta',
+      campaign: 'launch_us',
+      cardSeenOn: 0,
+    },
+    flags: ['used'],
+    proPause: null,
+    status: 'pending',
+    decision: null,
+    attempts: [],
+    refund: null,
+    internalNote: null,
+    emails: { founderAt: null, receivedAt: null, decisionAt: null, reminderAt: null },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...rest,
+  }
+}
+
+const REJECT_CODES: RefundRejectCode[] = ['resolved', 'works_as_described', 'used', 'outside_policy', 'duplicate', 'withdrawn', 'other']
+
+function refundPreviews(locale: Locale, region: PricingRegion): Record<string, EmailContent> {
+  const base = sampleRequest({ locale, region })
+  const rejected = (code: RefundRejectCode) =>
+    decisionEmailFor(
+      {
+        ...base,
+        status: 'rejected',
+        decision: {
+          outcome: 'rejected',
+          by: 'admin',
+          adminId: null,
+          adminEmail: null,
+          at: new Date(),
+          code,
+          note: code === 'other' || code === 'resolved' ? 'We fixed the report on your account: it opens now on every phone.' : null,
+          cdcOverride: false,
+        },
+      },
+      { proRenewsAt: null },
+    )
+
+  return {
+    'refund-received': receivedEmailFor(base),
+    'refund-received-pro': receivedEmailFor({
+      ...sampleRequest({ locale, region, product: 'pro_monthly' }),
+      proPause: { subscriptionId: 'sub_preview', wasCancelAtPeriodEnd: false, at: new Date(), restoredAt: null },
+    }),
+    'refund-received-withdrawal': receivedEmailFor({ ...base, statutory: { law: 'br_cdc_49', until: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000) } }),
+    'refund-approved': decisionEmailFor(
+      { ...base, status: 'refunded', refund: { stripeRefundIds: ['re_preview'], amount: base.amount, via: 'admin', at: new Date(), partial: false } },
+      { proRenewsAt: null },
+    ),
+    'refund-approved-guide': decisionEmailFor(
+      {
+        ...sampleRequest({ locale, region, product: 'outfit_guide' }),
+        status: 'refunded',
+        refund: { stripeRefundIds: ['re_preview'], amount: regionalAmount('outfit_guide', region), via: 'admin', at: new Date(), partial: false },
+      },
+      { proRenewsAt: null },
+    ),
+    ...Object.fromEntries(REJECT_CODES.map((code) => [`refund-rejected-${code.replace(/_/g, '-')}`, rejected(code)])),
+    'refund-rejected-pro': decisionEmailFor(
+      {
+        ...sampleRequest({ locale, region, product: 'pro_monthly' }),
+        status: 'rejected',
+        decision: { outcome: 'rejected', by: 'admin', adminId: null, adminEmail: null, at: new Date(), code: 'used', note: null, cdcOverride: false },
+      },
+      { proRenewsAt: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000) },
+    ),
+  }
+}
+
+// The founder's emails (Spanish, Chile's time): a Brazilian withdrawal with
+// a screenshot, an ordinary request, and the reminder digest.
+function founderPreviews(): Record<string, EmailContent> {
+  const plan = (request: RefundRequestDocument) => ({ total: request.amount, currency: request.currency, endsPro: false })
+  const withdrawal = sampleRequest({
+    region: 'br',
+    locale: 'pt-BR',
+    explanation: 'Não gostei do resultado, as cores não combinam comigo.',
+    statutory: { law: 'br_cdc_49', until: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000) },
+    attachment: { key: 'users/000000000000000000000000/refund-preview.jpg', bytes: 182_000 },
+    market: { currency: 'brl', region: 'br', signupCountry: 'BR', requestCountry: 'BR', card: { brand: 'mastercard', last4: '0002', country: 'BR', fingerprint: 'fp' }, disputed: false },
+    reasonCategory: 'not_accurate',
+  })
+  const ordinary = sampleRequest({ flags: ['repeat', 'used'], history: { ...sampleRequest().history, refundsBefore: 1, requestsBefore: 1, approvedBefore: 1 } })
+  const account = { createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), location: null, locale: 'en' as const, acquisition: null }
+
+  return {
+    'refund-founder-withdrawal': founderEmail({
+      request: withdrawal,
+      account: { ...account, locale: 'pt-BR', location: { country: 'BR', region: 'SP', source: 'edge', at: new Date() } },
+      plan: plan(withdrawal),
+      removesEs: ['el Asesor de Color (reporte y acceso)'],
+      test: false,
+    }),
+    'refund-founder': founderEmail({ request: ordinary, account, plan: plan(ordinary), removesEs: ['el Asesor de Color (reporte y acceso)'], test: false }),
+    'refund-reminders': reminderDigest([withdrawal, ordinary], new Date(Date.now() + 26 * 60 * 60 * 1000)),
   }
 }
 
@@ -325,6 +498,8 @@ for (const { locale, region } of MARKETS) {
     emails[locale === 'en' ? name : `${locale}/${name}`] = email
   }
 }
+
+Object.assign(emails, founderPreviews())
 
 const log = {
   info: (...args: unknown[]) => console.log(...args),

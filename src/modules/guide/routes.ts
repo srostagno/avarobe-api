@@ -13,9 +13,12 @@ import { pricingRegion } from '../billing/pricing.js'
 import { optionalUserId } from '../analytics/service.js'
 import { attributionMetadata } from '../billing/conversions.js'
 import { billingState, isAdmin, loadBillingUser } from '../billing/entitlements.js'
-import { REFUND_REASONS, RefundError, guideRefundableUntil, refundGuideOrder } from '../billing/refunds.js'
+import { brazilWithdrawalUntil, guideRefundableUntil } from '../billing/refunds.js'
+import { RefundRequestError, brazilian, createGuideRefundRequest, customerView, guideOrderRequest } from '../billing/refund-requests.js'
 import { createGuideCheckout, retrieveSession, stripeConfigured } from '../billing/stripe.js'
-import type { GuideOrderDocument, RefundReason } from '../../types/mongo.js'
+import type { GuideOrderDocument } from '../../types/mongo.js'
+import type { Locale } from '../../utils/locale.js'
+import { requestGeo } from '../analytics/geo.js'
 import { compGuideOrder, fulfillGuide, guideDownloadUrl, guideRefundToken, guideSettled, isGuideSession } from './service.js'
 
 // Meta's _fbc can be long; attributionMetadata drops what Stripe can't keep.
@@ -30,21 +33,45 @@ const sessionSchema = z.object({ session_id: z.string().regex(/^cs_(test|live)_[
 
 const TOKEN = /^[A-Za-z0-9_-]{20,64}$/
 
-const refundSchema = z.object({
+// The form's fields are checked by the request itself (validateRequestInput),
+// so its message is the customer's.
+const refundRequestSchema = z.object({
   token: z.string().regex(TOKEN),
-  reason: z.enum(REFUND_REASONS as [RefundReason, ...RefundReason[]]).optional(),
+  category: z.unknown(),
+  explanation: z.unknown(),
+  acknowledge: z.unknown(),
 })
 
 // What the thank-you page and the refund page show of an order: its link,
-// and the 7-day refund while it lasts (`token`: the refund key).
-async function orderView(app: FastifyInstance, order: GuideOrderDocument) {
+// and the refund request (`token`: the refund key): until when one can be
+// asked (`requestableUntil`), the one asked, and Brazil's withdrawal while
+// it lasts. `refundableUntil` stays for the web before Oct 12, 2026, always
+// null, so it never offers a one-tap refund.
+async function orderView(app: FastifyInstance, order: GuideOrderDocument, locale: Locale) {
+  const [request, account] = await Promise.all([
+    guideOrderRequest(app, order._id),
+    order.userId ? app.collections.users.findOne({ _id: order.userId }, { projection: { location: 1, locale: 1 } }) : null,
+  ])
+  const brazil = brazilian({
+    currency: order.currency,
+    signupCountry: account?.location?.country ?? null,
+    cardCountry: null,
+    locale: account?.locale,
+    pageLocale: locale,
+  })
+  const until = request ? null : guideRefundableUntil(order, Date.now(), brazil)
+  const withdrawal = brazil ? guideRefundableUntil(order, Date.now(), true) : null
+
   return {
     downloadUrl: order.refundedAt ? null : guideDownloadUrl(order),
     email: order.email,
     token: order.amount > 0 ? await guideRefundToken(app, order) : null,
     amount: order.amount,
     currency: order.currency,
-    refundableUntil: guideRefundableUntil(order)?.toISOString() ?? null,
+    refundableUntil: null,
+    requestableUntil: until?.toISOString() ?? null,
+    refundRequest: request ? customerView(request, locale) : null,
+    withdrawal: withdrawal ? { law: 'br_cdc_49' as const, until: brazilWithdrawalUntil(order.createdAt).toISOString() } : null,
     refundedAt: order.refundedAt?.toISOString() ?? null,
   }
 }
@@ -113,7 +140,7 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(502).send({ message: 'We could not prepare your download. Please refresh.' })
     }
 
-    return orderView(app, order)
+    return orderView(app, order, requestLocale(request))
   })
 
   // The refund page the guide email links to (the web's /guide/thanks with
@@ -126,31 +153,49 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: 'We could not find this order.' })
     }
 
-    return orderView(app, order)
+    return orderView(app, order, requestLocale(request))
   })
 
-  // The 7-day refund, guests included: the order's refund key (in its email
-  // and on the thank-you page; the download link can't refund it).
-  app.post('/refund', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const parsed = parseBody(refundSchema, request.body ?? {})
+  // A refund request for the book, guests included: the order's refund key
+  // (in its email and on the thank-you page; the download link can't ask),
+  // the category, their explanation and that they know the link stops. 201
+  // new, 200 the open one already there.
+  app.post('/refund-requests', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (request, reply) => {
+    const parsed = parseBody(refundRequestSchema, request.body ?? {})
 
     if (!parsed.ok) {
-      return reply.code(400).send({ message: parsed.message })
+      return reply.code(404).send({ message: 'We could not find this order.' })
     }
+
+    const locale = requestLocale(request)
 
     try {
-      await refundGuideOrder(app, { token: parsed.data.token, reason: parsed.data.reason ?? null })
+      const { request: created, created: isNew } = await createGuideRefundRequest(app, {
+        token: parsed.data.token,
+        category: parsed.data.category,
+        explanation: parsed.data.explanation,
+        acknowledge: parsed.data.acknowledge,
+        locale,
+        requestCountry: requestGeo(request)?.country ?? null,
+      })
+      const order = await app.collections.guideOrders.findOne({ refundToken: parsed.data.token })
+
+      return reply
+        .code(isNew ? 201 : 200)
+        .send({ request: customerView(created, locale), order: order ? await orderView(app, order, locale) : null })
     } catch (error) {
-      if (error instanceof RefundError) {
-        return reply.code(409).send({ message: error.message })
+      if (error instanceof RefundRequestError) {
+        return reply.code(error.status).send({ message: error.message, ...(error.blocked ? { code: error.blocked } : {}) })
       }
 
-      request.log.error({ err: errorMessage(error) }, 'Guide refund failed')
-      return reply.code(502).send({ message: 'The refund didn’t go through. Try again in a moment, or write to hello@avarobe.com.' })
+      throw error
     }
+  })
 
-    const order = await app.collections.guideOrders.findOne({ refundToken: parsed.data.token })
-    return order ? orderView(app, order) : { refundedAt: new Date().toISOString() }
+  // The one-tap refund of the web before Oct 12, 2026: refunds are
+  // requested and reviewed now.
+  app.post('/refund', async (_request, reply) => {
+    return reply.code(409).send({ code: 'refund_review', message: 'Refunds are now reviewed by our team: request one from the link in your book’s email.' })
   })
 
   // Whether the signed-in person has the guide (bought with this account, or

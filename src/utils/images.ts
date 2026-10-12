@@ -91,6 +91,31 @@ export async function normalizeOutfitPhoto(input: Buffer) {
     .toBuffer()
 }
 
+// A refund request's screenshot (an error on screen, a report that looked
+// wrong): only for the founder to read, so a modest JPEG, with the phone's
+// metadata (location included) gone like every upload's.
+export async function normalizeScreenshot(input: Buffer) {
+  let image: sharp.Sharp
+
+  try {
+    image = sharp(input, { failOn: 'error' }).rotate()
+  } catch {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  const metadata = await image.metadata().catch(() => null)
+
+  if (!metadata?.width || !metadata.height || Math.min(metadata.width, metadata.height) < 100) {
+    throw new InvalidImageError('That file is not an image we can read.')
+  }
+
+  return image
+    .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: 85, mozjpeg: true })
+    .toBuffer()
+}
+
 // Small, quick-to-load version of an in-progress render.
 export async function toPreviewWebp(png: Buffer) {
   return sharp(png).resize({ width: 512 }).webp({ quality: 70 }).toBuffer()

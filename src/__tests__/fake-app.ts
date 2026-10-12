@@ -1,12 +1,13 @@
 // A Fastify app stand-in with in-memory collections, for tests of the
 // background jobs (color read retries, alerts) without a database. The
 // collections understand the small part of MongoDB those jobs use: filters
-// with dotted paths, null matching a missing field, $exists, $ne, $in, $nin,
-// $lt/$lte/$gt/$gte, $or, $nor and $and; updates with $set, $unset, $inc and
-// $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
+// with dotted paths (through arrays of documents, and an array field
+// matching any of its items, as in MongoDB), null matching a missing field,
+// $exists, $ne, $in, $nin, $lt/$lte/$gt/$gte, $or, $nor and $and; updates
+// with $set, $unset, $inc, $push and $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
 // from the document as it was before the stage, as in MongoDB), upserts (and their duplicate-key
-// error, on _id and on the unique fields of UNIQUE: avatars.userId, as in
-// plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
+// error, on _id and on the unique fields of UNIQUE: avatars.userId,
+// refundRequests.openKey and .ref, as in plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
 // passes on a query the fake didn't understand.
 import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
@@ -108,7 +109,32 @@ function order(a: unknown, b: unknown) {
   return x < y ? -1 : x > y ? 1 : 0
 }
 
+// An array field matches when any of its items does (and $ne/$nin when
+// none does), as in MongoDB.
+function testArray(items: unknown[], condition: unknown): boolean {
+  if (!isOperators(condition)) {
+    return items.some((item) => same(item, condition))
+  }
+
+  return Object.entries(condition).every(([operator, argument]) => {
+    switch (operator) {
+      case '$exists':
+        return Boolean(argument)
+      case '$ne':
+        return !items.some((item) => same(item, argument))
+      case '$nin':
+        return !items.some((item) => (argument as unknown[]).some((other) => same(item, other)))
+      default:
+        return items.some((item) => test(item, { [operator]: argument }))
+    }
+  })
+}
+
 function test(value: unknown, condition: unknown): boolean {
+  if (Array.isArray(value) && !Array.isArray(condition)) {
+    return testArray(value, condition)
+  }
+
   if (!isOperators(condition)) {
     return same(value, condition)
   }
@@ -139,6 +165,35 @@ function test(value: unknown, condition: unknown): boolean {
   })
 }
 
+// The values at a dotted path, through arrays of documents on the way
+// ('covers.purchaseId' gives each cover's).
+function lookup(value: unknown, keys: string[]): unknown[] {
+  if (keys.length === 0) {
+    return [value]
+  }
+
+  if (Array.isArray(value)) {
+    const found = value.flatMap((item) => lookup(item, keys))
+    return found.length > 0 ? found : [undefined]
+  }
+
+  return isPlain(value) ? lookup(value[keys[0]!], keys.slice(1)) : [undefined]
+}
+
+const NEGATIVE = new Set(['$ne', '$nin'])
+
+function testPath(doc: Doc, path: string, condition: unknown) {
+  const values = lookup(doc, path.split('.'))
+
+  if (values.length === 1) {
+    return test(values[0], condition)
+  }
+
+  // Through an array: $ne and $nin hold for every item, the rest for any.
+  const negative = isOperators(condition) && Object.keys(condition).every((key) => NEGATIVE.has(key))
+  return negative ? values.every((value) => test(value, condition)) : values.some((value) => test(value, condition))
+}
+
 export function matches(doc: Doc, filter: Doc): boolean {
   return Object.entries(filter).every(([key, condition]) => {
     if (key === '$or') {
@@ -157,7 +212,7 @@ export function matches(doc: Doc, filter: Doc): boolean {
       throw new Error(`fake-app: filter operator ${key} is not supported`)
     }
 
-    return test(read(doc, key), condition)
+    return testPath(doc, key, condition)
   })
 }
 
@@ -241,6 +296,9 @@ function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
         remove(doc, path)
       } else if (operator === '$inc') {
         write(doc, path, ((read(doc, path) as number | undefined) ?? 0) + (value as number))
+      } else if (operator === '$push') {
+        const items = read(doc, path)
+        write(doc, path, [...(Array.isArray(items) ? (items as unknown[]) : []), clone(value)])
       } else if (operator !== '$setOnInsert') {
         throw new Error(`fake-app: update operator ${operator} is not supported`)
       }
@@ -251,7 +309,7 @@ function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
 const duplicateKey = () => Object.assign(new Error('E11000 duplicate key error'), { code: 11000 })
 
 // Unique indexes besides _id, by collection.
-const UNIQUE: Record<string, string[]> = { avatars: ['userId'] }
+const UNIQUE: Record<string, string[]> = { avatars: ['userId'], refundRequests: ['openKey', 'ref'] }
 
 type FindOptions = { sort?: Record<string, 1 | -1>; limit?: number; projection?: unknown }
 

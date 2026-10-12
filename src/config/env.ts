@@ -210,6 +210,14 @@ const envSchema = z.object({
   // Who gets the operations alerts (OpenAI out of credits, color reads
   // failing), comma-separated. COMP_EMAILS when empty, testers included.
   ALERT_EMAILS: z.string().default(''),
+  // Refund requests (billing/refund-requests.ts): who gets each new request
+  // and the reminders, comma-separated. The first address is also the
+  // reply-to of the customer's refund emails.
+  REFUNDS_EMAIL: z.string().default('hello@avarobe.com'),
+  // When the Terms with reviewed refunds went live (the web's deploy).
+  // Purchases paid before it keep the old guarantee: their requests are
+  // flagged old_guarantee for the founder.
+  REFUND_TERMS_SINCE: z.coerce.date().default(new Date('2026-10-13T00:00:00Z')),
   // Development only: every OpenAI call fails this way (utils/openai.ts),
   // to try the busy state, the retries and the alerts. Ignored in production.
   AI_FAULT: z.enum(['no_credits', 'rate_limit', 'server', 'timeout', 'rejected']).optional(),
@@ -276,6 +284,9 @@ export const env = {
   AI_FAULT: raw.NODE_ENV === 'production' ? undefined : raw.AI_FAULT,
   XSELL_PERSONAL_IMAGES: ['on', 'true'].includes(raw.XSELL_PERSONAL_IMAGES ?? 'on'),
   EMAIL_DEV_ALLOWLIST: raw.EMAIL_DEV_ALLOWLIST.split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0),
+  REFUNDS_EMAIL: raw.REFUNDS_EMAIL.split(',')
     .map((email) => email.trim().toLowerCase())
     .filter((email) => email.length > 0),
 }

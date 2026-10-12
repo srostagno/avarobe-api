@@ -29,7 +29,11 @@ function shouldDeliver(email: string) {
   return isConfigured() && env.EMAIL_DEV_ALLOWLIST.includes(email.toLowerCase())
 }
 
-async function sendViaMailersend(to: { email: string; name?: string }, content: EmailContent) {
+// Where an answer goes: the customer, on the founder's copy of a refund
+// request; hello@ on the customer's refund emails.
+export type ReplyTo = { email: string; name?: string }
+
+async function sendViaMailersend(to: { email: string; name?: string }, content: EmailContent, replyTo?: ReplyTo) {
   if (!env.MAILERSEND_API_KEY || !env.MAILERSEND_FROM_EMAIL) {
     throw new Error('MailerSend is not configured on avarobe-api.')
   }
@@ -46,6 +50,7 @@ async function sendViaMailersend(to: { email: string; name?: string }, content: 
       subject: content.subject,
       html: content.html,
       text: content.text,
+      ...(replyTo ? { reply_to: { email: replyTo.email, ...(replyTo.name ? { name: replyTo.name } : {}) } } : {}),
       // Tracking rewrites links through a redirect; one-time links must not.
       settings: { track_clicks: false, track_opens: false },
     }),
@@ -85,13 +90,14 @@ export async function deliverEmail(input: {
   log: FastifyBaseLogger
   to: { email: string; name?: string }
   content: EmailContent
+  replyTo?: ReplyTo
 }) {
   if (!shouldDeliver(input.to.email)) {
-    input.log.info({ email: input.to.email, subject: input.content.subject }, 'Dev email (not sent)')
+    input.log.info({ email: input.to.email, subject: input.content.subject, ...(input.replyTo ? { replyTo: input.replyTo.email } : {}) }, 'Dev email (not sent)')
     return false
   }
 
-  await sendViaMailersend(input.to, input.content)
+  await sendViaMailersend(input.to, input.content, input.replyTo)
 
   return true
 }

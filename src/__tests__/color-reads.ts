@@ -11,7 +11,9 @@ import sharp from 'sharp'
 
 import { env } from '../config/env.js'
 import type { ColorScores } from '../types/mongo.js'
+import { registerRequestLocale } from '../utils/request-locale.js'
 import { storage } from '../utils/storage.js'
+import { registerMessageTranslation } from '../utils/translate-message.js'
 import { fakeApp, type Doc } from './fake-app.js'
 
 // ---------------------------------------------------------------- files
@@ -177,9 +179,16 @@ export function stubOpenAi() {
 
 // ---------------------------------------------------------------- routes
 
-export async function routeApp(routes: Record<string, FastifyPluginAsync>, seed: Record<string, Doc[]> = {}) {
+// `languages`: the page's language and the replies' messages in it, as
+// app.ts sets them up.
+export async function routeApp(routes: Record<string, FastifyPluginAsync>, seed: Record<string, Doc[]> = {}, options: { languages?: boolean } = {}) {
   const fake = fakeApp(seed)
   const app = Fastify({ logger: process.env.ROUTES_LOG === '1' ? { level: 'error' } : false })
+
+  if (options.languages) {
+    registerRequestLocale(app)
+    registerMessageTranslation(app)
+  }
 
   await app.register(cookie)
   await app.register(jwt, { secret: 'test-secret-that-is-long-enough-for-hs256' })
@@ -200,7 +209,7 @@ export async function routeApp(routes: Record<string, FastifyPluginAsync>, seed:
 }
 
 // A multipart body, as the web sends it.
-export async function form(fields: Record<string, string>, files: Record<string, Buffer> = {}) {
+export async function form(fields: Record<string, string>, files: Record<string, Buffer> = {}, headers: Record<string, string> = {}) {
   const data = new FormData()
 
   for (const [name, value] of Object.entries(fields)) {
@@ -213,7 +222,7 @@ export async function form(fields: Record<string, string>, files: Record<string,
 
   const request = new Request('http://test.local', { method: 'POST', body: data })
 
-  return { payload: Buffer.from(await request.arrayBuffer()), headers: { 'content-type': request.headers.get('content-type')! } }
+  return { payload: Buffer.from(await request.arrayBuffer()), headers: { ...headers, 'content-type': request.headers.get('content-type')! } }
 }
 
 // Until a background job is done (or a second has gone).

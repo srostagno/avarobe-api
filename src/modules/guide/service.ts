@@ -22,8 +22,9 @@ export function guideDownloadUrl(order: Pick<GuideOrderDocument, 'token'>) {
   return `${env.API_PUBLIC_URL}/api/v1/guide/download/${order.token}`
 }
 
-// The 7-day refund for an order, from its email: the web's thank-you page
-// with the order's refund key (it asks before refunding).
+// Where to request a refund of an order within 7 days, from its email: the
+// web's thank-you page with the order's refund key (the request form; the
+// founder reviews it).
 export function guideRefundUrl(refundToken: string, locale?: Locale) {
   return `${appUrl(locale, '/guide/thanks')}?refund=${encodeURIComponent(refundToken)}`
 }
@@ -105,7 +106,7 @@ export async function fulfillGuide(app: FastifyInstance, session: Stripe.Checkou
     downloads: 0,
     lastDownloadAt: null,
     createdAt: now,
-    // For the 7-day refund from the email's link, and the terms ticked at checkout.
+    // For a refund requested from the email's link, and the terms ticked at checkout.
     paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : (session.payment_intent?.id ?? null),
     terms: session.consent?.terms_of_service === 'accepted' ? 'accepted' : null,
     refundedAt: null,

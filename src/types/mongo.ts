@@ -273,7 +273,8 @@ export type PurchaseDocument = {
   // (PRO_ROLLOVER_CAP): `credits` is what it added.
   creditsOverCap?: number
   createdAt: Date
-  // Money back: the 7-day guarantee asked for in the app, or a refund made in
+  // Money back: a refund request the founder approved (Admin → Refunds), an
+  // instant in-app refund from before Oct 12, 2026, or a refund made in
   // Stripe's dashboard. What the purchase unlocked is taken away.
   refundedAt?: Date | null
   refund?: PurchaseRefund | null
@@ -287,24 +288,192 @@ export type PurchaseDocument = {
   terms?: 'accepted' | null
 }
 
-export type RefundReason = 'not_accurate' | 'not_expected' | 'technical' | 'mistake' | 'other'
+// What happened, as the customer picks it in a refund request. A superset of
+// the one-tap refund's reasons (before Oct 12, 2026), so purchases refunded
+// then keep valid values.
+export type RefundReason = 'not_accurate' | 'quality' | 'technical' | 'not_expected' | 'duplicate' | 'mistake' | 'other'
 
 export type PurchaseRefund = {
-  source: 'app' | 'stripe'
-  // Asked in the app; refunds made in Stripe have none.
+  // 'admin': a refund request approved in Admin → Refunds (`requestId`);
+  // 'app': the instant in-app refund before Oct 12, 2026 (production's
+  // included); 'stripe': made in Stripe's dashboard.
+  source: 'app' | 'stripe' | 'admin'
+  requestId?: ObjectId | null
+  // The request's (or the one-tap refund's); refunds made in Stripe have none.
   reason: RefundReason | null
   note: string | null
   amount: number
   stripeRefundId: string | null
-  // For the admin's review, never a reason to refuse one (Oct 2026: the
-  // 7-day refund is unconditional): 'repeat' when they had refunds before
-  // (`priorRefunds`), 'credit_used' when this report's credit paid part of a
-  // Pro annual they keep.
-  flags?: RefundFlag[]
+  // For the admin's review, never a reason to refuse one: 'repeat' when they
+  // had refunds before (`priorRefunds`), 'credit_used' when this report's
+  // credit paid part of a Pro annual they keep, and an approved request's
+  // own flags.
+  flags?: RefundRequestFlag[]
   priorRefunds?: number
 }
 
+// The flags the one-tap refund kept on purchases (a subset of the request's).
 export type RefundFlag = 'repeat' | 'credit_used'
+
+// A refund request (Oct 2026): refunds are reviewed by the founder, never
+// instant or automatic. Approval refunds in Stripe and takes back what the
+// purchase gave (billing/refunds.ts); a rejection says why
+// (billing/refund-requests.ts).
+export type RefundRequestStatus = 'pending' | 'approved' | 'refunded' | 'rejected' | 'failed'
+
+export type RefundRejectCode = 'resolved' | 'works_as_described' | 'used' | 'outside_policy' | 'duplicate' | 'withdrawn' | 'other'
+
+// Signals for the founder's review, never an automatic rejection.
+export type RefundRequestFlag =
+  | 'repeat'
+  | 'requested_before'
+  | 'credit_used'
+  | 'used'
+  | 'heavy_use'
+  | 'card_seen'
+  | 'many_open'
+  | 'new_account'
+  | 'charged_during_review'
+  | 'disputed'
+  | 'old_guarantee'
+
+// One payment the request covers, as it was when asked: refundable even if
+// the account (and its purchases) is deleted meanwhile.
+export type RefundCover = {
+  purchaseId: ObjectId | null
+  guideOrderId: ObjectId | null
+  product: PurchaseProduct
+  amount: number
+  currency: string
+  paidAt: Date
+  stripePaymentIntentId: string | null
+  stripeInvoiceId: string | null
+}
+
+// How much of it they used, for the founder (never a reason to refuse on its
+// own). Counts are since the earliest covered payment.
+export type RefundUsage = {
+  at: Date
+  hoursSincePurchase: number
+  colorReportOpenedAt: Date | null
+  styleReportOpenedAt: Date | null
+  hairReadAt: Date | null
+  drapeAt: Date | null
+  looksMade: number
+  looksWithCredit: number
+  creditsGiven: number
+  creditsLeft: number | null
+  hairstylesMade: number
+  eventsStyled: number
+  magazinesMade: number
+  checksMade: number
+  avatarRuns: number | null
+  guideDownloads: number | null
+  guideLastDownloadAt: Date | null
+  lastSeenAt: Date | null
+  // Analytics events by name since paying, the 15 most frequent.
+  events: Record<string, number>
+}
+
+export type RefundCard = { brand: string | null; last4: string | null; country: string | null; fingerprint: string | null }
+
+export type RefundRequestHistory = {
+  refundsBefore: number
+  requestsBefore: number
+  approvedBefore: number
+  rejectedBefore: number
+  openRequests: number
+  purchases: number
+  paidUsd: number
+  accountCreatedAt: Date | null
+  channel: string | null
+  campaign: string | null
+  // Other people's requests paid with the same card.
+  cardSeenOn: number
+}
+
+export type RefundRequestDecision = {
+  outcome: 'approved' | 'rejected'
+  by: 'admin' | 'stripe'
+  adminId: ObjectId | null
+  adminEmail: string | null
+  at: Date
+  code: RefundRejectCode | null
+  // A rejection's note is shown to the customer; an approval's is internal.
+  note: string | null
+  // A Brazilian withdrawal within its 7 days, rejected anyway (a duplicate,
+  // fraud): the admin ticked that they know the law says refund.
+  cdcOverride: boolean
+}
+
+export type RefundRequestDocument = {
+  _id: ObjectId
+  // "R-7F3K2Q" (6 Crockford base32), for emails, support and the admin.
+  ref: string
+  source: 'account' | 'guide_link'
+  userId: ObjectId | null
+  guideOrderId: ObjectId | null
+  // The purchase it was asked from (Pro: the payment tapped).
+  purchaseId: ObjectId | null
+  product: PurchaseProduct
+  covers: RefundCover[]
+  // The sum of the covers, in minor units of their currency.
+  amount: number
+  currency: string
+  amountUsd: number
+  // The earliest cover.
+  purchasedAt: Date
+  // The contact, as it was when asked (account or order), for the emails
+  // even after the account is deleted. Scrubbed after a deletion.
+  email: string | null
+  // sha256 of the lowercased email; kept after scrubbing, for abuse checks.
+  emailHash: string
+  firstName: string
+  locale: Locale
+  // What it's for, for good: "p:<purchaseId>", "pro:<userId>" (Pro's first
+  // week) or "g:<guideOrderId>". `openKey` is the same while the request is
+  // open (unique), so there's one open request per target.
+  targetKey: string
+  openKey?: string
+  market: {
+    currency: string
+    region: string
+    signupCountry: string | null
+    // The site's geo cookie when asking.
+    requestCountry: string | null
+    card: RefundCard | null
+    disputed: boolean
+  }
+  // Asked within 7 days of paying (Brazil: calendar days, São Paulo time).
+  within7d: boolean
+  // Brazil's right of withdrawal (CDC art. 49): asked within its 7 days, so it
+  // must be refunded. `until`: the end of those 7 days.
+  statutory: { law: 'br_cdc_49'; until: Date } | null
+  // Paid under the old Terms' guarantee, and covered by it.
+  oldGuarantee: boolean
+  reasonCategory: RefundReason
+  explanation: string
+  // users/<userId>/refund-<id>.jpg (account holders only).
+  attachment: { key: string; bytes: number } | null
+  usage: RefundUsage
+  history: RefundRequestHistory
+  flags: RefundRequestFlag[]
+  // Pro's renewal paused while under review, and what it was before.
+  proPause: { subscriptionId: string; wasCancelAtPeriodEnd: boolean; at: Date; restoredAt: Date | null } | null
+  status: RefundRequestStatus
+  decision: RefundRequestDecision | null
+  attempts: { at: Date; adminId: ObjectId | null; ok: boolean; error: string | null }[]
+  refund: { stripeRefundIds: string[]; amount: number; via: 'admin' | 'stripe'; at: Date; partial: boolean } | null
+  internalNote: string | null
+  // When each email went out (claimed before sending, unset if it failed).
+  emails: { founderAt: Date | null; receivedAt: Date | null; decisionAt: Date | null; reminderAt: Date | null }
+  // The account was deleted while the request was open: decided as usual
+  // (money back only), then scrubbed once its decision email goes out.
+  accountDeletedAt?: Date | null
+  scrubbedAt?: Date | null
+  createdAt: Date
+  updatedAt: Date
+}
 
 // A visit from a Meta ad, counted by us to see where clicks get lost:
 // 'arrived' when the request reaches the web server, 'loaded' when the page
@@ -1063,15 +1232,21 @@ export type GuideOrderDocument = {
   downloads: number
   lastDownloadAt: Date | null
   createdAt: Date
-  // Since Oct 2026: the payment (for the 7-day refund, guests included), the
-  // terms accepted at checkout, and the refund, after which the link stops.
+  // Since Oct 2026: the payment (for a refund, guests included), the terms
+  // accepted at checkout, and the refund, after which the link stops.
   // The refund link's key is its own (refundToken), not the download's, so a
-  // forwarded download link can't refund the order.
+  // forwarded download link can't ask for the order's refund.
   refundToken?: string
   paymentIntentId?: string | null
   terms?: 'accepted' | null
   refundedAt?: Date | null
-  refund?: { source: 'app' | 'stripe'; reason: RefundReason | null; amount: number; stripeRefundId: string | null } | null
+  refund?: {
+    source: 'app' | 'stripe' | 'admin'
+    requestId?: ObjectId | null
+    reason: RefundReason | null
+    amount: number
+    stripeRefundId: string | null
+  } | null
 }
 
 export type CollectionDocument = {

@@ -14,6 +14,7 @@ import { presentationOf } from '../avatar/body.js'
 import { storedAdIds } from '../billing/conversions.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
+import { sendRefundReminders } from '../billing/refund-requests.js'
 import { EDITS } from '../looks/edits.js'
 import { looksFor } from '../looks/icon-routes.js'
 import { assetSlot, editOfIcon, editText, hasGenerator, startAsset } from './assets.js'
@@ -1689,6 +1690,11 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendReportReminders(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Unopened report run crashed')
+    })
+    // Refund requests: emails that didn't go out, and the founder's reminder
+    // of requests waiting too long.
+    void sendRefundReminders(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Refund reminders run crashed')
     })
   }
 

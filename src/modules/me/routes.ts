@@ -9,6 +9,7 @@ import { LOCALES } from '../../utils/locale.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
+import { forgetRefundRequests } from '../billing/refund-requests.js'
 import { cancelProNow } from '../billing/stripe.js'
 import { ONCE_PER_PERSON, REPEAT_AFTER_MS, SURVEY_QUESTIONS, type SurveyQuestion } from '../survey/questions.js'
 
@@ -195,6 +196,9 @@ const meRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { files } = await deleteUserContent(app, userId)
+    // Refund requests stay for the books: screenshots go, decided ones are
+    // scrubbed, open ones can still be decided (money back only).
+    await forgetRefundRequests(app, userId)
     await Promise.all([
       app.collections.refreshTokens.deleteMany({ userId }),
       app.collections.passkeys.deleteMany({ userId }),

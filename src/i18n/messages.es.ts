@@ -93,8 +93,6 @@ export const esMessages: MessageTable = {
   'The look needs to finish first.': 'Primero el look tiene que estar listo.',
   'The payment is still processing. Refresh in a moment.': 'El pago aún se está procesando. Actualiza en un momento.',
   'The photo must be an image under 12 MB.': 'La foto debe ser una imagen de menos de 12 MB.',
-  'The refund didn’t go through. Try again in a moment, or write to hello@avarobe.com.':
-    'El reembolso no se completó. Inténtalo de nuevo en un momento o escríbenos a hello@avarobe.com.',
   'The stylist returned no looks.': 'El estilista no devolvió ningún look.',
   'There is no active Pro subscription.': 'No hay una suscripción Pro activa.',
   'There is no avatar or haircut to put together.': 'No hay avatar ni corte que combinar.',
@@ -116,13 +114,9 @@ export const esMessages: MessageTable = {
   'This look is not available right now. Try another one.': 'Este look no está disponible en este momento. Prueba otro.',
   'This look’s avatar was deleted.': 'El avatar de este look se eliminó.',
   'This needs the avatar (and its measurements) first.': 'Para esto primero necesitas el avatar (y sus medidas).',
-  'This order can no longer be refunded here. Write to us at hello@avarobe.com.':
-    'Este pedido ya no se puede reembolsar aquí. Escríbenos a hello@avarobe.com.',
   'This order was already refunded.': 'Este pedido ya fue reembolsado.',
   'This passkey is already saved.': 'Esta passkey ya está guardada.',
   'This piece is still being prepared.': 'Esta prenda aún se está preparando.',
-  'This purchase can no longer be refunded here. Write to us at hello@avarobe.com.':
-    'Esta compra ya no se puede reembolsar aquí. Escríbenos a hello@avarobe.com.',
   'This purchase was already refunded.': 'Esta compra ya fue reembolsada.',
   'This reset link is invalid, expired or already used.': 'Este enlace para restablecer no es válido, expiró o ya se usó.',
   'This unsubscribe link is not valid.': 'Este enlace para darte de baja no es válido.',
@@ -160,8 +154,6 @@ export const esMessages: MessageTable = {
     'Ya tienes una cuenta de Avarobe con este correo. Inicia sesión para continuar ahí.',
   'You already have your avatar. Change your selfie from Photos & measurements.':
     'Ya tienes tu avatar. Cambia tu selfie en Fotos y medidas.',
-  'You already used your money-back guarantee. Write to us at hello@avarobe.com.':
-    'Ya usaste tu garantía de reembolso. Escríbenos a hello@avarobe.com.',
   'Your Pro plan has already started.': 'Tu plan Pro ya comenzó.',
   'Your account is already saved.': 'Tu cuenta ya está guardada.',
   'Your avatar and colors need to be ready first.': 'Primero tu avatar y tus colores tienen que estar listos.',
@@ -183,6 +175,27 @@ export const esMessages: MessageTable = {
     'Tu revista personal: diez looks en ti, en locación, con los textos que los acompañan.',
   'requireUserId called on an unauthenticated request.': 'requireUserId se llamó en una solicitud sin autenticar.',
 
+  // Refund requests (billing/refund-requests.ts), and the one-tap refund's old endpoints.
+  'Refunds are now reviewed by our team: request one from Purchases in your account.':
+    'Ahora nuestro equipo revisa los reembolsos: solicítalo desde Compras, en tu cuenta.',
+  'Refunds are now reviewed by our team: request one from the link in your book’s email.':
+    'Ahora nuestro equipo revisa los reembolsos: solicítalo desde el enlace del correo de tu libro.',
+  'Choose what happened.': 'Elige qué pasó.',
+  'Tell us a bit more about what happened, in your own words.': 'Cuéntanos un poco más sobre lo que pasó, con tus palabras.',
+  'Your explanation is too long: keep it under 2,000 characters.': 'Tu explicación es demasiado larga: usa menos de 2.000 caracteres.',
+  'Confirm that you understand what a refund removes.': 'Confirma que entiendes lo que quita un reembolso.',
+  'This purchase is past the 7 days to request a refund. Write to us at hello@avarobe.com.':
+    'Esta compra ya pasó los 7 días para solicitar un reembolso. Escríbenos a hello@avarobe.com.',
+  'This order is past the 7 days to request a refund. Write to us at hello@avarobe.com.':
+    'Este pedido ya pasó los 7 días para solicitar un reembolso. Escríbenos a hello@avarobe.com.',
+  'We already answered a refund request for this purchase. Write to us at hello@avarobe.com.':
+    'Ya respondimos una solicitud de reembolso de esta compra. Escríbenos a hello@avarobe.com.',
+  'You’ve sent several refund requests recently. Write to us at hello@avarobe.com.':
+    'Enviaste varias solicitudes de reembolso hace poco. Escríbenos a hello@avarobe.com.',
+  'The screenshot must be an image under 8 MB.': 'La captura debe ser una imagen de menos de 8 MB.',
+  'We could not find this purchase.': 'No encontramos esta compra.',
+  'This order has no email to answer to. Write to us at hello@avarobe.com.':
+    'Este pedido no tiene un correo al que responder. Escríbenos a hello@avarobe.com.',
   // Internal codes: kept as they are.
   'guest limit': 'guest limit',
   needs_color_report: 'needs_color_report',

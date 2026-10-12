@@ -9,8 +9,12 @@ describe('the Outfit Formula Book email', () => {
   const refundToken = 'ref_abcdefghijklmnopqrstuvwxyz'
   const base = { email: 'nora@example.com', firstName: 'Nora', downloadUrl: 'https://api.avarobe.com/api/v1/guide/download/tok' }
 
-  it('links to the 7-day refund in their language, with no account needed', () => {
-    const words = { en: 'Changed your mind? Get a refund within 7 days', 'pt-BR': 'Mudou de ideia? Peça o reembolso em até 7 dias', es: '¿Cambiaste de opinión? Pide tu reembolso dentro de los 7 días' } as const
+  it('links to a refund request within 7 days in their language, with no account needed', () => {
+    const words = {
+      en: 'Changed your mind? Request a refund within 7 days',
+      'pt-BR': 'Mudou de ideia? Peça o reembolso em até 7 dias',
+      es: '¿Cambiaste de opinión? Solicita un reembolso dentro de los 7 días',
+    } as const
 
     for (const locale of ['en', 'pt-BR', 'es'] as const) {
       const url = guideRefundUrl(refundToken, locale)

@@ -618,6 +618,72 @@ export const ptBrEmails: EmailCopy = {
     },
   },
 
+  refund: {
+    eyebrow: 'Avarobe',
+    help: 'Dúvidas? Responda a este e-mail ou escreva para {email}.',
+    categories: {
+      not_accurate: 'Minhas cores ou minha estação não combinam comigo',
+      quality: 'Os resultados ficaram errados ou com baixa qualidade',
+      technical: 'Algo não funcionou ou não consegui acessar',
+      not_expected: 'Não é o que a página descrevia',
+      duplicate: 'Paguei duas vezes ou já tinha',
+      mistake: 'Comprei por engano',
+      other: 'Outro motivo',
+    },
+    received: {
+      subject: 'Recebemos seu pedido de reembolso',
+      preheader: 'Respondemos em até 2 dias úteis.',
+      heading: 'Seu pedido chegou.',
+      intro: (product: string, price: string, date: string, ref: string) =>
+        `Recebemos seu pedido de reembolso da compra “${product}” (${price}, de ${date}). Sua referência é ${ref}.`,
+      next: 'Uma pessoa analisa cada pedido, e enviaremos nossa resposta por e-mail em até 2 dias úteis. Até lá nada muda: sua compra continua funcionando.',
+      ifApproved: (price: string, removed: string) => `Se aprovarmos, ${price} volta para o seu cartão em 5 a 10 dias úteis e ${removed}.`,
+      removed: {
+        report: 'o que ela liberou, incluindo o relatório, é removido da sua conta',
+        pro: 'o Pro é encerrado, e os looks que ele adicionou e ainda restam são removidos',
+        pack: 'os looks que ele adicionou e ainda restam são removidos',
+        guide: 'o link de download do livro para de funcionar',
+      },
+      proPaused: 'O Pro não será renovado enquanto analisamos seu pedido. Se não pudermos aprovar, ele continua como antes.',
+      withdrawal:
+        'Compra feita no Brasil: você está dentro do prazo de 7 dias do direito de arrependimento (art. 49 do Código de Defesa do Consumidor), então esta compra será reembolsada integralmente.',
+      reason: (label: string) => `O que você nos contou: ${label}.`,
+      reply: 'Quer acrescentar algo? Responda a este e-mail.',
+    },
+    approved: {
+      subject: 'Seu reembolso está a caminho',
+      preheader: (price: string) => `${price} de volta no seu cartão em 5 a 10 dias úteis.`,
+      heading: 'Reembolso aprovado.',
+      body: (price: string, product: string, ref: string) =>
+        `Aprovamos o reembolso de ${price} da compra “${product}”. O valor chega ao seu cartão em 5 a 10 dias úteis, conforme o seu banco. Referência: ${ref}.`,
+      removed: {
+        report: 'O que ela liberou, incluindo o relatório, foi removido da sua conta.',
+        pro: 'O Pro foi encerrado, e os looks que ele adicionou e ainda restavam foram removidos.',
+        pack: 'Os looks que ele adicionou e ainda restavam foram removidos.',
+        guide: 'O link de download do livro não funciona mais.',
+      },
+      thanks: 'Obrigado por experimentar o Avarobe. Se quiser nos contar mais, é só responder a este e-mail.',
+    },
+    rejected: {
+      subject: 'Sobre o seu pedido de reembolso',
+      preheader: (ref: string) => `Nossa resposta ao seu pedido ${ref}.`,
+      heading: 'Não pudemos aprovar seu reembolso.',
+      body: (product: string, ref: string) => `Analisamos seu pedido de reembolso da compra “${product}” (${ref}) e não pudemos aprová-lo.`,
+      why: (text: string) => `Motivo: ${text}`,
+      stays: 'Sua compra continua ativa, e tudo o que ela inclui continua sendo seu.',
+      pro: (date: string) => `O Pro continua como antes e renova em ${date}, a menos que você cancele nas configurações da sua conta.`,
+      again: 'Se achar que nos enganamos, responda a este e-mail e vamos analisar de novo.',
+    },
+    codes: {
+      resolved: 'Resolvemos o problema que você nos contou, então sua compra funciona como deveria.',
+      works_as_described: 'Verificamos sua conta, e o produto funciona e entrega o que a página dele descreve.',
+      used: 'A compra já foi usada por completo (por exemplo, o relatório foi aberto e os looks foram feitos), e o que você descreveu não indica um problema com ela.',
+      outside_policy: 'Esta compra não está coberta pela nossa política de reembolso (veja Reembolsos nos nossos Termos).',
+      duplicate: 'Já tratamos um pedido de reembolso para esta compra.',
+      withdrawn: 'Você nos disse que prefere ficar com ela.',
+    },
+  },
+
   auth: {
     hi: (name: string) => `Olá, ${name},`,
     hiAnonymous: 'Olá,',

@@ -6,7 +6,9 @@ import { z } from 'zod'
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { errorMessage, parseBody } from '../../utils/http.js'
-import type { PurchaseProduct, RefundReason } from '../../types/mongo.js'
+import type { PurchaseProduct } from '../../types/mongo.js'
+import { requestLocale } from '../../utils/locale.js'
+import { requestGeo } from '../analytics/geo.js'
 import { serializeUser } from '../../utils/serializers.js'
 import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
@@ -26,7 +28,16 @@ import {
   rolloverCreditsExpression,
 } from './entitlements.js'
 import { type PricingRegion, pricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice } from './pricing.js'
-import { REFUND_REASONS, RefundError, handleChargeRefunded, purchasesFor, requestRefund } from './refunds.js'
+import { handleChargeRefunded } from './refunds.js'
+import {
+  REFUND_SETTINGS,
+  RefundRequestError,
+  SCREENSHOT_MAX_BYTES,
+  createRefundRequest,
+  customerRequests,
+  customerView,
+  purchasesFor,
+} from './refund-requests.js'
 import {
   BillingNotConfiguredError,
   PRODUCTS,
@@ -97,11 +108,7 @@ const checkoutEmailSchema = z.object({
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
 
-const refundSchema = z.object({
-  purchaseId: z.string().regex(/^[a-f0-9]{24}$/),
-  reason: z.enum(REFUND_REASONS as [RefundReason, ...RefundReason[]]),
-  note: z.string().trim().max(500).optional(),
-})
+const PURCHASE_ID = /^[a-f0-9]{24}$/
 
 // Plan stages an admin can jump to, to see each offer without buying.
 const SIMULATED_STAGES = [
@@ -472,44 +479,90 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // Their purchases, for the account page, with the 7-day refund where it
-  // still applies.
+  // Their purchases, for the account page: whether a refund can still be
+  // requested, the request if there is one, Brazil's withdrawal while it
+  // lasts, and the form's rules (`refunds.mode: 'request'`).
   app.get('/purchases', { preHandler: authenticate }, async (request) => {
     const userId = requireUserId(request)
-    return { purchases: await purchasesFor(app, userId) }
+    return { purchases: await purchasesFor(app, userId), refunds: REFUND_SETTINGS }
   })
 
+  // A refund request (Oct 12, 2026: reviewed by the founder, never instant):
+  // a category, their explanation, that they know what a refund removes and
+  // an optional screenshot (multipart, as the web sends it; JSON works
+  // without the screenshot). 201 new, 200 the open one already there.
   app.post(
-    '/refund',
-    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    '/refund-requests',
+    { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } },
     async (request, reply) => {
       const userId = requireUserId(request)
-      const parsed = parseBody(refundSchema, request.body)
+      const fields: Record<string, unknown> = {}
+      let screenshot: Buffer | null = null
 
-      if (!parsed.ok) {
-        return reply.code(400).send({ message: parsed.message })
+      if (request.isMultipart()) {
+        try {
+          for await (const part of request.parts({ limits: { fileSize: SCREENSHOT_MAX_BYTES, files: 1, fields: 8, fieldSize: 16 * 1024 } })) {
+            if (part.type === 'file') {
+              const buffer = await part.toBuffer()
+
+              if (part.fieldname === 'screenshot' && buffer.length > 0) {
+                screenshot = buffer
+              }
+            } else {
+              fields[part.fieldname] = part.value
+            }
+          }
+        } catch (error) {
+          request.log.warn({ err: errorMessage(error) }, 'Refund request upload rejected')
+          return reply.code(400).send({ message: 'The screenshot must be an image under 8 MB.' })
+        }
+      } else if (request.body && typeof request.body === 'object') {
+        Object.assign(fields, request.body)
       }
+
+      const purchaseId = typeof fields.purchaseId === 'string' && PURCHASE_ID.test(fields.purchaseId) ? new ObjectId(fields.purchaseId) : null
+
+      if (!purchaseId) {
+        return reply.code(404).send({ message: 'We could not find this purchase.' })
+      }
+
+      const locale = requestLocale(request)
 
       try {
-        await requestRefund(app, {
+        const { request: created, created: isNew } = await createRefundRequest(app, {
           userId,
-          purchaseId: new ObjectId(parsed.data.purchaseId),
-          reason: parsed.data.reason,
-          note: parsed.data.note || null,
+          purchaseId,
+          category: fields.category,
+          explanation: fields.explanation,
+          acknowledge: fields.acknowledge,
+          screenshot,
+          locale,
+          requestCountry: requestGeo(request)?.country ?? null,
         })
+
+        return reply
+          .code(isNew ? 201 : 200)
+          .send({ request: customerView(created, locale), purchases: await purchasesFor(app, userId), refunds: REFUND_SETTINGS })
       } catch (error) {
-        if (error instanceof RefundError) {
-          return reply.code(409).send({ message: error.message })
+        if (error instanceof RefundRequestError) {
+          return reply.code(error.status).send({ message: error.message, ...(error.blocked ? { code: error.blocked } : {}) })
         }
 
-        request.log.error({ err: errorMessage(error) }, 'Refund failed')
-        return reply.code(502).send({ message: 'The refund didn’t go through. Try again in a moment, or write to hello@avarobe.com.' })
+        throw error
       }
-
-      const user = await app.collections.users.findOne({ _id: userId })
-      return { user: user ? serializeUser(user) : null, purchases: await purchasesFor(app, userId) }
     },
   )
+
+  app.get('/refund-requests', { preHandler: authenticate }, async (request) => {
+    const userId = requireUserId(request)
+    return { requests: await customerRequests(app, userId, requestLocale(request)) }
+  })
+
+  // The one-tap refund of the web before Oct 12, 2026 (an open tab may still
+  // call it): refunds are requested and reviewed now.
+  app.post('/refund', { preHandler: authenticate }, async (_request, reply) => {
+    return reply.code(409).send({ code: 'refund_review', message: 'Refunds are now reviewed by our team: request one from Purchases in your account.' })
+  })
 
   // Admins only: see the app as a customer (free Kit off), and wipe their own
   // test purchases to walk through the free flow again.

@@ -16,6 +16,7 @@ import type {
   PasskeyDocument,
   PurchaseDocument,
   RefreshTokenDocument,
+  RefundRequestDocument,
   ShopSearchDocument,
   StyleEventDocument,
   MagazineDocument,
@@ -49,6 +50,7 @@ export type MongoCollections = {
   magazines: Collection<MagazineDocument>
   guideOrders: Collection<GuideOrderDocument>
   opsAlerts: Collection<OpsAlertDocument>
+  refundRequests: Collection<RefundRequestDocument>
 }
 
 export type MongodbPluginOptions = {
@@ -78,6 +80,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     magazines: mongoDb.collection<MagazineDocument>('magazines'),
     guideOrders: mongoDb.collection<GuideOrderDocument>('guide_orders'),
     opsAlerts: mongoDb.collection<OpsAlertDocument>('ops_alerts'),
+    refundRequests: mongoDb.collection<RefundRequestDocument>('refund_requests'),
   }
 }
 
@@ -156,6 +159,22 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.analyticsEvents.createIndex({ name: 1, at: 1 }),
     collections.analyticsEvents.createIndex({ visitorId: 1, at: 1 }),
     collections.analyticsEvents.createIndex({ userId: 1, at: 1 }),
+    // Refund requests (billing/refund-requests.ts): one open request per
+    // purchase, Pro week or book order; the admin's queue; each person's
+    // history and limits; the Stripe refund webhook's lookups; abuse checks.
+    collections.refundRequests.createIndex({ openKey: 1 }, { unique: true, partialFilterExpression: { openKey: { $type: 'string' } } }),
+    collections.refundRequests.createIndex({ ref: 1 }, { unique: true }),
+    collections.refundRequests.createIndex({ status: 1, createdAt: -1 }),
+    collections.refundRequests.createIndex({ userId: 1, createdAt: -1 }),
+    collections.refundRequests.createIndex({ targetKey: 1 }),
+    collections.refundRequests.createIndex({ purchaseId: 1 }),
+    collections.refundRequests.createIndex({ guideOrderId: 1 }),
+    collections.refundRequests.createIndex({ 'covers.stripePaymentIntentId': 1 }),
+    collections.refundRequests.createIndex({ emailHash: 1 }),
+    collections.refundRequests.createIndex(
+      { 'market.card.fingerprint': 1 },
+      { partialFilterExpression: { 'market.card.fingerprint': { $type: 'string' } } },
+    ),
   ])
 }
 

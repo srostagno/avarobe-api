@@ -703,8 +703,8 @@ export async function retrieveSession(sessionId: string) {
   return stripe().checkout.sessions.retrieve(sessionId)
 }
 
-// Gives a payment back in full (the 7-day guarantee). The idempotency key
-// makes a retried request refund it once.
+// Gives a payment back in full (an approved refund request). The idempotency
+// key makes a retried request refund it once.
 export async function refundPayment(paymentIntentId: string, metadata: Record<string, string>) {
   const refund = await stripe().refunds.create(
     { payment_intent: paymentIntentId, reason: 'requested_by_customer', metadata: { ...metadata, app: APP } },
@@ -731,6 +731,49 @@ export async function refundInvoice(invoiceId: string, metadata: Record<string, 
   }
 
   return { refundId: await refundPayment(paymentIntentId, metadata), paymentIntentId }
+}
+
+export type PaymentFacts = {
+  brand: string | null
+  last4: string | null
+  country: string | null
+  // Stripe's anonymous card id: the same card on another account's request.
+  fingerprint: string | null
+  disputed: boolean
+}
+
+// The card behind a payment, for a refund request: who's in Brazil (the
+// card's country is one of the signals), the same card elsewhere, a dispute.
+// Best effort and quick: a refund request never waits on it for long.
+export async function paymentFacts(source: { paymentIntentId?: string | null; invoiceId?: string | null }): Promise<PaymentFacts | null> {
+  const paymentIntentId = source.paymentIntentId ?? (source.invoiceId ? await invoicePaymentIntent(source.invoiceId) : null)
+
+  if (!paymentIntentId) {
+    return null
+  }
+
+  const intent = await stripe().paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] }, { timeout: 3_000 })
+  const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null
+  const card = charge?.payment_method_details?.card
+
+  return {
+    brand: card?.brand ?? null,
+    last4: card?.last4 ?? null,
+    country: card?.country ?? null,
+    fingerprint: card?.fingerprint ?? null,
+    disputed: Boolean(charge?.disputed),
+  }
+}
+
+// Stripe said the charge was refunded already (in its dashboard, say): the
+// money is back, which is what a refund wanted.
+export function alreadyRefunded(error: unknown) {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'charge_already_refunded'
+}
+
+// Payments made with Stripe's test keys (local QA, an admin's smoke test).
+export function stripeTestMode() {
+  return Boolean(env.STRIPE_SECRET_KEY?.match(/^(sk|rk)_test_/))
 }
 
 // The invoice a payment paid, for a refund made in Stripe on a Pro payment
