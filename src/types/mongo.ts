@@ -290,6 +290,10 @@ export type PurchaseDocument = {
   // be requested (a Brazilian card is one of the signals of Brazil's right
   // of withdrawal); null when Stripe has none. Missing: not looked up yet.
   cardCountry?: string | null
+  // The account was deleted (me/content.ts, forgetPurchases): the sale stays
+  // for the books, the admin's revenue and refunds, without what was
+  // personal. `userId` is then an id that leads to no one.
+  accountDeletedAt?: Date | null
 }
 
 // What happened, as the customer picks it in a refund request. A superset of

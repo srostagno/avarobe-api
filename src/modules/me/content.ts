@@ -10,8 +10,8 @@ import { boardKeys } from '../report/boards.js'
 // Everything someone made in the app: their photos, avatar, colors and
 // reports, looks, haircuts, taste notes and collections, and the pictures
 // made for their emails, files included. Their account, sign-in and
-// purchases stay. Used when they delete the account, and when an admin
-// starts over as a brand-new user.
+// purchases stay (a deleted account's purchases: forgetPurchases). Used when
+// they delete the account, and when an admin starts over as a brand-new user.
 export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) {
   const [user, avatar, looks, checks] = await Promise.all([
     app.collections.users.findOne({ _id: userId }, { projection: { xsellAssets: 1 } }),
@@ -58,4 +58,20 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
   ])
 
   return { files: keys.length }
+}
+
+// A deleted account's purchases stay, for the books, the admin's revenue and
+// refunds (Stripe keeps the sale, and an open refund request is still decided
+// against it): the product, amounts, dates, Stripe's ids, the refund and the
+// placement. What was personal goes: her season and the read it came from,
+// her card's country, and what she wrote in a one-tap refund (before Oct 12,
+// 2026; an admin's note stays, as on her refund requests). `userId` stays as
+// on her refund requests, an id that no longer leads to anyone.
+export async function forgetPurchases(app: FastifyInstance, userId: ObjectId, now = new Date()) {
+  const [marked] = await Promise.all([
+    app.collections.purchases.updateMany({ userId }, { $set: { accountDeletedAt: now, colorRead: null, cardCountry: null } }),
+    app.collections.purchases.updateMany({ userId, 'refund.source': 'app' }, { $set: { 'refund.note': null } }),
+  ])
+
+  return marked.modifiedCount
 }

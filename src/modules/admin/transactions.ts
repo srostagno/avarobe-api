@@ -43,6 +43,8 @@ export type TransactionRow = {
   refundSource: 'app' | 'stripe' | 'admin' | null
   account: string | null
   email: string | null
+  // The account was deleted since (its purchases are kept, anonymized).
+  accountDeleted: boolean
   country: string | null
   region: string | null
   locale: string | null
@@ -265,6 +267,7 @@ export function buildTransactions(input: {
       refundSource: payment.refundSource,
       account: key ? key.slice(-6) : null,
       email: email && !isGuestEmail(email) ? email : null,
+      accountDeleted: Boolean(key) && !user,
       country: user?.location?.country ?? null,
       region: user?.location?.region ?? null,
       locale: user?.locale ?? null,

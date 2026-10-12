@@ -13,7 +13,7 @@ import { forgetRefundRequests } from '../billing/refund-requests.js'
 import { cancelProNow } from '../billing/stripe.js'
 import { ONCE_PER_PERSON, REPEAT_AFTER_MS, SURVEY_QUESTIONS, type SurveyQuestion } from '../survey/questions.js'
 
-import { deleteUserContent } from './content.js'
+import { deleteUserContent, forgetPurchases } from './content.js'
 
 const updateSchema = z.object({
   firstName: z.string().trim().min(1).max(60),
@@ -179,7 +179,8 @@ const meRoutes: FastifyPluginAsync = async (app) => {
   })
 
   // Deletes the account and every photo and render tied to it. Promised in
-  // the privacy notice, so it hard-deletes rather than soft-deleting.
+  // the privacy notice, so it hard-deletes rather than soft-deleting. Its
+  // purchases stay for the books, anonymized (forgetPurchases).
   app.delete('/', async (request, reply) => {
     const userId = requireUserId(request)
     const user = await app.collections.users.findOne({ _id: userId }, { projection: { pro: 1 } })
@@ -203,7 +204,7 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       app.collections.refreshTokens.deleteMany({ userId }),
       app.collections.passkeys.deleteMany({ userId }),
       app.collections.authChallenges.deleteMany({ userId }),
-      app.collections.purchases.deleteMany({ userId }),
+      forgetPurchases(app, userId),
     ])
     await app.collections.users.deleteOne({ _id: userId })
 

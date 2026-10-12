@@ -104,6 +104,21 @@ describe('transactions report', () => {
     assert.equal(rows[0]!.inApp, false)
   })
 
+  it('keeps a deleted account’s payment in revenue, as from a deleted account rather than a guest', () => {
+    const gone = payment({ userId: new ObjectId(), product: 'advisors_bundle', currency: 'usd', amount: 1990, usd: 1990 })
+    const guest = payment({ userId: lia, currency: 'usd', amount: 499, usd: 499 })
+    const { rows, summary } = report([gone, guest])
+    const deleted = rows.find((r) => r.product === 'advisors_bundle')!
+
+    assert.equal(deleted.accountDeleted, true)
+    assert.equal(deleted.email, null)
+    assert.equal(deleted.country, null)
+    assert.equal(deleted.order, 1)
+    assert.equal(rows.find((r) => r.product === 'color_report')!.accountDeleted, false)
+    assert.equal(summary.revenueUsd, 2489)
+    assert.equal(summary.buyers, 2)
+  })
+
   it('leaves refunds out of revenue and the splits, and counts buyers and new buyers', () => {
     const kept = payment({})
     const refunded = payment({ userId: lia, currency: 'usd', amount: 499, usd: 499, refundedAt: new Date(), refundSource: 'app' })

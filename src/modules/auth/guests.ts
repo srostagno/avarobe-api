@@ -8,7 +8,7 @@ import { type Locale, requestLocale } from '../../utils/locale.js'
 import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { signupLocation } from '../analytics/geo.js'
 import { toAcquisition, trackServerEvent } from '../analytics/service.js'
-import { deleteUserContent } from '../me/content.js'
+import { deleteUserContent, forgetPurchases } from '../me/content.js'
 
 // Trying Avarobe before an account (Oct 2026). 74% of visitors left at the
 // sign-up form (Oct 1–7) and the emails it collected sold nothing, so the
@@ -111,7 +111,8 @@ export async function claimGuest(
 // Guests who never saved, after GUEST_TTL_DAYS: their selfie, colors and
 // anything they made, their sessions, and the account itself. Nobody can
 // sign back in to a guest once its cookies are gone, so it would only sit
-// there.
+// there. What a guest paid for (its checkout's email had an account already)
+// stays for the books, anonymized like a deleted account's.
 export async function deleteStaleGuests(app: FastifyInstance, now = new Date()) {
   const stale = await app.collections.users
     .find({ guest: true, createdAt: { $lt: new Date(now.getTime() - env.GUEST_TTL_DAYS * DAY_MS) } }, { projection: { _id: 1 } })
@@ -124,6 +125,7 @@ export async function deleteStaleGuests(app: FastifyInstance, now = new Date()) 
       app.collections.refreshTokens.deleteMany({ userId }),
       app.collections.passkeys.deleteMany({ userId }),
       app.collections.authChallenges.deleteMany({ userId }),
+      forgetPurchases(app, userId, now),
     ])
     await app.collections.users.deleteOne({ _id: userId, guest: true })
   }

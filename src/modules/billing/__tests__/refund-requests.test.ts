@@ -8,6 +8,7 @@ import { fakeApp, type LogLine } from '../../../__tests__/fake-app.js'
 import { env } from '../../../config/env.js'
 import type { ProSubscription, PurchaseDocument, RefundRequestDocument } from '../../../types/mongo.js'
 import { translateMessage } from '../../../utils/translate-message.js'
+import { forgetPurchases } from '../../me/content.js'
 import { decisionEmailFor, founderEmail } from '../refund-notify.js'
 import {
   RATE_LIMIT_MESSAGE,
@@ -545,17 +546,28 @@ describe('an account deleted with a request open', () => {
     const w = world({ user: { colorReportAt: ago(DAY) }, purchases: [{ product: 'color_report', stripePaymentIntentId: 'pi_color' }] })
     const { request } = await createRefundRequest(w.app, ask(w.userId, w.purchases()[0]!._id), s.requests)
 
-    // As DELETE /me does: requests first, then the account and its purchases.
+    // As DELETE /me does: requests first, then the account; its purchases
+    // stay, anonymized.
     await forgetRefundRequests(w.app, w.userId)
-    await w.collection('purchases').deleteMany({ userId: w.userId })
+    await forgetPurchases(w.app, w.userId)
     await w.collection('users').deleteOne({ _id: w.userId })
 
     const plan = await planRefund(w.app, w.requests()[0]!)
     assert.ok(plan.warnings.includes('Account deleted: money back only'))
+    assert.equal(plan.total, 499)
+    assert.equal(plan.payments[0]?.via, 'payment')
 
     await approveRefundRequest(w.app, { ...w.admin, id: request._id, expectedAmount: 499, note: null }, s.refunds)
 
     assert.deepEqual(s.refunded, ['pi_color'])
+    // The kept purchase is refunded in the books too.
+    const purchase = w.purchases()[0]!
+    assert.ok(purchase.accountDeletedAt)
+    assert.ok(purchase.refundedAt)
+    assert.equal(purchase.refund?.source, 'admin')
+    assert.ok(purchase.refund?.requestId?.equals(request._id))
+    assert.equal(purchase.refund?.stripeRefundId, 're_pi_color')
+    assert.equal(w.requests()[0]!.status, 'refunded')
     assert.ok(sent(w.logs, 'nora@example.com').includes('Your refund is on its way'))
     // Scrubbed once its decision went out.
     const scrubbed = w.requests()[0]!

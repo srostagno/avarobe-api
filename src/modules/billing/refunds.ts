@@ -303,11 +303,13 @@ export type CoverFailed = { cover: CoverToRefund; error: string }
 // revoke it twice; a Stripe error unmarks it. A purchase this same request
 // marked in an approval that stopped halfway (earlierAttempt) is finished:
 // refunded in Stripe if it never got its refund id (a refund made meanwhile
-// counts), and taken back if it wasn't yet (`refund.revokedAt`). A purchase
-// that's gone (the account was deleted) is refunded by the payment the
-// request kept: there's nothing left to take away. Stripe saying the charge
-// was refunded already (in its dashboard) counts as refunded. No window
-// here: the request was made within it, and the review can take days.
+// counts), and taken back if it wasn't yet (`refund.revokedAt`). A deleted
+// account's purchase is marked the same way, with nothing left to take
+// away; one that's gone (deleted with its account, before they were kept in
+// October 2026) is refunded by the payment the request kept. Stripe saying
+// the charge was refunded already (in its dashboard) counts as refunded. No
+// window here: the request was made within it, and the review can take
+// days.
 // `attempt`: this approval's own id, in each refund's idempotency key.
 export async function refundCovers(
   app: FastifyInstance,
@@ -466,9 +468,9 @@ export async function refundCovers(
       continue
     }
 
-    // The account was deleted, and its purchases with it: the payment the
-    // request kept, straight to Stripe (a refund made before, by an attempt
-    // that stopped halfway or in the dashboard, answers
+    // The account was deleted with its purchases (before October 2026): the
+    // payment the request kept, straight to Stripe (a refund made before, by
+    // an attempt that stopped halfway or in the dashboard, answers
     // charge_already_refunded).
     try {
       const refundId = cover.stripePaymentIntentId
@@ -592,8 +594,9 @@ export async function handleChargeRefunded(
   }
 
   if (!purchase) {
-    // A guest's book, or the payment of an account deleted with a request
-    // still open (the request kept the payment).
+    // A guest's book, or the payment of an account deleted with its
+    // purchases (before October 2026) and a request still open (the request
+    // kept the payment).
     await closeRequestsOnStripeRefund(app, { paymentIntentId, guideOrderId: order?._id ?? null })
     return
   }
@@ -783,6 +786,8 @@ export async function refundsReport(app: FastifyInstance, days: number) {
       id: purchase._id.toString(),
       userId: purchase.userId.toString(),
       email: emails.get(purchase.userId.toString()) ?? null,
+      // The account was deleted since (its purchases are kept, anonymized).
+      accountDeleted: !emails.has(purchase.userId.toString()),
       product: purchase.product,
       amount: purchase.refund?.amount ?? purchase.amountTotal,
       currency: purchase.currency,
