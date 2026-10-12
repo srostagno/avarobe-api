@@ -7,6 +7,7 @@ import type Stripe from 'stripe'
 import { env } from '../../config/env.js'
 import { isGuestEmail } from '../../utils/guests.js'
 import { errorMessage } from '../../utils/http.js'
+import { isAdmin } from './entitlements.js'
 
 // Purchases reported from the server, so ad blockers and iOS don't lose them:
 // GA4 Measurement Protocol and Meta's Conversions API. Both deduplicate with
@@ -24,7 +25,9 @@ export type Attribution = { gaClientId?: string; fbp?: string; fbc?: string }
 
 // In the metadata of a checkout (or sign-up) whose browser allowed tracking,
 // with or without ids yet: Meta may then match the purchase by the email.
-// Checkouts from before it have it implied by their browser ids.
+// Checkouts from before it have it implied by their browser ids. The IP and
+// user agent stay in the checkout's Stripe metadata with the payment (the
+// privacy notice says so under Payments).
 export const TRACKING_ALLOWED = { tracking: 'allowed' } as const
 
 export function trackingAllowed(metadata: Record<string, string>) {
@@ -102,37 +105,76 @@ export function customerEmail(email: string | null | undefined) {
   return normalized && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !isGuestEmail(normalized) ? normalized : undefined
 }
 
-// Hashed one way (SHA-256) before they leave: Meta compares them with its
-// own hashes and never gets the email itself. external_id is our account id
-// (a guest's own id too), country the lowercase ISO code. No phone: we keep
-// none.
+// A two-letter ISO country code, uppercase, or nothing.
+function countryCode(value: string | null | undefined) {
+  const code = value?.trim().toUpperCase()
+
+  return code && /^[A-Z]{2}$/.test(code) ? code : undefined
+}
+
+// Where the GDPR (the EEA, with the EU's outermost regions and the Aland
+// Islands, which have codes of their own), the UK GDPR (with the Crown
+// Dependencies and Gibraltar, under their own similar laws) or Switzerland's
+// FADP ask for consent first. Our tracking is the US model (on unless the
+// visitor opts out) and there's no consent banner yet, so people there never
+// have their hashed email, account id or country sent to Meta: their events
+// go as before, by the browser ids alone (metaCustomerData).
+const CONSENT_FIRST = new Set([
+  // EU
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+  'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
+  // the rest of the EEA
+  'IS', 'LI', 'NO',
+  // EU regions with codes of their own
+  'AX', 'GF', 'GP', 'MQ', 'RE', 'YT', 'MF',
+  // the UK and Switzerland
+  'GB', 'UK', 'GG', 'JE', 'IM', 'GI', 'CH',
+])
+
+export function consentFirstCountry(country: string | null | undefined) {
+  const code = countryCode(country)
+
+  return Boolean(code && CONSENT_FIRST.has(code))
+}
+
+// Hashed one way (SHA-256) before they leave, so Meta doesn't receive them
+// readable: it compares them with the ones it holds to find the person's
+// Meta account, so they are still personal data, and the privacy notice
+// says so. external_id is our account id (a guest's own id too), country
+// the lowercase ISO code. No phone: we keep none. Nothing from someone in
+// the EEA, the UK or Switzerland (CONSENT_FIRST).
 export function metaCustomerData(customer: MetaCustomer | null | undefined) {
+  if (consentFirstCountry(customer?.country)) {
+    return {}
+  }
+
   const email = customerEmail(customer?.email)
   const userId = customer?.userId?.trim()
-  const country = customer?.country?.trim().toLowerCase()
+  const country = countryCode(customer?.country)?.toLowerCase()
 
   return {
     ...(email ? { em: [sha256(email)] } : {}),
     ...(userId ? { external_id: [sha256(userId)] } : {}),
-    ...(country && /^[a-z]{2}$/.test(country) ? { country: [sha256(country)] } : {}),
+    ...(country ? { country: [sha256(country)] } : {}),
   }
 }
 
 // What Meta can match a server event on, only when the browser allowed
 // tracking: the _fbp cookie, the ad click id, the IP and user agent, and the
-// person's hashed email, account id and country. It goes out with either
-// browser id (a buyer without the _fbp cookie, like the first trial, is
-// still worth reporting by click id) or, without them, with the email and
-// the user agent Meta requires for website events (Safari after the jump,
-// a checkout from one of our emails). Otherwise there's nothing to send.
+// person's hashed email, account id and country. Always with the user agent:
+// Meta requires it for website events and refuses one without it. It goes
+// out with either browser id (a buyer without the _fbp cookie, like the
+// first trial, is still worth reporting by click id) or, without them, with
+// the hashed email (Safari after the jump, a checkout from one of our
+// emails). Otherwise there's nothing to send.
 export function metaUserData(metadata: Record<string, string>, customer?: MetaCustomer | null) {
-  if (!trackingAllowed(metadata)) {
+  if (!trackingAllowed(metadata) || !metadata.ua) {
     return null
   }
 
   const identifiers = metaCustomerData(customer)
 
-  if (!metadata.fbp && !metadata.fbc && (!identifiers.em || !metadata.ua)) {
+  if (!metadata.fbp && !metadata.fbc && !identifiers.em) {
     return null
   }
 
@@ -140,7 +182,7 @@ export function metaUserData(metadata: Record<string, string>, customer?: MetaCu
     ...(metadata.fbp ? { fbp: metadata.fbp } : {}),
     ...(metadata.fbc ? { fbc: metadata.fbc } : {}),
     ...(metadata.ip ? { client_ip_address: metadata.ip } : {}),
-    ...(metadata.ua ? { client_user_agent: metadata.ua } : {}),
+    client_user_agent: metadata.ua,
     ...identifiers,
   }
 }
@@ -154,18 +196,32 @@ const REGION_COUNTRY: Record<string, string> = { br: 'BR', mx: 'MX', co: 'CO' }
 
 // The buyer for Meta: the account's email when it's real (a guest's is a
 // placeholder until Stripe's is claimed), else Stripe's; the account id;
-// and the country they signed up from, else the card's, else the
-// purchase's region when that's one country.
+// and the card's billing country (closest to the home country Meta asks
+// for), else the one they signed up from, else the purchase's region when
+// that's one country, each used only when it's a country code. When any of
+// them is in the EEA, the UK or Switzerland, that one is the country, so
+// none of the identifiers leave (metaCustomerData).
 export function purchaseCustomer(
   user: { email?: string | null; location?: { country?: string | null } | null } | null | undefined,
   metadata: Record<string, string>,
   checkout?: CheckoutBuyer,
 ): MetaCustomer {
+  const countries = [checkout?.country, user?.location?.country, REGION_COUNTRY[metadata.region ?? '']]
+    .map(countryCode)
+    .filter((code): code is string => Boolean(code))
+
   return {
     email: customerEmail(user?.email) ?? customerEmail(checkout?.email) ?? null,
     userId: metadata.userId && ObjectId.isValid(metadata.userId) ? metadata.userId : null,
-    country: user?.location?.country ?? checkout?.country ?? REGION_COUNTRY[metadata.region ?? ''] ?? null,
+    country: countries.find(consentFirstCountry) ?? countries[0] ?? null,
   }
+}
+
+// An admin's own test purchase or sign-up is never a conversion, however it
+// was made: signed in (the checkout then keeps no ids), or signed out, as a
+// guest checkout or the book, when only the email Stripe asked for is theirs.
+export function adminEmail(...emails: Array<string | null | undefined>) {
+  return emails.some((email) => Boolean(email?.trim()) && isAdmin({ email: email!.trim() }))
 }
 
 async function buyerAccount(app: FastifyInstance, userId: string | undefined) {
@@ -228,9 +284,9 @@ export function sendMetaPurchase(input: Omit<PurchaseReport, 'checkout'> & { cus
         action_source: 'website',
         event_source_url: `${env.APP_URL}/studio/billing/success`,
         // Browser ids, IP and user agent, and the email, account id and
-        // country hashed (SHA-256): the privacy notice says Meta gets
-        // these hashed identifiers to measure our ads, only when tracking
-        // is allowed, and never the email itself.
+        // country hashed (SHA-256): the privacy notice says Meta gets them
+        // to measure our ads, only when tracking is allowed, the hashed
+        // ones never from the EEA, the UK or Switzerland.
         user_data: userData,
         custom_data: {
           value: input.amount / 100,
@@ -248,8 +304,23 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
   const value = input.amount / 100
   const currency = input.currency.toUpperCase()
   const tasks: Promise<unknown>[] = []
+  const toGa = Boolean(env.GA_API_SECRET && env.GA_MEASUREMENT_ID && metadata.ga_cid)
+  const toMeta = metaConfigured() && trackingAllowed(metadata)
 
-  if (env.GA_API_SECRET && env.GA_MEASUREMENT_ID && metadata.ga_cid) {
+  // The account is looked up only for a purchase that can go somewhere
+  // (never after an opt-out or GPC).
+  if (!toGa && !toMeta) {
+    return
+  }
+
+  const user = await buyerAccount(app, metadata.userId)
+  const customer = purchaseCustomer(user, metadata, input.checkout)
+
+  if (adminEmail(user?.email, input.checkout?.email)) {
+    return
+  }
+
+  if (toGa) {
     tasks.push(
       post(
         `https://www.google-analytics.com/mp/collect?measurement_id=${env.GA_MEASUREMENT_ID}&api_secret=${env.GA_API_SECRET}`,
@@ -266,10 +337,8 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
     )
   }
 
-  // The account is looked up only for a purchase that can go to Meta.
-  if (metaConfigured() && trackingAllowed(metadata)) {
-    const user = await buyerAccount(app, metadata.userId)
-    const meta = sendMetaPurchase({ ...input, customer: purchaseCustomer(user, metadata, input.checkout) })
+  if (toMeta) {
+    const meta = sendMetaPurchase({ ...input, customer })
 
     if (meta) {
       tasks.push(meta)
@@ -287,9 +356,10 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
 
 // A new account, reported to Meta from the server too (the pixel sends the
 // same event from the browser with the same event id, and Meta keeps one).
-// Only when the browser allowed tracking, like purchases: browser ids, IP
-// and user agent, and the hashed email, account id and country only when
-// the account has a real email.
+// Only when the browser allowed tracking, like purchases, and never for an
+// admin: browser ids, IP and user agent, and the hashed email, account id
+// and country only when the account has a real email (and isn't in the EEA,
+// the UK or Switzerland).
 export async function reportRegistration(
   app: FastifyInstance,
   input: {
@@ -300,13 +370,18 @@ export async function reportRegistration(
   },
 ) {
   const { metadata, user } = input
+
+  if (!metaConfigured() || adminEmail(user.email)) {
+    return
+  }
+
   const email = customerEmail(user.email)
   const userData = metaUserData(
     metadata,
     email ? { email, userId: user._id.toString(), country: user.location?.country ?? null } : null,
   )
 
-  if (!metaConfigured() || !userData) {
+  if (!userData) {
     return
   }
 

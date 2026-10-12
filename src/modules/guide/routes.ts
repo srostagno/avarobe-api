@@ -112,7 +112,8 @@ const guideRoutes: FastifyPluginAsync = async (app) => {
       const url = await createGuideCheckout({
         userId: user ? user._id.toString() : null,
         email: parsed.data.email ?? null,
-        // An admin's test purchase never reaches Meta or GA as a sale.
+        // An admin's test purchase never reaches Meta or GA as a sale (signed
+        // out, reportPurchase knows them by the email Stripe asked for).
         attribution: user && isAdmin(user) ? {} : attributionMetadata(parsed.data.attribution, request),
         locale: requestLocale(request),
         region: pricingRegion(request, user),

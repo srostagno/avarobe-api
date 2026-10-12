@@ -2,7 +2,8 @@
 // was bought (Meta takes events up to 7 days old). Only when the buyer
 // allowed tracking at checkout (no opt-out, no GPC: the checkout says so, or
 // carries browser ids), with the same hashed email, account id and country
-// as the live report. The event id is the one the live report uses (the
+// as the live report (none from the EEA, the UK or Switzerland), never for
+// an admin's test purchase. The event id is the one the live report uses (the
 // checkout, or the first invoice for Pro), so Meta drops it if the purchase
 // did arrive after all.
 //
@@ -14,7 +15,7 @@ import { MongoClient } from 'mongodb'
 import Stripe from 'stripe'
 
 import { env } from '../src/config/env.js'
-import { purchaseCustomer, sendMetaPurchase, trackingAllowed } from '../src/modules/billing/conversions.js'
+import { adminEmail, purchaseCustomer, sendMetaPurchase, trackingAllowed } from '../src/modules/billing/conversions.js'
 import type { PurchaseDocument, UserDocument } from '../src/types/mongo.js'
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000
@@ -70,6 +71,14 @@ try {
   }
 
   const user = await db.collection<UserDocument>('users').findOne({ _id: purchase.userId })
+  const checkout = {
+    email: session.customer_details?.email ?? session.customer_email,
+    country: session.customer_details?.address?.country,
+  }
+
+  if (adminEmail(user?.email, checkout.email)) {
+    throw new Error("An admin's test purchase. Not sending.")
+  }
 
   // Older checkouts dropped long _fbc cookies; rebuild it from the ad click
   // the account came in on.
@@ -88,10 +97,7 @@ try {
     amount: purchase.amountTotal,
     currency: purchase.currency,
     eventTime: purchase.createdAt,
-    customer: purchaseCustomer(user, metadata, {
-      email: session.customer_details?.email ?? session.customer_email,
-      country: session.customer_details?.address?.country,
-    }),
+    customer: purchaseCustomer(user, metadata, checkout),
   })
 
   if (!sent) {
