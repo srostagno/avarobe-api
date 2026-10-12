@@ -119,6 +119,16 @@ describe('transactions report', () => {
     assert.deepEqual(byCountry, [{ key: 'BR', count: 1, usd: 268 }])
   })
 
+  it('says who refunded it: an approved request (admin), the one-tap refund before Oct 12 (app) or Stripe', () => {
+    const approved = payment({ refundedAt: new Date(), refundSource: 'admin' })
+    const instant = payment({ userId: lia, currency: 'usd', amount: 499, usd: 499, refundedAt: new Date(), refundSource: 'app' })
+    const { rows, summary } = report([approved, instant])
+
+    assert.deepEqual(rows.map((row) => row.refundSource).sort(), ['admin', 'app'])
+    assert.equal(summary.refunds, 2)
+    assert.equal(summary.revenueUsd, 0)
+  })
+
   it('never shows a guest placeholder email, and keeps a book order bought without an account', () => {
     const guest = payment({ userId: lia, currency: 'usd', amount: 499, usd: 499 })
     const book = payment({ userId: null, product: 'outfit_guide', currency: 'usd', amount: 1490, usd: 1490, guestEmail: 'buyer@example.com' })

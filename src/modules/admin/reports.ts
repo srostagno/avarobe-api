@@ -1,14 +1,15 @@
-import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import type { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
-import { authenticate, requireUserId } from '../../plugins/authenticate.js'
+import { authenticate } from '../../plugins/authenticate.js'
 import type { AvatarDocument, UserDocument } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { signedUrlOrNull } from '../../utils/storage.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { serializeReport } from '../report/routes.js'
+import { viewerIfAdmin } from './guard.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -17,18 +18,6 @@ const listSchema = z.object({
   before: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(48).default(24),
 })
-
-async function viewerIfAdmin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
-  const viewerId = requireUserId(request)
-  const viewer = await app.collections.users.findOne({ _id: viewerId }, { projection: { email: 1 } })
-
-  if (!viewer || !isAdmin(viewer)) {
-    await reply.code(403).send({ message: 'Only admins can do this.' })
-    return null
-  }
-
-  return viewerId
-}
 
 // When its newest half was written.
 function writtenAt(avatar: Pick<AvatarDocument, 'colorReport' | 'styleProfile'>) {

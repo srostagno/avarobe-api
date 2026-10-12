@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import { ObjectId } from 'mongodb'
 import { z } from 'zod'
 
-import { authenticate, requireUserId } from '../../plugins/authenticate.js'
+import { authenticate } from '../../plugins/authenticate.js'
 import type { AvatarDocument, LifecycleEmailKind, LookDocument } from '../../types/mongo.js'
 import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
@@ -11,13 +11,15 @@ import { signedUrlOrNull } from '../../utils/storage.js'
 import { CHANNELS } from '../analytics/service.js'
 import { analyticsReport } from '../analytics/report.js'
 import { isColorsLocked } from '../avatar/reads.js'
-import { BILLING_PROJECTION, adminUserIds, isAdmin } from '../billing/entitlements.js'
+import { BILLING_PROJECTION, adminUserIds } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
 import { refundsReport } from '../billing/refunds.js'
+import { requestStats } from '../billing/refund-requests.js'
 import { recentCheckouts } from '../billing/stripe.js'
 import { ICON_LOOKS } from '../looks/icons.js'
 import { addDays, emailActivity, pacificDay, pacificStart } from './email-activity.js'
 import { hairReport } from './hair-report.js'
+import { viewerIfAdmin } from './guard.js'
 import { defaultRange, transactionsReport } from './transactions.js'
 
 const avatarsSchema = z.object({
@@ -152,18 +154,6 @@ function requestedDays(query: { from?: string; to?: string; days?: number }) {
 }
 
 const checkoutsSchema = z.object({ from: DAY.optional(), to: DAY.optional(), days: z.coerce.number().int().min(1).max(30).optional() })
-
-async function viewerIfAdmin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
-  const viewerId = requireUserId(request)
-  const viewer = await app.collections.users.findOne({ _id: viewerId }, { projection: { email: 1 } })
-
-  if (!viewer || !isAdmin(viewer)) {
-    await reply.code(403).send({ message: 'Only admins can do this.' })
-    return null
-  }
-
-  return viewerId
-}
 
 // What a reviewer needs to judge a look against its brief. Photos people
 // uploaded to try on are left out (they can show anyone); icon try-ons name
@@ -576,7 +566,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
-    return refundsReport(app, parsed.data.days)
+    const [report, requests] = await Promise.all([refundsReport(app, parsed.data.days), requestStats(app, parsed.data.days)])
+    return { ...report, requests }
   })
 
   // Checkouts as Stripe has them: opened, paid, abandoned (expired) or open.
