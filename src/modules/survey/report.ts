@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { ObjectId } from 'mongodb'
 
 import { adminUserIds } from '../billing/entitlements.js'
 
@@ -66,5 +67,72 @@ export async function whyReport(app: FastifyInstance, days: number) {
       at: row.createdAt.toISOString(),
     }))
 
-  return { days, signups, questions, notes }
+  return { days, signups, questions, notes, game: await gameReport(app, since, admins) }
+}
+
+type GameRow = { shown: number; answered: number; a: number; b: number; bet: number; selfie: number }
+
+const emptyRow = (): GameRow => ({ shown: 0, answered: 0, a: 0, b: 0, bet: 0, selfie: 0 })
+
+// The game at the top of the colors page (web components/landing-game, the
+// lp_game events): visitors who saw it, answered "Which one looks younger?"
+// and what, bet a season and which, and sent their selfie; by ad
+// (utm_content). Admins' own visitors are left out.
+async function gameReport(app: FastifyInstance, since: Date, admins: ObjectId[]) {
+  const adminVisitors = (await app.collections.analyticsEvents.distinct('visitorId', { userId: { $in: admins } })).filter(
+    (value): value is string => Boolean(value),
+  )
+  const events = await app.collections.analyticsEvents
+    .find(
+      { at: { $gte: since }, name: 'lp_game', visitorId: { $nin: adminVisitors } },
+      { projection: { visitorId: 1, props: 1, content: 1, at: 1 } },
+    )
+    .sort({ at: 1 })
+    .limit(50000)
+    .toArray()
+
+  type Visitor = { content: string; shown: boolean; ab: string | null; bet: string | null; selfie: boolean }
+  const visitors = new Map<string, Visitor>()
+
+  for (const event of events) {
+    const key = event.visitorId ?? event._id.toString()
+    const visitor = visitors.get(key) ?? { content: event.content ?? 'direct', shown: false, ab: null, bet: null, selfie: false }
+    const step = String(event.props.step ?? '')
+    const answer = event.props.answer === undefined ? null : String(event.props.answer)
+
+    if (step === 'shown') visitor.shown = true
+    if (step === 'ab' && !visitor.ab) visitor.ab = answer
+    if (step === 'bet' && !visitor.bet) visitor.bet = answer
+    if (step === 'selfie') visitor.selfie = true
+
+    visitors.set(key, visitor)
+  }
+
+  const total = emptyRow()
+  const bets: Counts = {}
+  const byContent: Record<string, GameRow> = {}
+
+  for (const visitor of visitors.values()) {
+    for (const row of [total, (byContent[visitor.content] ??= emptyRow())]) {
+      row.shown += visitor.shown || visitor.ab || visitor.bet || visitor.selfie ? 1 : 0
+      row.answered += visitor.ab ? 1 : 0
+      row.a += visitor.ab === 'a' ? 1 : 0
+      row.b += visitor.ab === 'b' ? 1 : 0
+      row.bet += visitor.bet ? 1 : 0
+      row.selfie += visitor.selfie ? 1 : 0
+    }
+
+    if (visitor.bet) {
+      bump(bets, visitor.bet)
+    }
+  }
+
+  return {
+    ...total,
+    bets: ['spring', 'summer', 'autumn', 'winter'].map((family) => ({ answer: family, count: bets[family] ?? 0 })),
+    byContent: Object.entries(byContent)
+      .map(([content, row]) => ({ content, ...row }))
+      .sort((a, b) => b.shown - a.shown)
+      .slice(0, 15),
+  }
 }
