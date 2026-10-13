@@ -29,19 +29,19 @@ function buyer(daysAgo: number, fields: Partial<UserDocument> = {}): UserDocumen
 }
 
 describe('the Pro credit offer in emails', () => {
-  it('prices Pro annual as checkout does where they pay: R$ 85,00 after the Color Advisor', () => {
+  it('prices Pro annual as checkout does where they pay: R$ 72,00 after the Color Advisor (R$ 27,90 since Oct 13)', () => {
     const credit = proCreditOffer(buyer(1), now)
 
     assert.deepEqual(
       credit && { price: credit.price, regular: credit.regular, credit: credit.credit, currency: credit.currency, from: credit.from },
-      { price: 8500, regular: 9990, credit: 1490, currency: 'brl', from: 'color' },
+      { price: 7200, regular: 9990, credit: 2790, currency: 'brl', from: 'color' },
     )
     assert.equal(credit?.until.getTime(), now.getTime() - DAY + env.REPORT_CREDIT_WINDOW_DAYS * DAY)
   })
 
   it('sells annual with it in the Pro email, monthly once it has less than a day left or on Pro', () => {
     const annual = crossSellOffer('xsell_pro', buyer(10), now)
-    assert.deepEqual([annual.product, annual.price, annual.regular, annual.currency], ['pro_annual', 8500, 9990, 'brl'])
+    assert.deepEqual([annual.product, annual.price, annual.regular, annual.currency], ['pro_annual', 7200, 9990, 'brl'])
 
     const ending = crossSellOffer('xsell_pro', buyer(env.REPORT_CREDIT_WINDOW_DAYS - 0.5), now)
     assert.deepEqual([ending.product, ending.price], ['pro_monthly', 2490])
@@ -58,11 +58,11 @@ describe('the Pro credit offer in emails', () => {
     const link = { url: 'https://x/style', side: null, heroUrl: null, gift: null, cut: null, edit: null, occasionUrls: [], credit }
     const block = crossSellContentFor('xsell_style', user, undefined, { ...link, proCreditUrl: 'https://x/pro' }, now).proCredit
 
-    assert.deepEqual(block && [block.price, block.regular, block.url], [8500, 9990, 'https://x/pro'])
+    assert.deepEqual(block && [block.price, block.regular, block.url], [7200, 9990, 'https://x/pro'])
     assert.equal(crossSellContentFor('xsell_style', user, undefined, link, now).proCredit, null)
     // The Pro email: the offer itself, on its main button.
     const pro = crossSellContentFor('xsell_pro', buyer(10), undefined, { ...link, url: 'https://x/annual', credit: proCreditOffer(buyer(10), now) }, now)
     assert.equal(pro.proCredit?.url, 'https://x/annual')
-    assert.equal(pro.price, 8500)
+    assert.equal(pro.price, 7200)
   })
 })

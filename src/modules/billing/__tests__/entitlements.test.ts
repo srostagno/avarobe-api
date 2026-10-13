@@ -170,10 +170,10 @@ describe('the report credit toward Pro annual', () => {
 
   it('counts the Color Advisor at its price where they pay, so Pro annual costs what checkout charges', () => {
     assert.equal(reportCreditFor(color, 'us', now)?.amount, env.PRICE_COLOR_REPORT_CENTS)
-    // Brazil: R$ 99,90 - R$ 14,90 = R$ 85,00.
+    // Brazil: R$ 99,90 - R$ 27,90 = R$ 72,00.
     const br = reportCreditFor(color, 'br', now)
-    assert.deepEqual([br?.amount, br?.currency], [1490, 'brl'])
-    assert.equal(regionalAmount('pro_annual', 'br') - (br?.amount ?? 0), 8500)
+    assert.deepEqual([br?.amount, br?.currency], [2790, 'brl'])
+    assert.equal(regionalAmount('pro_annual', 'br') - (br?.amount ?? 0), 7200)
     assert.deepEqual([reportCreditFor(color, 'mx', now)?.amount, reportCreditFor(color, 'mx', now)?.currency], [7900, 'mxn'])
     assert.deepEqual([reportCreditFor(color, 'co', now)?.amount, reportCreditFor(color, 'co', now)?.currency], [1190000, 'cop'])
     assert.deepEqual([reportCreditFor(color, 'latam', now)?.amount, reportCreditFor(color, 'latam', now)?.currency], [299, 'usd'])
@@ -198,7 +198,7 @@ describe('the report credit toward Pro annual', () => {
   it('reaches the web in the currency of where they signed up', () => {
     const brazilian = user({ colorReportAt: new Date(Date.now() - DAY), location: { country: 'BR', region: null, source: 'edge', at: new Date() } })
     const credit = serializeBilling(brazilian).reportCredit
-    assert.deepEqual([credit?.amount, credit?.currency, credit?.region, credit?.from], [1490, 'brl', 'br', ['color']])
+    assert.deepEqual([credit?.amount, credit?.currency, credit?.region, credit?.from], [2790, 'brl', 'br', ['color']])
     // No location: US prices, said so (a LatAm offer, also in dollars, isn't the same prices).
     const nowhere = serializeBilling(user({ colorReportAt: new Date(Date.now() - DAY) })).reportCredit
     assert.deepEqual([nowhere?.currency, nowhere?.region], ['usd', 'us'])

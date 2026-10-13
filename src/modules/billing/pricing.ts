@@ -52,13 +52,17 @@ export const REGION_CURRENCY: Record<PricingRegion, Currency> = { us: 'usd', br:
 
 type Listed = Exclude<PurchaseProduct, 'color_addon' | 'style_addon'>
 
-// Minor units of each region's currency (R$ 14,90 = 1490; MX$ 79 = 7900;
+// Minor units of each region's currency (R$ 27,90 = 2790; MX$ 79 = 7900;
 // COP 11.900 = 1190000, the dollar list at about 4,000 pesos).
+//
+// Brazil's Color Advisor went from R$ 14,90 to R$ 27,90 on Oct 13, 2026
+// (Silvio), and the pair from R$ 29,90 to R$ 42,90 so the Style Advisor
+// after it stays R$ 15,00, as the US did on Oct 12.
 const REGION_AMOUNTS: Record<Exclude<PricingRegion, 'us'>, Record<Listed, number>> = {
   br: {
-    color_report: 1490,
+    color_report: 2790,
     style_report: 1990,
-    reports_bundle: 2990,
+    reports_bundle: 4290,
     look_pack: 1490,
     color_mirror: 2490,
     hair_advisor: 1990,
