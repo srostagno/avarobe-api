@@ -55,8 +55,9 @@ const HALLOWEEN = 'Halloween 2026'
 const FALL = 'Fall 2026'
 const WEDDINGS = 'Fall Weddings 2026'
 const GRETA = 'ads/2026-10-halloween-wow/src/stills'
-// Greta's costumes from the Halloween Part 2 reel (Oct 12), the ones the
-// Halloween ad leads with.
+// Greta's costumes from the Halloween Part 2 reel (Oct 12): the ones the
+// Halloween ad shows, first in the Edit. The older Spider Queen and Black
+// Swan were renamed (Spider Web Gown, Dark Ballerina) for these.
 const PART2 = 'social/2026-10-halloween-part2/gen'
 
 const halloween: EditLook[] = [
@@ -83,6 +84,45 @@ const halloween: EditLook[] = [
       { slot: 'accessory', name: 'Horns headband', color: 'Red', colorHex: '#B3141B', material: 'Glossy resin', fit: 'Small horns' },
       { slot: 'outerwear', name: 'Long cape', color: 'Red', colorHex: '#A3121A', material: 'Satin', fit: 'From the shoulders to the ankles' },
       { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+      { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hw-spider-veil', presentation: 'womenswear', name: 'Spider Queen', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${PART2}/spider.png`,
+    scene: 'a dark living room glowing acid green from below, in a green-tinted haze',
+    makeup: 'dark plum lips and smoky green-black eyes',
+    description: 'A spiderweb veil, a lace web from shoulder to wrist and silver spiders: eerie in two pieces.',
+    items: [
+      { slot: 'accessory', name: 'Spiderweb lace veil', color: 'Black', colorHex: '#121212', material: 'Lace', fit: 'Draped from a small black headpiece over the hair' },
+      { slot: 'outerwear', name: 'Lace web shawl', color: 'Black', colorHex: '#141414', material: 'Lace', fit: 'A large web wrapped from the shoulders to the wrists' },
+      { slot: 'accessory', name: 'Spider earrings', color: 'Silver', colorHex: '#BFC3C8', material: 'Metal', fit: 'Dangling' },
+      { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+      { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hw-black-swan-tutu', presentation: 'womenswear', name: 'Black Swan', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${PART2}/swan.png`,
+    scene: 'a dark room lit by cold steel-blue moonlight from the window, with silver highlights',
+    makeup: 'dramatic black-and-white winged eye makeup sweeping toward the temples, with tiny rhinestones, and dark lips',
+    description: 'A black tutu, a feather collar and a feathered crown: a ballerina with a dark side.',
+    items: [
+      { slot: 'accessory', name: 'Feathered headpiece', color: 'Black', colorHex: '#121212', material: 'Feathers', fit: 'Small, on top of the head' },
+      { slot: 'accessory', name: 'Feather collar', color: 'Black', colorHex: '#151515', material: 'Feathers', fit: 'Dramatic, over the shoulders' },
+      { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+      { slot: 'bottom', name: 'Tulle tutu', color: 'Black', colorHex: '#141414', material: 'Tulle', fit: 'Short, layered over a mini skirt and sheer black tights' },
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hw-glam-skeleton', presentation: 'womenswear', name: 'Glam Skeleton', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${PART2}/skeleton.png`,
+    scene: 'a dark room under a cold white spotlight from above, with deep black shadows and a faint blue haze',
+    makeup: 'half-face skeleton makeup: white bone shading, a black eye socket and teeth drawn over the lips on one side, a glamorous smoky eye on the other',
+    description: 'Half skeleton, half glam: bone gloves and a bone print down the front.',
+    items: [
+      { slot: 'top', name: 'Bone-print turtleneck', color: 'Black and white', colorHex: '#1A1A1A', material: 'Fine knit', fit: 'Fitted, a white ribcage and spine painted down the front' },
+      { slot: 'accessory', name: 'Skeleton gloves', color: 'Black and white', colorHex: '#E8E6E1', material: 'Stretch fabric', fit: 'Bone print, wrist length' },
       { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
       { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
     ],
@@ -152,7 +192,7 @@ const halloween: EditLook[] = [
     ],
   },
   {
-    id: 'hw-spider-queen', presentation: 'womenswear', name: 'Spider Queen', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${GRETA}/spider.png`,
+    id: 'hw-spider-queen', presentation: 'womenswear', name: 'Spider Web Gown', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${GRETA}/spider.png`,
     scene: 'a dark living room with string lights',
     description: 'Black lace and a web that reaches the floor: a silhouette you can see from across the room.',
     items: [
@@ -163,7 +203,7 @@ const halloween: EditLook[] = [
     ],
   },
   {
-    id: 'hw-black-swan', presentation: 'womenswear', name: 'Black Swan', era: HALLOWEEN, mood: 'Costume party', person: 'ava',
+    id: 'hw-black-swan', presentation: 'womenswear', name: 'Dark Ballerina', era: HALLOWEEN, mood: 'Costume party', person: 'ava',
     scene: 'a dim theater hallway with velvet curtains',
     description: 'Feathers, tulle and a dark crown: a ballerina with a twist.',
     items: [

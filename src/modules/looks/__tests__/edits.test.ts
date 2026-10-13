@@ -36,7 +36,7 @@ describe('Edits', () => {
     assert.equal(edits[0]!.isNew, true)
     assert.equal(edits.at(-1)!.isNew, false)
     assert.ok(edits[0]!.looks.every((look) => look.presentation === 'womenswear'))
-    assert.equal(edits[0]!.looks.length, 22)
+    assert.equal(edits[0]!.looks.length, 25)
     assert.equal('scene' in edits[0]!.looks[0]!, false)
     assert.equal(next?.name, UPCOMING_EDITS[0]!.name)
 
