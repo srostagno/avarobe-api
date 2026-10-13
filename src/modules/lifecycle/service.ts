@@ -3,7 +3,7 @@ import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import { emailCopy } from '../../i18n/emails.js'
-import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, PurchaseProduct, UserDocument } from '../../types/mongo.js'
+import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, LookDocument, PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { deliverEmail, deliverLinkEmail } from '../../utils/email.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
 import { withLocale } from '../../utils/request-locale.js'
@@ -15,8 +15,8 @@ import { storedAdIds } from '../billing/conversions.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
 import { sendRefundReminders } from '../billing/refund-requests.js'
-import { EDITS } from '../looks/edits.js'
-import { looksFor } from '../looks/icon-routes.js'
+import { EDITS, UPCOMING_EDITS } from '../looks/edits.js'
+import { catalogTable, looksFor } from '../looks/icon-routes.js'
 import { assetSlot, editOfIcon, editText, hasGenerator, startAsset } from './assets.js'
 import {
   CROSS_SELL_RULES,
@@ -36,6 +36,7 @@ import {
   avatarNudgeEmail,
   checkoutRescueEmail,
   colorsReadyEmail,
+  costumeOfferEmail,
   reportUnopenedEmail,
   crossSellEmail,
   looksNudgeEmail,
@@ -223,6 +224,8 @@ export function stateFor(user: UserDocument, avatar: AvatarFacts | undefined, lo
     paid: billing.paid || billing.comp,
     promotionsAllowed: Boolean(env.EMAIL_POSTAL_ADDRESS),
     colorsPending: Boolean(avatar?.colorsNotify && !avatar.colorsNotify.sentAt && !avatar.colorsNotify.gaveUpAt),
+    // The Halloween flow: costumes picked to try next, or one tried on free.
+    costumeFlow: Boolean(user.lookPicks?.at) || (user.freeTryOns ?? 0) > 0,
   }
 }
 
@@ -295,6 +298,9 @@ export function lifecycleContentFor(
       throw new Error('checkout_link emails are built by sendCheckoutLink')
     case 'report_unopened':
       return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
+    case 'costume_offer':
+      // Needs the try-on it shows: sendCostumeOffers makes it.
+      throw new Error('costume_offer emails are built by sendCostumeOffer')
     case 'colors_ready':
       return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
     case 'price_drop':
@@ -910,6 +916,175 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
     return delivered
   } catch (error) {
     app.log.error({ err: error, userId: user._id.toString() }, 'Unopened report email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+    return false
+  }
+}
+
+// ---------------------------------------------------------------- costume offer
+
+// The Halloween flow (Oct 2026): a costume picked from the Halloween Edit, a
+// selfie, their email, and that costume tried on free (looks.freeTryOn).
+// Whoever doesn't have Pro gets one email an hour after the try-on was
+// ready: it on top, the costumes they picked to try next (users.lookPicks),
+// what Pro adds and the next Edits, with a link that signs them in on the
+// Halloween Edit. Promotional: never to guests, admins, deleted accounts or
+// anyone who turned off tips, and not before the postal address is set.
+// Their first email: the welcome stays out of it (stateFor costumeFlow).
+const COSTUME_OFFER_AFTER_MS = 60 * 60 * 1000
+const COSTUME_OFFER_WITHIN_MS = 3 * 24 * 60 * 60 * 1000
+const COSTUME_OFFER_DROPS = 2
+
+// Every Edit look by id, and the costumes' ids (the costume Edits' looks).
+const EDIT_LOOKS = new Map(EDITS.flatMap((edit) => edit.looks.map((look) => [look.id, look] as const)))
+const COSTUME_IDS = EDITS.filter((edit) => edit.costumes).flatMap((edit) => edit.looks.map((look) => look.id))
+
+// The costume and the picks in their language (i18n/catalog.*.ts, English
+// from the Edits when missing), without the one they tried; and the next
+// Edits (UPCOMING_EDITS), the ones still to drop in New York today.
+export function costumeOfferNames(locale: Locale, costumeId: string, picks: string[], now: Date) {
+  const table = withLocale(locale, () => catalogTable())
+  const name = (id: string) => table?.looks[id]?.name ?? EDIT_LOOKS.get(id)?.name ?? null
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
+
+  return {
+    costume: name(costumeId) ?? costumeId,
+    picks: [...new Set(picks)]
+      .filter((id) => id !== costumeId)
+      .map(name)
+      .filter((value): value is string => Boolean(value)),
+    next: UPCOMING_EDITS.filter((drop) => drop.at > today)
+      .slice(0, COSTUME_OFFER_DROPS)
+      .map((drop) => ({ ...drop, name: table?.upcoming[drop.name] ?? drop.name })),
+  }
+}
+
+export async function sendCostumeOffers(app: FastifyInstance, now = new Date()) {
+  if (!env.EMAIL_POSTAL_ADDRESS) {
+    return 0
+  }
+
+  // Newest first: older try-ons in the window have mostly had theirs. The
+  // createdAt bound (a day more than the window) keeps the scan on its index.
+  const looks = await app.collections.looks
+    .find(
+      {
+        createdAt: { $gte: new Date(now.getTime() - COSTUME_OFFER_WITHIN_MS - 24 * 60 * 60 * 1000) },
+        freeTryOn: true,
+        status: 'ready',
+        iconId: { $in: COSTUME_IDS },
+        readyAt: {
+          $gte: new Date(now.getTime() - COSTUME_OFFER_WITHIN_MS),
+          $lte: new Date(now.getTime() - COSTUME_OFFER_AFTER_MS),
+        },
+      },
+      { projection: { userId: 1, iconId: 1, imageKey: 1 } },
+    )
+    .sort({ readyAt: -1 })
+    .limit(BATCH)
+    .toArray()
+  const seen = new Set<string>()
+  let sent = 0
+
+  for (const look of looks) {
+    const id = look.userId.toString()
+
+    if (seen.has(id)) {
+      continue
+    }
+
+    seen.add(id)
+    const user = await app.collections.users.findOne({
+      _id: look.userId,
+      'lifecycleEmails.costume_offer': { $exists: false },
+      guest: { $ne: true },
+      deletedAt: null,
+      emailTipsOptOutAt: null,
+    })
+
+    if (!user || isAdmin(user) || billingState(user, now.getTime()).proActive) {
+      continue
+    }
+
+    if (await sendCostumeOffer(app, user, look, now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendCostumeOffer(
+  app: FastifyInstance,
+  user: UserDocument,
+  look: Pick<LookDocument, '_id' | 'iconId' | 'imageKey'>,
+  now: Date,
+) {
+  const field = 'lifecycleEmails.costume_offer'
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const locale = user.locale ?? 'en'
+    const names = costumeOfferNames(locale, look.iconId ?? '', user.lookPicks?.ids ?? [], now)
+    // Signed in from the email, in their own browser, on the Halloween Edit.
+    const signIn = new URL(
+      await createLink(app, user, 'sign_in', undefined, { next: '/studio/halloween?from=email', ads: storedAdIds(user) }),
+    )
+    signIn.searchParams.set('utm_source', 'email')
+    signIn.searchParams.set('utm_medium', 'lifecycle')
+    signIn.searchParams.set('utm_campaign', 'costume_offer')
+    // Their try-on, through a signed link (emailImageKey serves a ready look).
+    const photoUrl = look.imageKey ? emailImageUrl(user._id, now, `look-${look._id.toString()}`) : null
+    const content = costumeOfferEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      ...names,
+      photoUrl,
+      url: signIn.toString(),
+    })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'costume_offer',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(content, sendId),
+    })
+    app.log.info(
+      { userId: user._id.toString(), costume: look.iconId, picks: names.picks.length, photo: Boolean(photoUrl), delivered },
+      'Costume offer email',
+    )
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Costume offer email failed; will retry')
     await Promise.all([
       app.collections.emailSends.deleteOne({ _id: sendId }),
       app.collections.users.updateOne(
@@ -1691,6 +1866,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendReportReminders(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Unopened report run crashed')
+    })
+    void sendCostumeOffers(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Costume offer run crashed')
     })
     // Refund requests: emails that didn't go out, and the founder's reminder
     // of requests waiting too long.

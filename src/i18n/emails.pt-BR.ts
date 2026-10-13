@@ -352,6 +352,25 @@ export const ptBrEmails: EmailCopy = {
     expiry: 'O link já entra na sua conta. Funciona uma vez e expira em 3 dias.',
   },
 
+  costumeOffer: {
+    subject: (costume: string) => `Você de ${costume} 🎃`,
+    preheader: 'Suas próximas fantasias já estão prontas para provar.',
+    eyebrow: 'Sua fantasia de Halloween',
+    heading: (costume: string) => `Você de ${costume}`,
+    alt: (costume: string) => `Você de ${costume}, no seu próprio avatar`,
+    picks: (names: string[]) =>
+      names.length === 0
+        ? 'O resto do Edit de Halloween está esperando: todas as fantasias já podem ser provadas em você.'
+        : names.length === 1
+          ? `A fantasia que você escolheu está esperando: ${names[0]} já pode ser provada em você.`
+          : `As fantasias que você escolheu estão esperando: ${names.slice(0, -1).join(', ')} e ${names[names.length - 1]} já podem ser provadas em você.`,
+    pro: 'Com o Avarobe Pro, cada fantasia do Edit de Halloween aparece em você em um toque, e toda terça-feira chega uma coleção nova.',
+    next: 'Vem aí',
+    drop: (emoji: string, name: string, date: string) => `${emoji} ${name} · ${date}`,
+    button: 'Provar minhas próximas fantasias',
+    expiry: 'O link já entra na sua conta. Funciona uma vez e expira em 3 dias.',
+  },
+
   colorsReady: {
     subject: 'Suas cores estão prontas',
     preheader: 'Desculpe a demora. Sua estação já está no seu estúdio.',

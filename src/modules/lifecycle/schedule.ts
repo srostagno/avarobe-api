@@ -57,6 +57,10 @@ export type LifecycleState = {
   // Waiting for their colors by email, after a read the AI couldn't do
   // (avatar/retry.ts): nothing else until that email goes or is given up.
   colorsPending: boolean
+  // Came through the Halloween flow (picked costumes to try next, or tried
+  // one on free): their first email is the costume offer, an hour after the
+  // try-on (service.ts sendCostumeOffers), so no welcome.
+  costumeFlow?: boolean
 }
 
 function between(elapsed: number, after: number, window: number) {
@@ -123,9 +127,11 @@ export function pickLifecycleEmail(state: LifecycleState, now: Date): LifecycleE
   const sinceSignup = at - state.createdAt.getTime()
 
   // Colors first, colors read: the offer is their first email, no welcome.
+  // The Halloween flow: the costume offer is.
   const colorsFirst = Boolean(state.colorsAt) && !state.avatarReadyAt
+  const noWelcome = colorsFirst || Boolean(state.costumeFlow)
 
-  if (!state.sent.welcome && !colorsFirst && between(sinceSignup, LIFECYCLE_RULES.welcomeDelay, LIFECYCLE_RULES.welcomeWindow)) {
+  if (!state.sent.welcome && !noWelcome && between(sinceSignup, LIFECYCLE_RULES.welcomeDelay, LIFECYCLE_RULES.welcomeWindow)) {
     return 'welcome'
   }
 

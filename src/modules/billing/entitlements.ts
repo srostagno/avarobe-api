@@ -20,6 +20,9 @@ import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, reg
 // annual plan keeps the reports for good. Looks, remixes and try-ons spend
 // one credit each; look packs add credits that never expire.
 //
+// Try-ons are Pro, except FREE_TRY_ONS collection looks (an Edit's or an
+// icon look) on anyone's avatar, so they see one on themselves first.
+//
 // Hair studio: the read of their hair and the ideal cut on them are free
 // (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
 // Hair & Grooming Advisor (with the Style Advisor until Oct 2026) or Pro; a
@@ -71,6 +74,7 @@ type BillingFields = Pick<
   | 'paidAt'
   | 'freeAvatarRuns'
   | 'freeHairRuns'
+  | 'freeTryOns'
   | 'compPaused'
   | 'proTrialAt'
   | 'guest'
@@ -285,6 +289,8 @@ export function billingState(user: BillingFields, now = Date.now(), region: Pric
     // Every recommended haircut on them; otherwise the free one(s).
     hairCuts: hairAdvisor,
     freeHairRunsLeft: hairAdvisor ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
+    // Collection looks they can still try on without Pro.
+    freeTryOnsLeft: proActive ? null : Math.max(0, env.FREE_TRY_ONS - (user.freeTryOns ?? 0)),
   }
 }
 
@@ -337,6 +343,7 @@ export function serializeBilling(user: BillingFields) {
       : null,
     hairCuts: state.hairCuts,
     freeHairRunsLeft: state.freeHairRunsLeft,
+    freeTryOnsLeft: state.freeTryOnsLeft,
     admin: state.admin,
     testingAsCustomer: state.admin && !state.comp,
   }
@@ -357,6 +364,7 @@ export const BILLING_PROJECTION = {
   paidAt: 1,
   freeAvatarRuns: 1,
   freeHairRuns: 1,
+  freeTryOns: 1,
   compPaused: 1,
   proTrialAt: 1,
   guest: 1,
@@ -671,6 +679,32 @@ export async function refundMagazineAccess(app: FastifyInstance, userId: ObjectI
   if (access === 'credit') {
     await app.collections.users.updateOne({ _id: userId }, { $inc: { magazineCredits: 1 } })
   }
+}
+
+// A collection look on their avatar: Pro (a credit), or one of their free
+// try-ons. Returns whether a free one was used, so a failure gives it back.
+export async function useTryOn(app: FastifyInstance, userId: ObjectId, feature: string) {
+  if (await hasPro(app, userId)) {
+    return { free: false, creditSpent: await spendCredits(app, userId, 1) }
+  }
+
+  const result = await app.collections.users.updateOne(
+    {
+      _id: userId,
+      $or: [{ freeTryOns: { $exists: false } }, { freeTryOns: { $lt: env.FREE_TRY_ONS } }],
+    },
+    { $inc: { freeTryOns: 1 }, $set: { updatedAt: new Date() } },
+  )
+
+  if (result.modifiedCount === 0) {
+    throw new PaywallError('needs_pro', `${feature} comes with Avarobe Pro.`)
+  }
+
+  return { free: true, creditSpent: false }
+}
+
+export async function releaseFreeTryOn(app: FastifyInstance, userId: ObjectId) {
+  await app.collections.users.updateOne({ _id: userId, freeTryOns: { $gt: 0 } }, { $inc: { freeTryOns: -1 } })
 }
 
 export async function releaseHairRun(app: FastifyInstance, userId: ObjectId) {

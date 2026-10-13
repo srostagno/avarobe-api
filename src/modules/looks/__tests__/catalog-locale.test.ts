@@ -52,7 +52,7 @@ describe('Catalog in other languages', () => {
 
     withLocale('pt-BR', () => editsFor('womenswear', NOW))
     assert.equal(EDITS[0]!.name, 'The Halloween Edit')
-    assert.equal(EDITS[0]!.looks[0]!.items[0]!.name, 'Pumpkin ballgown')
+    assert.equal(EDITS[0]!.looks[0]!.items[0]!.name, 'Marigold flower crown')
   })
 
   for (const [locale, table] of TABLES) {

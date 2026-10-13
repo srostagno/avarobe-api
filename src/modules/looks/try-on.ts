@@ -6,14 +6,23 @@ import { errorMessage } from '../../utils/http.js'
 import { serializeLook } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
-import { PaywallError, refundCredits, requirePro, sendPaywall, spendCredits } from '../billing/entitlements.js'
+import {
+  PaywallError,
+  refundCredits,
+  releaseFreeTryOn,
+  requirePro,
+  sendPaywall,
+  spendCredits,
+  useTryOn,
+} from '../billing/entitlements.js'
 import type { IconLook } from './icons.js'
 import { reserveLookQuota } from './quota.js'
 import { NoOutfitError, analyzeOutfit, startLookRender } from './service.js'
 
 // The try-on flow once the outfit photo is in hand (an upload or an icon
-// look): quota, Pro and credit, the stylist's read of the photo, then the
-// render in the background. Every failure gives the credit back.
+// look): quota, Pro and credit (or a free try-on of a collection look), the
+// stylist's read of the photo, then the render in the background. Every
+// failure gives the credit or the free try-on back.
 export async function startTryOn(
   app: FastifyInstance,
   request: FastifyRequest,
@@ -28,10 +37,17 @@ export async function startTryOn(
   }
 
   let creditSpent: boolean
+  let freeTryOn = false
 
   try {
-    await requirePro(app, userId, 'Trying on outfits')
-    creditSpent = await spendCredits(app, userId, 1)
+    if (icon) {
+      const access = await useTryOn(app, userId, 'Trying on outfits')
+      freeTryOn = access.free
+      creditSpent = access.creditSpent
+    } else {
+      await requirePro(app, userId, 'Trying on outfits')
+      creditSpent = await spendCredits(app, userId, 1)
+    }
   } catch (error) {
     await releaseGenerations(app, userId, 'look', 1)
 
@@ -45,6 +61,10 @@ export async function startTryOn(
   const refund = async () => {
     await releaseGenerations(app, userId, 'look', 1)
     await refundCredits(app, userId, creditSpent ? 1 : 0)
+
+    if (freeTryOn) {
+      await releaseFreeTryOn(app, userId)
+    }
   }
   let analysis: Awaited<ReturnType<typeof analyzeOutfit>>
 
@@ -90,6 +110,7 @@ export async function startTryOn(
     error: null,
     imageKey: null,
     creditSpent,
+    ...(freeTryOn ? { freeTryOn: true } : {}),
     collectionIds: [],
     favorite: false,
     createdAt: now,

@@ -14,7 +14,7 @@ import {
 import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { hairReference } from '../avatar/hair.js'
-import { refundCredits } from '../billing/entitlements.js'
+import { refundCredits, releaseFreeTryOn } from '../billing/entitlements.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
   type RemixHistoryEntry,
@@ -29,6 +29,7 @@ import {
   lookPlanSchema,
   tryOnAnalysisSchema,
 } from './prompts.js'
+import { costumeFor } from './edits.js'
 
 const HEX_PATTERN = /^#[0-9a-f]{6}$/i
 const RENDER_FAILED_MESSAGE = 'We could not render this look. Try again.'
@@ -189,6 +190,11 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
       await refundCredits(app, look.userId, 1)
       await app.collections.looks.updateOne({ _id: lookId }, { $set: { creditSpent: false } })
     }
+
+    if (look.freeTryOn) {
+      await releaseFreeTryOn(app, look.userId)
+      await app.collections.looks.updateOne({ _id: lookId }, { $set: { freeTryOn: false } })
+    }
   }
 }
 
@@ -216,7 +222,9 @@ async function lookImageRequest(look: LookDocument, avatar: AvatarDocument & { a
     images.push(hair.image)
   }
 
-  const basePrompt = reference ? buildTryOnRenderPrompt(look.plan) : buildLookRenderPrompt(look.plan, look.occasion.text)
+  const basePrompt = reference
+    ? buildTryOnRenderPrompt(look.plan, costumeFor(look.iconId))
+    : buildLookRenderPrompt(look.plan, look.occasion.text)
 
   return { images, prompt: hair ? `${basePrompt} ${hair.line}` : basePrompt }
 }

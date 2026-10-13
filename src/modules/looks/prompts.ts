@@ -405,7 +405,9 @@ function describeItem(item: LookItem) {
   return `${item.color} ${name.includes(material) ? '' : `${material} `}${name} (${item.fit})`
 }
 
-export function buildTryOnRenderPrompt(plan: LookPlan) {
+// `costume`: a costume Edit's look (edits.ts costumeFor), drawn at night in
+// its own scene and with its face paint, so the try-on is the party photo.
+export function buildTryOnRenderPrompt(plan: LookPlan, costume?: { scene: string; makeup: string | null } | null) {
   const fromPhoto = plan.items.filter((item) => item.fromPhoto !== false)
   const added = plan.items.filter((item) => item.fromPhoto === false)
 
@@ -415,9 +417,14 @@ export function buildTryOnRenderPrompt(plan: LookPlan) {
     `Reproduce each garment from image 3 faithfully, with the same color, fabric, pattern, print, cut, length and details: ${fromPhoto.map(describeItem).join('; ')}.`,
     added.length > 0 ? `To complete the outfit they also wear: ${added.map(describeItem).join('; ')}.` : null,
     'Never take the face, hair, skin tone, body shape or pose from image 3. The person keeps their identical face, hair, facial hair, skin tone, body shape and height proportions from images 1 and 2, and the garments fit their body naturally.',
+    costume?.makeup
+      ? `Costume makeup painted on their own face, which keeps its identical shape and features and stays recognizable: ${costume.makeup}.`
+      : null,
     'Keep the face fully visible: sunglasses, if part of the outfit, are hooked on the shirt or held in hand, never worn over the eyes.',
     'Pose: standing, facing the camera, relaxed and natural, the whole body visible from head to shoes.',
-    'Seamless light warm-grey studio backdrop, soft even lighting, realistic fashion lookbook photo, no text, no logos.',
+    costume
+      ? `Setting: ${costume.scene}, on Halloween night. A real photo with true-to-life skin texture, vivid and cinematic light, no text, no logos.`
+      : 'Seamless light warm-grey studio backdrop, soft even lighting, realistic fashion lookbook photo, no text, no logos.',
   ]
     .filter((line): line is string => line !== null)
     .join(' ')

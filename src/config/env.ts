@@ -205,6 +205,9 @@ const envSchema = z.object({
   // Hairstyles rendered free: the ideal cut from the hair read. The rest of
   // the recommendations come with the Style Advisor or Pro.
   FREE_HAIR_RUNS: z.coerce.number().int().min(0).default(1),
+  // Collection looks (an Edit's or an icon look) tried on without Pro, so
+  // they see themselves in one before the offer (Halloween flow, Oct 2026).
+  FREE_TRY_ONS: z.coerce.number().int().min(0).default(1),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
   // Who gets the operations alerts (OpenAI out of credits, color reads

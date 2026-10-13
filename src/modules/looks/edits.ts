@@ -12,10 +12,13 @@ import type { IconLook } from './icons.js'
 // no runtime imports.
 
 export type EditLook = IconLook & {
-  // Where the catalog photo is set (for the image generator).
+  // Where the catalog photo is set (for the image generator; costume
+  // try-ons are drawn there too).
   scene: string
   // A ready image instead of a generated one (path under design/).
   source?: string
+  // A costume's face paint, drawn on the person's own face in the try-on.
+  makeup?: string
 }
 
 export type Edit = {
@@ -26,6 +29,9 @@ export type Edit = {
   tagline: string
   // When it dropped (YYYY-MM-DD); shown as new for a week.
   droppedAt: string
+  // Costumes: try-ons are drawn at night in the look's own scene, with its
+  // face paint, instead of in the studio (costumeFor).
+  costumes?: boolean
   looks: EditLook[]
 }
 
@@ -49,8 +55,38 @@ const HALLOWEEN = 'Halloween 2026'
 const FALL = 'Fall 2026'
 const WEDDINGS = 'Fall Weddings 2026'
 const GRETA = 'ads/2026-10-halloween-wow/src/stills'
+// Greta's costumes from the Halloween Part 2 reel (Oct 12), the ones the
+// Halloween ad leads with.
+const PART2 = 'social/2026-10-halloween-part2/gen'
 
 const halloween: EditLook[] = [
+  {
+    id: 'hw-catrina', presentation: 'womenswear', name: 'La Catrina', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${PART2}/catrina.png`,
+    scene: 'a dark room glowing with dozens of candles and marigolds on the floor, in a warm gold haze',
+    makeup: 'elegant sugar-skull face paint: a white base, black eye sockets ringed with small colorful petals, a small black nose and stitched lips',
+    description: 'A crown of marigolds and roses, black lace and gold: the most beautiful costume of the night.',
+    items: [
+      { slot: 'accessory', name: 'Marigold flower crown', color: 'Marigold and red', colorHex: '#E8891C', material: 'Silk flowers', fit: 'A lush crown of big marigolds and red roses' },
+      { slot: 'outerwear', name: 'Lace mantilla shawl', color: 'Black', colorHex: '#141414', material: 'Lace', fit: 'Draped over the shoulders' },
+      { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+      { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Large' },
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hw-red-devil', presentation: 'womenswear', name: 'Red Devil', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${PART2}/devil.png`,
+    scene: 'a dark living room lit red from the floor, with deep crimson shadows',
+    makeup: 'bold red lips, sharp black winged liner and a small red heart drawn under one eye',
+    description: 'Glossy horns and a long red cape: two pieces, all the drama.',
+    items: [
+      { slot: 'accessory', name: 'Horns headband', color: 'Red', colorHex: '#B3141B', material: 'Glossy resin', fit: 'Small horns' },
+      { slot: 'outerwear', name: 'Long cape', color: 'Red', colorHex: '#A3121A', material: 'Satin', fit: 'From the shoulders to the ankles' },
+      { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+      { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
   {
     id: 'hw-couture-pumpkin', presentation: 'womenswear', name: 'Couture Pumpkin', era: HALLOWEEN, mood: 'Costume party', person: 'greta', source: `${GRETA}/pumpkin.png`,
     scene: 'a front porch at night between carved jack-o-lanterns',
@@ -926,6 +962,7 @@ export const EDITS: Edit[] = [
     emoji: '🎃',
     tagline: 'Costumes that make everyone say wow. Try any of them on you.',
     droppedAt: '2026-10-06',
+    costumes: true,
     looks: halloween,
   },
   {
@@ -945,3 +982,12 @@ export const EDITS: Edit[] = [
     looks: weddings,
   },
 ]
+
+// A costume try-on's night: the look's scene and face paint, when its Edit is
+// a costume one; null for everything else (drawn in the studio).
+export function costumeFor(id: string | null | undefined) {
+  const edit = EDITS.find((item) => item.costumes && item.looks.some((look) => look.id === id))
+  const look = edit?.looks.find((item) => item.id === id)
+
+  return look ? { scene: look.scene, makeup: look.makeup ?? null } : null
+}

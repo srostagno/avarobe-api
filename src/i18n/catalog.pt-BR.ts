@@ -24,6 +24,8 @@ export const ptBrCatalog: CatalogTable = {
   },
   looks: {
     // The Halloween Edit
+    'hw-catrina': { name: 'La Catrina', description: 'Uma coroa de cravos-de-defunto e rosas, renda preta e dourado: a fantasia mais linda da noite.', era: 'Halloween 2026', mood: 'Festa à fantasia' },
+    'hw-red-devil': { name: 'Diabinha Vermelha', description: 'Chifres brilhantes e uma capa vermelha longa: duas peças, todo o drama.', era: 'Halloween 2026', mood: 'Festa à fantasia' },
     'hw-couture-pumpkin': { name: 'Abóbora Couture', description: 'Um vestido de baile escultural de abóbora e um arranjo de ramos na cabeça: a fantasia que ninguém esquece.', era: 'Halloween 2026', mood: 'Festa à fantasia' },
     'hw-glowing-jellyfish': { name: 'Água-Viva Luminosa', description: 'Um guarda-chuva transparente escorrendo fios de luz: o que mais brilha na festa.', era: 'Halloween 2026', mood: 'Festa à fantasia' },
     'hw-disco-ball': { name: 'Globo de Discoteca Humano', description: 'Espelhos da cabeça aos pés: cada flash vira um show de luzes.', era: 'Halloween 2026', mood: 'Festa à fantasia' },
@@ -131,6 +133,18 @@ export const ptBrCatalog: CatalogTable = {
   },
   pieces: {
     // Piece names
+    'Marigold flower crown': 'Coroa de cravos-de-defunto',
+    'Marigold and red': 'Laranja-cravo e vermelho',
+    'Silk flowers': 'Flores de seda',
+    'A lush crown of big marigolds and red roses': 'Uma coroa volumosa de cravos-de-defunto grandes e rosas vermelhas',
+    'Lace mantilla shawl': 'Mantilha de renda',
+    'Mini skirt': 'Minissaia',
+    'A-line, above the knee, over sheer black tights': 'Evasê, acima do joelho, com meia-calça preta transparente',
+    'Horns headband': 'Tiara de chifres',
+    'Glossy resin': 'Resina brilhante',
+    'Small horns': 'Chifres pequenos',
+    'Long cape': 'Capa longa',
+    'From the shoulders to the ankles': 'Dos ombros aos tornozelos',
     'Pumpkin ballgown': 'Vestido de baile abóbora',
     'Vine headpiece': 'Adorno de cabeça de trepadeira',
     'Opera gloves': 'Luvas longas',

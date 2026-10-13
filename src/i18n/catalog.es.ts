@@ -24,6 +24,8 @@ export const esCatalog: CatalogTable = {
   },
   looks: {
     // The Halloween Edit
+    'hw-catrina': { name: 'La Catrina', description: 'Una corona de cempasúchil y rosas, encaje negro y oro: el disfraz más bonito de la noche.', era: 'Halloween 2026', mood: 'Fiesta de disfraces' },
+    'hw-red-devil': { name: 'Diablita Roja', description: 'Cuernos brillantes y una capa roja larga: dos piezas, todo el drama.', era: 'Halloween 2026', mood: 'Fiesta de disfraces' },
     'hw-couture-pumpkin': { name: 'Calabaza Couture', description: 'Un vestido de gala escultural de calabaza con tocado de enredaderas: el disfraz que nadie olvida.', era: 'Halloween 2026', mood: 'Fiesta de disfraces' },
     'hw-glowing-jellyfish': { name: 'Medusa Luminosa', description: 'Un paraguas transparente del que cuelgan hilos de luz: lo más brillante de la fiesta.', era: 'Halloween 2026', mood: 'Fiesta de disfraces' },
     'hw-disco-ball': { name: 'Bola Disco Humana', description: 'Espejos de pies a cabeza: cada flash se vuelve un show de luces.', era: 'Halloween 2026', mood: 'Fiesta de disfraces' },
@@ -131,6 +133,18 @@ export const esCatalog: CatalogTable = {
   },
   pieces: {
     // Piece names
+    'Marigold flower crown': 'Corona de cempasúchil',
+    'Marigold and red': 'Cempasúchil y rojo',
+    'Silk flowers': 'Flores de seda',
+    'A lush crown of big marigolds and red roses': 'Una corona frondosa de cempasúchiles grandes y rosas rojas',
+    'Lace mantilla shawl': 'Mantilla de encaje',
+    'Mini skirt': 'Minifalda',
+    'A-line, above the knee, over sheer black tights': 'Línea A, sobre la rodilla, con medias negras transparentes',
+    'Horns headband': 'Diadema de cuernos',
+    'Glossy resin': 'Resina brillante',
+    'Small horns': 'Cuernos pequeños',
+    'Long cape': 'Capa larga',
+    'From the shoulders to the ankles': 'De los hombros a los tobillos',
     'Pumpkin ballgown': 'Vestido de gala de calabaza',
     'Vine headpiece': 'Tocado de enredaderas',
     'Opera gloves': 'Guantes de ópera',

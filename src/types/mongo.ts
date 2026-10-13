@@ -66,6 +66,11 @@ export type UserDocument = {
   freeAvatarRuns?: number
   // Hairstyle renders used without the Style Advisor or Pro (FREE_HAIR_RUNS).
   freeHairRuns?: number
+  // Collection looks tried on without Pro (FREE_TRY_ONS).
+  freeTryOns?: number
+  // The looks they picked to try on next (the Halloween flow, while their
+  // avatar was drawing): offered after they buy, never drawn on their own.
+  lookPicks?: { ids: string[]; at: Date } | null
   // Admins (COMP_EMAILS) testing the app as a regular customer.
   compPaused?: boolean
   // Onboarding emails (modules/lifecycle): when each one went out, and the
@@ -204,6 +209,9 @@ export type LifecycleEmailKind =
   | 'xsell_edit'
   // Bought the Color Advisor and never opened the report: once, an hour on.
   | 'report_unopened'
+  // The Halloween flow: tried their free costume on and didn't get Pro.
+  // Once, an hour after the try-on, with it and the costumes they picked.
+  | 'costume_offer'
   // A color read that failed for the AI provider, done later (they asked to
   // be told): a sign-in link to their colors.
   | 'colors_ready'
@@ -1168,6 +1176,8 @@ export type LookDocument = {
   teaser?: { status: GenerationStatus; key: string | null; lockedKey: string | null } | null
   // Whether rendering this look took a credit (refunded if it fails).
   creditSpent?: boolean
+  // A collection look tried on free, without Pro (given back if it fails).
+  freeTryOn?: boolean
   // Free fixes (looks/fixes.ts): when this look's free fix was taken, how
   // many free fixes in a row led to it, and whether it is one (its retry
   // is free too).

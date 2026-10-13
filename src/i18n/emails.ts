@@ -82,6 +82,11 @@ export function dayMonth(date: Date, locale: Locale | null | undefined, timeZone
   return date.toLocaleDateString(INTL_LOCALE[lang], { day: 'numeric', month: 'long', timeZone })
 }
 
+// "Oct 20", "20 de out.", "20 oct": a day in a list (the next Edits).
+export function shortDate(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
+  return date.toLocaleDateString(INTL_LOCALE[locale ?? 'en'], { month: 'short', day: 'numeric', timeZone })
+}
+
 // "October 2026", "outubro de 2026", "octubre de 2026".
 export function monthYear(date: Date, locale: Locale | null | undefined, timeZone = 'UTC') {
   return date.toLocaleDateString(INTL_LOCALE[locale ?? 'en'], { month: 'long', year: 'numeric', timeZone })

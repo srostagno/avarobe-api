@@ -351,6 +351,25 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
   },
 
+  costumeOffer: {
+    subject: (costume: string) => `Así te ves de ${costume} 🎃`,
+    preheader: 'Tus próximos disfraces están listos para que te los pruebes.',
+    eyebrow: 'Tu disfraz de Halloween',
+    heading: (costume: string) => `Así te ves de ${costume}`,
+    alt: (costume: string) => `Tú, de ${costume}, en tu propio avatar`,
+    picks: (names: string[]) =>
+      names.length === 0
+        ? 'El resto del Edit de Halloween te espera: ya puedes probarte cualquiera de sus disfraces.'
+        : names.length === 1
+          ? `El disfraz que elegiste te espera: ya puedes probarte ${names[0]}.`
+          : `Los disfraces que elegiste te esperan: ya puedes probarte ${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}.`,
+    pro: 'Con Avarobe Pro, cada disfraz del Edit de Halloween aparece en ti con un solo toque, y cada martes llega una colección nueva.',
+    next: 'Lo que viene',
+    drop: (emoji: string, name: string, date: string) => `${emoji} ${name} · ${date}`,
+    button: 'Probarme mis próximos disfraces',
+    expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
+  },
+
   colorsReady: {
     subject: 'Tus colores están listos',
     preheader: 'Perdona la espera. Tu estación ya está en tu estudio.',

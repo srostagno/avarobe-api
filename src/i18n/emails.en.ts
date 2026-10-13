@@ -388,6 +388,30 @@ export const enEmails = {
     expiry: 'The link signs you in. It works once and expires in 3 days.',
   },
 
+  // The Halloween flow: their costume try-on, the costumes they picked to
+  // try next, and what Pro adds. Costume and Edit names come in the reader's
+  // language. No prices, no "free", no AI: the button opens the app.
+  costumeOffer: {
+    subject: (costume: string) => `You as ${costume} 🎃`,
+    preheader: 'Your next costumes are ready to try on.',
+    eyebrow: 'Your Halloween try-on',
+    heading: (costume: string) => `You as ${costume}`,
+    alt: (costume: string) => `You as ${costume}, on your own avatar`,
+    // The costumes they picked while their avatar was drawing (0 to 3).
+    picks: (names: string[]) =>
+      names.length === 0
+        ? 'The rest of the Halloween Edit is waiting: every costume in it is ready to try on you.'
+        : names.length === 1
+          ? `The costume you picked is waiting: ${names[0]} is ready to try on you.`
+          : `The costumes you picked are waiting: ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are ready to try on you.`,
+    pro: 'With Avarobe Pro, every costume in the Halloween Edit shows up on you in one tap, and a new collection drops every Tuesday.',
+    next: 'Coming next',
+    // "🦇 The Last-Minute Costume Edit · Oct 20"
+    drop: (emoji: string, name: string, date: string) => `${emoji} ${name} · ${date}`,
+    button: 'Try on my next costumes',
+    expiry: 'The link signs you in. It works once and expires in 3 days.',
+  },
+
   // Their color read failed because the AI was busy, and it's done now (they
   // left their email for it). The season only: no best colors before paying.
   colorsReady: {

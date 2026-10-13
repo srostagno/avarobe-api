@@ -103,6 +103,7 @@ const EMAIL_ORDER: LifecycleEmailKind[] = [
   'xsell_pro',
   'xsell_edit',
   'report_unopened',
+  'costume_offer',
 ]
 
 const LOOK_FILTERS = ['all', 'down', 'up', 'failed', 'tryon', 'remix'] as const

@@ -1,6 +1,6 @@
 import { env } from '../../config/env.js'
 import { DAILY_CHECKS } from '../../constants/checks.js'
-import { emailCopy, formatMoney, inPersonPrice, longDate, weekdayName, type EmailCopy } from '../../i18n/emails.js'
+import { emailCopy, formatMoney, inPersonPrice, longDate, shortDate, weekdayName, type EmailCopy } from '../../i18n/emails.js'
 import type { ProLimits } from '../../i18n/emails.en.js'
 import type { ColorSwatch, LifecycleEmailKind, PurchaseProduct, RefundReason, RefundRejectCode } from '../../types/mongo.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
@@ -246,6 +246,21 @@ function checklist(items: string[]): Block {
   }
 }
 
+// A short list with no marks: each line brings its own (an Edit's emoji).
+function plainList(items: string[]): Block {
+  const rows = items
+    .map(
+      (item) =>
+        `<tr><td valign="top" style="padding:0 0 10px 0;font-family:${SANS};font-size:15px;line-height:24px;color:${COLOR.inkSoft};">${esc(item)}</td></tr>`,
+    )
+    .join('')
+
+  return {
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px 0;">${rows}</table>`,
+    text: items.join('\n'),
+  }
+}
+
 // The season card: name and a strip of swatches, built from table cells so
 // it shows even with images off. `season` comes in the reader's language.
 function palette(c: EmailCopy, season: string, colors: ColorSwatch[], caption: string): Block {
@@ -352,13 +367,17 @@ function greeting(c: EmailCopy, firstName: string): Block {
   return paragraph(firstName.trim() ? c.common.hi(firstName.trim()) : c.common.hiThere)
 }
 
-function footer(recipient: Recipient, promotional: boolean, receipt?: string, helpLine?: string): Block {
+// `withTagline: false`: the site's name and link without its line ("Your AI
+// stylist"), for an email that mentions no AI anywhere.
+function footer(recipient: Recipient, promotional: boolean, receipt?: string, helpLine?: string, withTagline = true): Block {
   const { c, locale } = reader(recipient)
   const site = home(locale)
   const link = (label: string, url: string) =>
     `<a href="${esc(url)}" style="color:${COLOR.muted};text-decoration:underline;">${esc(label)}</a>`
   const line = (html: string) => `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:12px;line-height:18px;color:${COLOR.muted};">${html}</p>`
-  const tagline = `Avarobe &middot; ${esc(c.footer.tagline)} &middot; ${link('avarobe.com', site)}`
+  const tagline = withTagline
+    ? `Avarobe &middot; ${esc(c.footer.tagline)} &middot; ${link('avarobe.com', site)}`
+    : `Avarobe &middot; ${link('avarobe.com', site)}`
 
   // A purchase delivery, maybe to someone without an account.
   if (receipt) {
@@ -407,9 +426,11 @@ function layout(input: {
   receipt?: string
   // The footer's help line instead of the delivery's ({email}: hello@).
   help?: string
+  // false: the footer goes without its tagline (footer).
+  tagline?: boolean
 }): EmailContent {
   const { c, locale } = reader(input.recipient)
-  const foot = footer(input.recipient, input.promotional ?? false, input.receipt, input.help)
+  const foot = footer(input.recipient, input.promotional ?? false, input.receipt, input.help, input.tagline ?? true)
   // Invisible filler after the preheader, so inbox previews don't run into
   // the body text.
   const filler = '&#847;&zwnj;&nbsp;'.repeat(60)
@@ -1028,6 +1049,48 @@ export function reportUnopenedEmail(input: Recipient & { season: string | null; 
       paragraph(c.reportUnopened.intro),
       button(c.reportUnopened.button, input.url),
       small(c.reportUnopened.expiry),
+      signature(c),
+    ],
+  })
+}
+
+// The Halloween flow, an hour after their free costume try-on, if they
+// didn't get Pro: that try-on on top, the costumes they picked to try next,
+// what Pro adds and the next two Edits (`at`: YYYY-MM-DD). Names come in
+// their language. Promotional, yet no prices, no "free" and no AI (so the
+// footer goes without its tagline): the button signs them in on the
+// Halloween Edit, where the offer is.
+export function costumeOfferEmail(
+  input: Recipient & {
+    costume: string
+    picks: string[]
+    photoUrl: string | null
+    next: { name: string; emoji: string; at: string }[]
+    url: string
+  },
+): EmailContent {
+  const { c, locale } = reader(input)
+  const copy = c.costumeOffer
+  const drops = input.next
+    .slice(0, 2)
+    .map((drop) => copy.drop(drop.emoji, drop.name, shortDate(new Date(`${drop.at}T00:00:00Z`), locale)))
+
+  return layout({
+    subject: copy.subject(input.costume),
+    preheader: copy.preheader,
+    hero: input.photoUrl ? { src: input.photoUrl, alt: copy.alt(input.costume) } : HERO.occasions(c),
+    recipient: input,
+    promotional: true,
+    tagline: false,
+    blocks: [
+      eyebrow(copy.eyebrow),
+      heading(copy.heading(input.costume)),
+      greeting(c, input.firstName),
+      paragraph(copy.picks(input.picks)),
+      paragraph(copy.pro),
+      ...(drops.length > 0 ? [eyebrow(copy.next), plainList(drops)] : []),
+      button(copy.button, input.url),
+      small(copy.expiry),
       signature(c),
     ],
   })

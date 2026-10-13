@@ -135,6 +135,15 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ message: 'Please agree to how we use your photos first.' })
       }
 
+      // Agreed to by uploading after the notice beside the button (the
+      // Halloween flow), or with the checkbox. In Illinois only the checkbox
+      // counts, as for the colors below.
+      const byNotice = fields.consentMethod === 'notice'
+
+      if ((uploads.selfie || uploads.bodyPhoto) && byNotice && needsCheckboxConsent(requestGeo(request))) {
+        return reply.code(409).send({ code: 'consent_checkbox', message: 'Please agree to how we use your photo first.' })
+      }
+
       const parsedBody = parseBody(bodySchema, fields)
 
       if (!parsedBody.ok) {
@@ -233,7 +242,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
                   : { selfieKey, hairProfile: null, ...(legacySource ? { colorsSource: legacySource } : {}) }
                 : {}),
               ...(bodyPhotoKey ? { bodyPhotoKey } : {}),
-              ...(newPhotos ? { consentVersion: PHOTO_CONSENT_VERSION, consentAt: now } : {}),
+              ...(newPhotos ? { consentVersion: byNotice ? PHOTO_CONSENT_NOTICE_VERSION : PHOTO_CONSENT_VERSION, consentAt: now } : {}),
             },
             // A new selfie without colors clears every board (above); the body,
             // or a selfie while there are colors, the style ones.
