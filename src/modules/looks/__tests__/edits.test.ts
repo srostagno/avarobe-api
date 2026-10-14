@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 import { editsFor } from '../edit-routes.js'
-import { EDITS, UPCOMING_EDITS } from '../edits.js'
+import { EDITS, UPCOMING_EDITS, costumeFor } from '../edits.js'
 import { ICON_LOOKS } from '../icons.js'
 
 const looks = EDITS.flatMap((edit) => edit.looks)
@@ -41,16 +41,22 @@ describe('Edits', () => {
     assert.equal(next?.name, UPCOMING_EDITS[0]!.name)
 
     // A week later they're no longer new.
-    assert.equal(editsFor('womenswear', new Date('2026-10-20T12:00:00Z')).edits[0]!.isNew, false)
+    assert.equal(editsFor('womenswear', new Date('2026-10-20T12:00:00Z')).edits.find((edit) => edit.id === 'halloween-2026')!.isNew, false)
   })
 
   it('let the next week’s Edit lead on its day, and last week’s stop being new', () => {
-    const { edits, next } = editsFor('womenswear', new Date('2026-10-14T12:00:00Z'))
+    const { edits, next } = editsFor('womenswear', new Date('2026-10-13T12:00:00Z'))
     assert.equal(edits[0]!.id, 'fall-weddings-2026')
     assert.equal(edits[0]!.isNew, true)
     assert.equal(edits[0]!.looks.length, 20)
     assert.equal(edits.find((edit) => edit.id === 'halloween-2026')!.isNew, false)
     assert.equal(next?.at, '2026-10-20')
+
+    // The zodiac costumes (Oct 14) lead the next day, the wedding guests still new.
+    const zodiac = editsFor('womenswear', new Date('2026-10-14T12:00:00Z')).edits
+    assert.deepEqual(zodiac.slice(0, 2).map((edit) => [edit.id, edit.isNew]), [['zodiac-2026', true], ['fall-weddings-2026', true]])
+    assert.equal(zodiac[0]!.looks.length, 12)
+    assert.equal(editsFor('womenswear', new Date('2026-10-13T12:00:00Z')).edits.some((edit) => edit.id === 'zodiac-2026'), false)
 
     // Before its day it doesn't show, and it's the drop announced next.
     const before = editsFor('womenswear', new Date('2026-10-12T12:00:00Z'))
@@ -70,5 +76,12 @@ describe('Edits', () => {
     const { edits } = editsFor('menswear', new Date('2026-10-08T12:00:00Z'))
     assert.ok(edits.every((edit) => edit.looks.every((look) => look.presentation === 'menswear')))
     assert.ok(edits[0]!.looks.length >= 6)
+  })
+
+  it('draw the zodiac costumes at night with their face paint, like the Halloween ones', () => {
+    const doll = costumeFor('hz-virgo-porcelain-doll')
+    assert.ok(doll?.makeup?.includes('porcelain'))
+    assert.match(doll?.scene ?? '', /Halloween party/)
+    assert.ok(EDITS.find((edit) => edit.id === 'zodiac-2026')!.looks.every((look) => look.person === 'greta' && look.source))
   })
 })

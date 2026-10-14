@@ -54,6 +54,7 @@ export const UPCOMING_EDITS: { name: string; emoji: string; at: string }[] = [
 const HALLOWEEN = 'Halloween 2026'
 const FALL = 'Fall 2026'
 const WEDDINGS = 'Fall Weddings 2026'
+const ZODIAC_ERA = 'Halloween 2026 · by your sign'
 const GRETA = 'ads/2026-10-halloween-wow/src/stills'
 // Greta's costumes from the Halloween Part 2 reel (Oct 12): the ones the
 // Halloween ad shows, first in the Edit. The older Spider Queen and Black
@@ -995,6 +996,160 @@ const weddings: EditLook[] = [
   },
 ]
 
+// The Zodiac Costume Edit (Oct 14): Greta's costume for each sign from the
+// zodiac reel (design/social/2026-10-halloween-zodiac), each one the black
+// outfit plus a few store-bought pieces and makeup (Silvio: ideas people can
+// actually make).
+const ZODIAC = 'social/2026-10-halloween-zodiac/gen'
+const BLACK_BASE: EditLook['items'] = [
+  { slot: 'top', name: 'Turtleneck', color: 'Black', colorHex: '#151515', material: 'Fine knit', fit: 'Fitted' },
+  { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
+  { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+]
+
+const zodiac: EditLook[] = [
+  {
+    id: 'hz-aries-boxer', presentation: 'womenswear', name: 'Aries · Boxer', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/aries.png`,
+    scene: 'a living room at a home Halloween party, lit by a warm red party light',
+    makeup: 'a small black eye drawn with eyeshadow and a bold red lip, her hair in two tight braids',
+    description: 'Red gloves, a toy champion belt and a drawn black eye: the fighter of the zodiac.',
+    items: [
+      { slot: 'accessory', name: 'Boxing gloves', color: 'Red', colorHex: '#C1121F', material: 'Faux leather', fit: 'One on each hand' },
+      { slot: 'accessory', name: 'Toy champion belt', color: 'Gold', colorHex: '#C9A44C', material: 'Plastic', fit: 'Worn over the skirt' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-taurus-rose-queen', presentation: 'womenswear', name: 'Taurus · Rose Queen', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/taurus.png`,
+    scene: 'a living room at a home Halloween party, lit by a soft pink and warm gold light',
+    makeup: 'rosy glowing makeup',
+    description: 'A crown of roses, gold hoops and one red rose: luxe, easy and very Taurus.',
+    items: [
+      { slot: 'accessory', name: 'Rose crown', color: 'Red and blush', colorHex: '#A4243B', material: 'Faux roses', fit: 'A full crown' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Large' },
+      { slot: 'accessory', name: 'Red rose', color: 'Red', colorHex: '#B3141B', material: 'Faux flower', fit: 'Held in one hand' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-gemini-angel-devil', presentation: 'womenswear', name: 'Gemini · Half Angel, Half Devil', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/gemini.png`,
+    scene: 'a living room at a home Halloween party, lit white on one side and red on the other',
+    makeup: 'her face split down the middle: shimmery white highlighter and a soft pink lip on one half, a red lip and a sharp black winged liner on the other',
+    description: 'One headband and half-and-half makeup: both sides of you at once.',
+    items: [
+      { slot: 'accessory', name: 'Halo and horn headband', color: 'Gold and red', colorHex: '#C9A44C', material: 'Plastic', fit: 'A small halo on one side, one small horn on the other' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-cancer-moon-goddess', presentation: 'womenswear', name: 'Cancer · Moon Goddess', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/cancer.png`,
+    scene: 'a living room at a home Halloween party, lit by cool silver-blue moonlight from the window',
+    makeup: 'silver glitter freckles across her cheeks and nose and an iridescent highlighter glow',
+    description: 'A crescent moon headband, star clips and silver freckles: soft and glowing.',
+    items: [
+      { slot: 'accessory', name: 'Crescent moon headband', color: 'Silver', colorHex: '#C0C4C9', material: 'Metal', fit: 'A thin band with a small crescent' },
+      { slot: 'accessory', name: 'Star hair clips', color: 'Silver', colorHex: '#C0C4C9', material: 'Metal', fit: 'Small' },
+      { slot: 'accessory', name: 'Pearl drop earrings', color: 'Pearl white', colorHex: '#F1ECE2', material: 'Pearls', fit: 'Drop' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-leo-lioness', presentation: 'womenswear', name: 'Leo · Lioness', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/leo.png`,
+    scene: 'a living room at a home Halloween party, lit by a warm golden amber light',
+    makeup: 'a softly drawn lion nose and whisker dots with bronze contour, her hair teased into a big fluffy mane',
+    description: 'Lion ears, a teased mane and a faux-fur stole: main-character energy.',
+    items: [
+      { slot: 'accessory', name: 'Lion ears headband', color: 'Golden brown', colorHex: '#B07A3B', material: 'Faux fur', fit: 'Small round ears' },
+      { slot: 'outerwear', name: 'Faux-fur stole', color: 'Golden', colorHex: '#C8963E', material: 'Faux fur', fit: 'Short, over the shoulders' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-virgo-porcelain-doll', presentation: 'womenswear', name: 'Virgo · Porcelain Doll', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/virgo.png`,
+    scene: 'a living room at a home Halloween party, under a soft eerie spotlight with dusty pink shadows',
+    makeup: 'porcelain doll makeup: pale foundation, round pink cheeks, lashes painted under her eyes, a tiny heart-shaped lip and a few thin cracks drawn with black eyeliner on one cheek',
+    description: 'A big bow, a lace collar and drawn cracks: perfectly creepy.',
+    items: [
+      { slot: 'accessory', name: 'Hair bow', color: 'Black', colorHex: '#111111', material: 'Satin', fit: 'Big' },
+      { slot: 'accessory', name: 'Lace collar', color: 'White', colorHex: '#F4F1EA', material: 'Lace', fit: 'Clip-on, over the turtleneck' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-libra-marie-antoinette', presentation: 'womenswear', name: 'Libra · Marie Antoinette', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/libra.png`,
+    scene: 'a living room at a home Halloween party, lit by a pale blue-white light with a faint fog',
+    makeup: 'pale makeup with pink cheeks and a drawn beauty mark',
+    description: 'A costume wig, pearls, a lace fan and a slice of cake. Let them eat cake.',
+    items: [
+      { slot: 'accessory', name: 'Powdered costume wig', color: 'White', colorHex: '#EDEBE6', material: 'Synthetic hair', fit: 'Short and curled, with a pink ribbon' },
+      { slot: 'accessory', name: 'Pearl necklace', color: 'Pearl white', colorHex: '#F1ECE2', material: 'Pearls', fit: 'Long' },
+      { slot: 'accessory', name: 'Lace fan', color: 'Ivory', colorHex: '#EFE6D6', material: 'Lace', fit: 'Folding, held open' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-scorpio-raven', presentation: 'womenswear', name: 'Scorpio · Raven', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/scorpio.png`,
+    scene: 'a living room at a home Halloween party, lit by a cold deep purple light',
+    makeup: 'smoky black eyes and a deep plum lip',
+    description: 'A feather headband, a black boa and a fake crow: dark and mysterious.',
+    items: [
+      { slot: 'accessory', name: 'Feather headband', color: 'Black', colorHex: '#111111', material: 'Feathers', fit: 'Tall' },
+      { slot: 'accessory', name: 'Feather boa', color: 'Black', colorHex: '#121212', material: 'Feathers', fit: 'Around the shoulders' },
+      { slot: 'accessory', name: 'Fake crow', color: 'Black', colorHex: '#141414', material: 'Craft prop', fit: 'Clipped on one shoulder' },
+      { slot: 'accessory', name: 'Lace gloves', color: 'Black', colorHex: '#151515', material: 'Lace', fit: 'Wrist length' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-sagittarius-dark-cupid', presentation: 'womenswear', name: 'Sagittarius · Dark Cupid', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/sagittarius.png`,
+    scene: 'a living room at a home Halloween party, lit by a deep red and magenta party light',
+    makeup: 'a small red heart drawn on one cheek and red lips',
+    description: 'Little black wings, a toy bow and a heart arrow: the archer, with a twist.',
+    items: [
+      { slot: 'accessory', name: 'Feather wings', color: 'Black', colorHex: '#121212', material: 'Feathers', fit: 'Small, on the back' },
+      { slot: 'accessory', name: 'Toy bow and heart arrow', color: 'Red and black', colorHex: '#8B1E2B', material: 'Plastic', fit: 'Held in both hands' },
+      { slot: 'accessory', name: 'Flower crown', color: 'Red', colorHex: '#B3141B', material: 'Faux flowers', fit: 'Crown' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-capricorn-corporate-zombie', presentation: 'womenswear', name: 'Capricorn · Corporate Zombie', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/capricorn.png`,
+    scene: 'a living room at a home Halloween party, under a flickering cold greenish fluorescent light',
+    makeup: 'pale greenish-grey zombie makeup with dark smudged eyes and a few fake stitches drawn on, no blood, messy undone hair',
+    description: 'A blazer, an ID badge and a coffee: still working, slightly undead.',
+    items: [
+      { slot: 'outerwear', name: 'Office blazer', color: 'Grey', colorHex: '#6E6E6E', material: 'Wool blend', fit: 'Slightly torn, worn open' },
+      { slot: 'accessory', name: 'ID badge', color: 'White', colorHex: '#F2F2F2', material: 'Plastic', fit: 'On a lanyard' },
+      { slot: 'accessory', name: 'Coffee cup', color: 'White', colorHex: '#EFEFEF', material: 'Paper', fit: 'Held in one hand' },
+      { slot: 'bag', name: 'Laptop bag', color: 'Black', colorHex: '#1A1A1A', material: 'Nylon', fit: 'On the shoulder' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-aquarius-alien', presentation: 'womenswear', name: 'Aquarius · Alien', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/aquarius.png`,
+    scene: 'a living room at a home Halloween party, lit by electric green and cyan light from above',
+    makeup: 'silver face gems along her cheekbones, holographic glitter eyeshadow and silver lipstick',
+    description: 'Light-up antennae, face gems and a metallic jacket: out of this world.',
+    items: [
+      { slot: 'accessory', name: 'Light-up antenna headband', color: 'Green', colorHex: '#39D353', material: 'Plastic with LEDs', fit: 'Two small glowing balls' },
+      { slot: 'outerwear', name: 'Metallic jacket', color: 'Silver', colorHex: '#C0C4C9', material: 'Metallic faux leather', fit: 'Cropped, worn open' },
+      ...BLACK_BASE,
+    ],
+  },
+  {
+    id: 'hz-pisces-fairy', presentation: 'womenswear', name: 'Pisces · Fairy', era: ZODIAC_ERA, mood: 'Costume party', person: 'greta', source: `${ZODIAC}/pisces.png`,
+    scene: 'a living room at a home Halloween party, lit by soft lilac and teal light with tiny fairy lights',
+    makeup: 'glitter on her cheekbones',
+    description: 'Little fairy wings, a flower crown and a star wand: dreamy, in ten minutes.',
+    items: [
+      { slot: 'accessory', name: 'Fairy wings', color: 'Iridescent', colorHex: '#D9D2F2', material: 'Translucent film', fit: 'Small, on the back' },
+      { slot: 'accessory', name: 'Flower crown', color: 'Lilac', colorHex: '#C8A2C8', material: 'Faux flowers', fit: 'Crown' },
+      { slot: 'accessory', name: 'Star wand', color: 'Silver', colorHex: '#C0C4C9', material: 'Plastic', fit: 'Small, held in one hand' },
+      ...BLACK_BASE,
+    ],
+  },
+]
+
 export const EDITS: Edit[] = [
   {
     id: 'halloween-2026',
@@ -1020,6 +1175,15 @@ export const EDITS: Edit[] = [
     tagline: 'Barn, vineyard or black tie: what to wear to every fall wedding, never in white.',
     droppedAt: '2026-10-13',
     looks: weddings,
+  },
+  {
+    id: 'zodiac-2026',
+    name: 'The Zodiac Costume Edit',
+    emoji: '🔮',
+    tagline: 'Your Halloween costume by your sign: one black outfit and a few things you can still grab this week.',
+    droppedAt: '2026-10-14',
+    costumes: true,
+    looks: zodiac,
   },
 ]
 
