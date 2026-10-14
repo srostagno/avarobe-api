@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 import sharp from 'sharp'
 
 import { env } from '../../config/env.js'
-import { appUrl } from '../../utils/locale.js'
+import { emailLink } from '../../utils/auth-links.js'
 import type { AvatarDocument, MagazineDocument, MagazinePhoto, MagazinePlan, MagazineShot } from '../../types/mongo.js'
 import { deliverEmail } from '../../utils/email.js'
 import { errorMessage } from '../../utils/http.js'
@@ -136,16 +136,21 @@ export async function runMagazine(app: FastifyInstance, magazineId: ObjectId) {
   void trackServerEvent(app, { name: status === 'ready' ? 'magazine_ready' : 'magazine_failed', userId: done.userId, props: { photos: photos.length, ready } })
 
   if (firstReady) {
-    const user = await app.collections.users.findOne({ _id: done.userId }, { projection: { email: 1, firstName: 1, locale: 1 } })
+    const user = await app.collections.users.findOne(
+      { _id: done.userId },
+      { projection: { email: 1, firstName: 1, locale: 1, passwordUpdatedAt: 1, deletedAt: 1 } },
+    )
 
-    if (user?.email) {
+    if (user?.email && !user.deletedAt) {
+      // Signed in from the email, in whichever browser opens it.
+      const url = await emailLink(app, user, `/studio/magazine/${done._id.toString()}`)
       await deliverEmail({
         log: app.log,
         to: { email: user.email, name: user.firstName ?? undefined },
         content: magazineReadyEmail({
           email: user.email,
           firstName: user.firstName ?? '',
-          url: appUrl(user.locale, `/studio/magazine/${done._id.toString()}`),
+          url,
           locale: user.locale,
         }),
       }).catch((error: unknown) => app.log.error({ err: errorMessage(error) }, 'Magazine email failed'))

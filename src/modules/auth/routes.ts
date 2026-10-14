@@ -6,7 +6,8 @@ import { env } from '../../config/env.js'
 import { REFRESH_TOKEN_COOKIE } from '../../constants/auth.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import type { UserDocument } from '../../types/mongo.js'
-import { consumeLink, createLink, linkSentRecently, readLink, safeNextPath, type LinkPayload } from '../../utils/auth-links.js'
+import { toObjectId } from '../../utils/object-id.js'
+import { consumeLink, createLink, emailLink, linkSentRecently, readEmailLink, readLink, safeNextPath, type LinkPayload } from '../../utils/auth-links.js'
 import {
   clearAuthCookies,
   issueAuthSession,
@@ -89,6 +90,9 @@ const changePasswordSchema = z.object({
 })
 
 const forgotSchema = z.object({ email: emailField })
+// The sign-in link by email: where it lands (a studio page), e.g. back to
+// the Buy that needed it.
+const linkEmailSchema = z.object({ email: emailField, next: z.string().max(300).optional() })
 // Trying first (guests): only where they came from; then their email to save.
 const guestSchema = z.object({ acquisition: signupTracking.acquisition })
 const claimSchema = z.object({
@@ -172,6 +176,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   // Who this browser is signed in as, even with an expired access token (the
   // refresh cookie still says): signing up while trying as a guest saves the
   // guest instead of starting an empty account.
+  // A verification link used before, for the address it confirmed.
+  async function confirmedAlready(payload: LinkPayload) {
+    const userId = toObjectId(payload.sub)
+    const user = userId && payload.em ? await app.collections.users.findOne({ _id: userId, email: payload.em }) : null
+
+    return user && user.emailVerifiedAt && !user.deletedAt ? user : null
+  }
+
   async function sessionUserId(request: FastifyRequest) {
     const fromAccess = await optionalUserId(request)
 
@@ -308,14 +320,15 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // Signing in without a password (saved guests have none): a one-time link
-  // by email. Always answers the same way, so it can't be used to find
-  // accounts.
+  // Signing in without a password (saved guests have none): a link by email
+  // (emailLink: any browser, more than once, for SIGN_IN_LINK_TTL) that
+  // lands where they were, e.g. the Buy that needed it. Always answers the
+  // same way, so it can't be used to find accounts.
   app.post(
     '/link/email',
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const parsed = parseBody(forgotSchema, request.body)
+      const parsed = parseBody(linkEmailSchema, request.body)
 
       if (!parsed.ok) {
         return reply.code(400).send({ message: 'Enter a valid email address.' })
@@ -328,7 +341,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio' })
+        await app.collections.users.updateOne({ _id: user._id }, { $set: { signInSentAt: new Date() } })
+        const url = await emailLink(app, user, parsed.data.next ?? '/studio', { ttl: env.SIGN_IN_LINK_TTL })
         const result = await deliverLinkEmail({
           log: request.log,
           to: recipient(user),
@@ -633,7 +647,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const parsed = parseBody(tokenSchema, request.body)
       const invalid = { message: 'This confirmation link is invalid, expired or already used.' }
       const payload = parsed.ok ? await readLink(app, parsed.data.token, 'verify_email') : null
-      const consumed = payload ? await consumeLink(app, payload, 'verify_email') : null
+      // Used already: opened again, or in another browser (Gmail's own, then
+      // Safari), it still signs them in while it's valid, as long as that
+      // address is the one it confirmed. A newer link replaces the nonce,
+      // not the confirmation.
+      const consumed = payload ? ((await consumeLink(app, payload, 'verify_email')) ?? (await confirmedAlready(payload))) : null
 
       if (!payload || !consumed) {
         return reply.code(400).send(invalid)
@@ -717,10 +735,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const url = await createLink(app, user, 'sign_in', undefined, {
-          next: parsed.data.next,
-          ads: parsed.data.attribution,
-        })
+        await app.collections.users.updateOne({ _id: user._id }, { $set: { signInSentAt: new Date() } })
+        const url = await emailLink(app, user, parsed.data.next ?? '/studio', { ads: parsed.data.attribution, ttl: env.SIGN_IN_LINK_TTL })
         const result = await deliverLinkEmail({
           log: request.log,
           to: recipient(user),
@@ -746,6 +762,28 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const parsed = parseBody(tokenSchema, request.body)
       const invalid = { message: 'This link is invalid, expired or already used.' }
+      const fromEmail = parsed.ok ? await readEmailLink(app, parsed.data.token) : null
+
+      // Our emails' links: signs in every time, in any browser; the email it
+      // came by is theirs.
+      if (fromEmail) {
+        const now = new Date()
+        const user = await app.collections.users.findOneAndUpdate(
+          { _id: fromEmail.user._id },
+          { $set: { emailVerifiedAt: fromEmail.user.emailVerifiedAt ?? now, lastLoginAt: now, updatedAt: now } },
+          { returnDocument: 'after' },
+        )
+
+        if (!user) {
+          return reply.code(400).send(invalid)
+        }
+
+        await issueAuthSession(app, reply, request, { id: user._id.toString(), email: user.email })
+        void trackServerEvent(app, { name: 'handoff_link_used', userId: user._id, props: { purpose: 'email' } })
+
+        return reply.send({ user: serializeUser(user), next: safeNextPath(fromEmail.payload.nx), attribution: fromEmail.payload.ad ?? null })
+      }
+
       let payload: LinkPayload | null = null
 
       if (parsed.ok) {

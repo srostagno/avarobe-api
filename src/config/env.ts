@@ -90,6 +90,9 @@ const envSchema = z.object({
   // own browser, and in the email that brings back an unfinished checkout.
   HANDOFF_LINK_TTL: z.string().default('15m'),
   SIGN_IN_LINK_TTL: z.string().default('3d'),
+  // The sign-in links in our emails (auth-links.ts emailLink): they work
+  // this long, as often as needed and in any browser.
+  EMAIL_LINK_TTL: z.string().default('14d'),
   // Cost guards: generations per user per UTC day.
   DAILY_AVATAR_LIMIT: z.coerce.number().int().min(1).max(100).default(8),
   // Looks a day, for everyone. Credits are the real limit (and running out of

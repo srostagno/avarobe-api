@@ -84,10 +84,13 @@ describe('the costume offer email', () => {
     assert.equal(sends()[0]!.kind, 'costume_offer')
     assert.equal(sends()[0]!.subject, 'You as Medusa 🎃')
     assert.equal((collection('users').docs[0] as UserDocument).lifecycleEmailLastAt?.getTime(), now.getTime())
-    // Signed in on the Halloween Edit.
-    assert.equal(signed.length, 1)
-    assert.equal(signed[0]!.nx, '/studio/halloween?from=email')
-    assert.equal(String(signed[0]!.sub), userId.toString())
+    // Signed in on the Halloween Edit (and on every other studio link in it,
+    // like their account's settings), by email links.
+    const edit = signed.find((payload) => payload.nx === '/studio/halloween?from=email')
+    assert.ok(edit)
+    assert.equal(edit.typ, 'email')
+    assert.equal(String(edit.sub), userId.toString())
+    assert.ok(signed.every((payload) => payload.typ === 'email' && String(payload.sub) === userId.toString()))
     // Their try-on on top, and both picks.
     const line = logs.find((entry) => entry.msg === 'Costume offer email')?.obj as Doc | undefined
     assert.deepEqual(

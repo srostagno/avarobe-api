@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 
 import { env } from '../config/env.js'
+import { isAdmin } from '../modules/billing/entitlements.js'
 import type { UserDocument } from '../types/mongo.js'
-import { appUrl } from './locale.js'
+import { appUrl, LOCALE_PREFIXES } from './locale.js'
 import { toObjectId } from './object-id.js'
 import { generateSecureToken, hashToken } from './tokens.js'
 
@@ -72,6 +73,9 @@ export type LinkPayload = {
   // Sign-in links: where to land (a studio path), and the ad ids.
   nx?: string
   ad?: LinkAdIds
+  // Email links: when the password last changed (0 for none), so changing it
+  // voids them.
+  pw?: number
 }
 
 // Only paths inside the studio, so a link can't send anyone elsewhere.
@@ -169,3 +173,114 @@ export async function consumeLink(
     { returnDocument: 'after' },
   )
 }
+
+
+// ---------------------------------------------------------------- email links
+
+// The sign-in links in our emails (Oct 14, 2026). The one-time links above
+// broke in real life: an email opened in Gmail's own browser, then again in
+// Safari, found its link used up; each new email voided the last one's; and
+// a guest has no password to sign in with. On Oct 13 a US buyer lost her
+// session that way and her Buy taps went nowhere until she reset a password
+// she never had. These work until EMAIL_LINK_TTL, as often as needed and in
+// any browser. A password change voids them (pw), a deleted account's email
+// is an alias so they stop matching (em), and an admin never gets one.
+export async function emailLink(
+  app: FastifyInstance,
+  user: Pick<UserDocument, '_id' | 'email' | 'locale' | 'passwordUpdatedAt'>,
+  next: string,
+  options: { ads?: LinkAdIds; ttl?: string } = {},
+) {
+  const path = safeNextPath(next)
+
+  if (isAdmin(user)) {
+    return appUrl(user.locale, path)
+  }
+
+  const token = await app.jwt.sign(
+    {
+      typ: 'email',
+      sub: user._id.toString(),
+      em: user.email,
+      pw: passwordStamp(user),
+      nx: path,
+      ...(options.ads && Object.keys(options.ads).length > 0 ? { ad: options.ads } : {}),
+    },
+    { expiresIn: options.ttl ?? env.EMAIL_LINK_TTL },
+  )
+
+  return `${appUrl(user.locale, '/continue')}?token=${encodeURIComponent(token)}`
+}
+
+function passwordStamp(user: Pick<UserDocument, 'passwordUpdatedAt'>) {
+  return user.passwordUpdatedAt ? user.passwordUpdatedAt.getTime() : 0
+}
+
+// An email link's person, when it still holds: signature, expiry, the same
+// email and password, the account not deleted. Never used up.
+export async function readEmailLink(app: FastifyInstance, token: string) {
+  let payload: LinkPayload
+
+  try {
+    payload = await app.jwt.verify<LinkPayload>(token)
+  } catch {
+    return null
+  }
+
+  const userId = payload.typ === 'email' ? toObjectId(payload.sub) : null
+
+  if (!userId || !payload.em) {
+    return null
+  }
+
+  const user = await app.collections.users.findOne({ _id: userId, email: payload.em })
+
+  if (!user || user.deletedAt || (payload.pw ?? 0) !== passwordStamp(user) || isAdmin(user)) {
+    return null
+  }
+
+  return { payload, user }
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Every link to the studio in an email to someone with an account, made an
+// email link to the same page, so whichever browser opens it lands signed
+// in: one link per address. Admins' and deleted accounts' links stay plain.
+export async function signInStudioLinks<T extends { html: string; text: string }>(
+  app: FastifyInstance,
+  user: Pick<UserDocument, '_id' | 'email' | 'locale' | 'passwordUpdatedAt' | 'deletedAt'>,
+  content: T,
+  options: { ads?: LinkAdIds } = {},
+): Promise<T> {
+  if (user.deletedAt || isAdmin(user)) {
+    return content
+  }
+
+  const prefixes = LOCALE_PREFIXES.filter(Boolean).map(escapeRegExp).join('|')
+  const pattern = new RegExp(`${escapeRegExp(env.APP_URL)}(?:${prefixes})?(/studio(?:[/?#][^"'\\s<>)]*)?)`, 'g')
+  const links = new Map<string, string>()
+
+  for (const field of ['html', 'text'] as const) {
+    for (const match of content[field].matchAll(pattern)) {
+      const path = match[1]!.replace(/&amp;/g, '&')
+
+      if (!links.has(path)) {
+        links.set(path, await emailLink(app, user, path, options))
+      }
+    }
+  }
+
+  if (links.size === 0) {
+    return content
+  }
+
+  const swap = (value: string, html: boolean) =>
+    value.replace(pattern, (whole, path: string) => {
+      const url = links.get(path.replace(/&amp;/g, '&'))
+      return url ? (html ? url.replace(/&/g, '&amp;') : url) : whole
+    })
+
+  return { ...content, html: swap(content.html, true), text: swap(content.text, false) }
+}
+

@@ -51,7 +51,7 @@ import {
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
-import { createLink, createLinks } from '../../utils/auth-links.js'
+import { emailLink, signInStudioLinks } from '../../utils/auth-links.js'
 import { focusOf } from '../../utils/serializers.js'
 
 const RUN_EVERY_MS = 10 * 60 * 1000
@@ -553,7 +553,7 @@ async function sendTrialNotice(app: FastifyInstance, user: UserDocument, kind: T
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'Trial notice')
     return delivered
@@ -648,7 +648,7 @@ async function sendOne(
     const offer =
       from && facts.looks.count === 0 && facts.avatar?.colorAnalysis
         ? {
-            url: await createLink(app, user, 'sign_in', undefined, { next: `/studio?buy=color_report&from=${from}`, ads: storedAdIds(user) }),
+            url: await emailLink(app, user, `/studio?buy=color_report&from=${from}`, { ads: storedAdIds(user) }),
             heroUrl: facts.avatar.drapePreview?.status === 'ready' && facts.avatar.drapePreview.lockedKey ? emailImageUrl(user._id, now) : null,
           }
         : undefined
@@ -667,7 +667,7 @@ async function sendOne(
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'Lifecycle email')
     return delivered
@@ -790,7 +790,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   const sendId = new ObjectId()
 
   try {
-    const url = await createLink(app, user, 'sign_in', undefined, { next: rescueNext(product), ads: storedAdIds(user) })
+    const url = await emailLink(app, user, rescueNext(product), { ads: storedAdIds(user) })
     const content = lifecycleContentFor('checkout_rescue', user, undefined, { count: 0, lastAt: null }, sendId, { product, url })
 
     await app.collections.emailSends.insertOne({
@@ -806,7 +806,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), product, delivered }, 'Checkout rescue email')
     return delivered
@@ -886,7 +886,7 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
 
   try {
     const locale = user.locale ?? 'en'
-    const url = await createLink(app, user, 'sign_in', undefined, { next: '/studio/report', ads: storedAdIds(user) })
+    const url = await emailLink(app, user, '/studio/report', { ads: storedAdIds(user) })
     const content = reportUnopenedEmail({
       firstName: user.firstName,
       email: user.email,
@@ -910,7 +910,7 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), delivered }, 'Unopened report email')
     return delivered
@@ -1045,7 +1045,7 @@ async function sendCostumeOffer(
     const names = costumeOfferNames(locale, look.iconId ?? '', user.lookPicks?.ids ?? [], now)
     // Signed in from the email, in their own browser, on the Halloween Edit.
     const signIn = new URL(
-      await createLink(app, user, 'sign_in', undefined, { next: '/studio/halloween?from=email', ads: storedAdIds(user) }),
+      await emailLink(app, user, '/studio/halloween?from=email', { ads: storedAdIds(user) }),
     )
     signIn.searchParams.set('utm_source', 'email')
     signIn.searchParams.set('utm_medium', 'lifecycle')
@@ -1076,7 +1076,7 @@ async function sendCostumeOffer(
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info(
       { userId: user._id.toString(), costume: look.iconId, picks: names.picks.length, photo: Boolean(photoUrl), delivered },
@@ -1132,7 +1132,7 @@ export async function sendColorsReady(
     await app.collections.users.updateOne({ _id: user._id }, { $set: { [field]: now, lifecycleEmailLastAt: now } })
 
     const locale = user.locale ?? 'en'
-    const url = await createLink(app, user, 'colors', undefined, { next: '/studio', ads: storedAdIds(user) })
+    const url = await emailLink(app, user, '/studio', { ads: storedAdIds(user) })
     const content = colorsReadyEmail({
       firstName: user.firstName,
       email: user.email,
@@ -1157,7 +1157,7 @@ export async function sendColorsReady(
       log: app.log,
       to: { email: user.email, name: user.firstName },
       link: url,
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), sent: delivery.sent }, 'Colors ready email')
     void trackServerEvent(app, {
@@ -1341,7 +1341,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
   try {
     // Signed in from the email, straight to the Color Advisor offer, in
     // their own browser (where Apple Pay works).
-    const signIn = new URL(await createLink(app, user, 'sign_in', undefined, { next: '/studio?upgrade=palette', ads: storedAdIds(user) }))
+    const signIn = new URL(await emailLink(app, user, '/studio?upgrade=palette', { ads: storedAdIds(user) }))
     signIn.searchParams.set('utm_source', 'email')
     signIn.searchParams.set('utm_medium', 'lifecycle')
     signIn.searchParams.set('utm_campaign', 'price_drop')
@@ -1364,7 +1364,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info({ userId: user._id.toString(), delivered, photo: Boolean(heroUrl) }, 'Price drop email')
     return delivered
@@ -1591,10 +1591,10 @@ async function crossSellPersonal(
   }
 }
 
-// Sign-in links for one email's buttons (they share one nonce), tagged so
-// the clicks are counted (trackContent).
+// Sign-in links for one email's buttons (emailLink: any browser, more than
+// once), tagged so the clicks are counted (trackContent).
 async function signInLinks(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, nexts: string[]) {
-  const links = await createLinks(app, user, 'sign_in', nexts, { ads: storedAdIds(user) })
+  const links = await Promise.all(nexts.map((next) => emailLink(app, user, next, { ads: storedAdIds(user) })))
 
   return links.map((link) => {
     const url = new URL(link)
@@ -1717,7 +1717,7 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(content, sendId),
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
     })
     app.log.info(
       {

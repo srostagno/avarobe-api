@@ -13,6 +13,9 @@ export const LOCALE_HEADER = 'x-avarobe-locale'
 
 const PREFIX: Record<Locale, string> = { en: '', 'pt-BR': '/pt-br', es: '/es' }
 
+// Every language's path prefix ('' for English).
+export const LOCALE_PREFIXES = Object.values(PREFIX)
+
 export function toLocale(value: unknown): Locale {
   const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
 

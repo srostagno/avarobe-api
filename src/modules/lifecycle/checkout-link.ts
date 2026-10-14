@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
 
 import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
-import { createLink, linkSentRecently, type LinkAdIds } from '../../utils/auth-links.js'
+import { emailLink, linkSentRecently, type LinkAdIds } from '../../utils/auth-links.js'
 import { deliverLinkEmail } from '../../utils/email.js'
 import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import type { Locale } from '../../utils/locale.js'
@@ -85,8 +85,7 @@ export async function sendCheckoutLink(
     // The browser's ad ids; its Meta click, when it had none, from the
     // account (only when it sent its ids at all, so tracking is allowed).
     const stored = input.ads ? storedAdIds(user) : undefined
-    const url = await createLink(app, user, 'checkout', undefined, {
-      next: `/studio?buy=${input.product}&from=${input.placement}`,
+    const url = await emailLink(app, user, `/studio?buy=${input.product}&from=${input.placement}`, {
       ads: input.ads ? { ...stored, ...definedOnly(input.ads) } : undefined,
     })
     const content = checkoutLinkEmail({
