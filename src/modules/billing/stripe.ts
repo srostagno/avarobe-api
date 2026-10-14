@@ -584,6 +584,12 @@ export async function createCheckout(input: {
     ...(input.embedded
       ? {
           ui_mode: 'embedded' as const,
+          // A card paid in the form: the page itself goes to the success
+          // page (onComplete). Stripe's own redirect from inside the form
+          // didn't happen in Instagram's browser (Oct 14: paid, never saw
+          // the success page or the report). Redirect-based methods still
+          // come back through return_url.
+          redirect_on_completion: 'if_required' as const,
           branding_settings: EMBEDDED_BRANDING,
           return_url: `${appUrl(input.user.locale, '/studio/billing/success')}?session_id={CHECKOUT_SESSION_ID}`,
         }

@@ -353,8 +353,10 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
       const state = billingState(user)
       const reason = ineligibility(parsed.data.product, state)
 
+      // 'owned': the web takes them to what they have (a buyer whose other
+      // browser still showed Buy, Oct 14, tried again twice and gave up).
       if (reason) {
-        return reply.code(409).send({ message: reason })
+        return reply.code(409).send({ code: 'owned', message: reason })
       }
 
       try {
