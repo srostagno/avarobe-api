@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { ObjectId } from 'mongodb'
 
-import type { AvatarDocument, LookDocument } from '../../types/mongo.js'
+import type { AvatarDocument, LookDocument, LookPlan } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { serializeLook } from '../../utils/serializers.js'
 import { storage } from '../../utils/storage.js'
@@ -66,10 +66,15 @@ export async function startTryOn(
       await releaseFreeTryOn(app, userId)
     }
   }
-  let analysis: Awaited<ReturnType<typeof analyzeOutfit>>
+  // A catalog look (icon or Edit) is drawn from the catalog's own pieces, so
+  // its render starts at once and the stylist's read of the photo (the notes
+  // for this person's palette and body) fills the look in beside it: about
+  // 12 s sooner on screen (the Halloween flow, Oct 2026). An upload needs the
+  // read first: it's what finds the pieces.
+  let analysis: Awaited<ReturnType<typeof analyzeOutfit>> | null = null
 
   try {
-    analysis = await analyzeOutfit({ avatar, photo, notes })
+    analysis = icon ? null : await analyzeOutfit({ avatar, photo, notes })
   } catch (error) {
     await refund()
 
@@ -83,6 +88,18 @@ export async function startTryOn(
     return reply.code(502).send({ message: 'Our stylist could not read that photo. Please try again.' })
   }
 
+  const catalogPlan = (read: LookPlan | null): LookPlan | null =>
+    icon
+      ? {
+          title: icon.name,
+          vibe: read?.vibe ?? icon.mood,
+          summary: read?.summary ?? icon.description,
+          whyItWorks: read?.whyItWorks ?? '',
+          items: icon.items.map((item) => ({ ...item, fromPhoto: true })),
+          stylingTips: read?.stylingTips ?? [],
+        }
+      : null
+  const plan = catalogPlan(null) ?? analysis!.plan
   const now = new Date()
   const lookId = new ObjectId()
   // Icon looks get a copy under the person's prefix too, so deleting the look
@@ -95,14 +112,12 @@ export async function startTryOn(
     batchId: new ObjectId(),
     occasion: {
       text: notes ?? 'Try-on',
-      dressCode: analysis.dressCode,
-      summary: analysis.plan.summary,
+      dressCode: analysis?.dressCode ?? icon?.mood ?? '',
+      summary: plan.summary,
     },
     // Icon looks keep the catalog's name and exact pieces; the stylist's read
     // of the image brings the notes for this person's palette and body.
-    plan: icon
-      ? { ...analysis.plan, title: icon.name, items: icon.items.map((item) => ({ ...item, fromPhoto: true })) }
-      : analysis.plan,
+    plan,
     source: 'tryon',
     ...(icon ? { iconId: icon.id } : {}),
     referenceKey,
@@ -128,6 +143,18 @@ export async function startTryOn(
   }
 
   startLookRender(app, look._id)
+
+  if (icon) {
+    // The read beside the render; without it the look keeps the catalog's words.
+    void analyzeOutfit({ avatar, photo, notes })
+      .then((read) =>
+        app.collections.looks.updateOne(
+          { _id: lookId },
+          { $set: { plan: catalogPlan(read.plan)!, 'occasion.dressCode': read.dressCode, 'occasion.summary': read.plan.summary } },
+        ),
+      )
+      .catch((error: unknown) => request.log.warn({ err: errorMessage(error), iconId: icon.id }, 'Try-on read failed; the catalog words stay'))
+  }
 
   return reply.code(202).send({ look: await serializeLook(look) })
 }
