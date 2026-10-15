@@ -197,7 +197,7 @@ const envSchema = z.object({
   // Trying before an account (guests): how long an unsaved guest is kept,
   // and how many can start in a day (each selfie costs an AI read).
   GUEST_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(14),
-  // Look Great (modules/look): face photos read without Pro (her first
+  // Face Age (modules/look): face photos read without Pro (her first
   // selfie and a couple of old photos, enough for a timeline), the day's
   // cap for everyone, and the years taken off the model's estimate, which
   // leans old on older women (NIST IR 8525, 2024). Re-measure the lean from

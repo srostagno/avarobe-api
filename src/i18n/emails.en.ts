@@ -60,7 +60,7 @@ export const enEmails = {
       'Your stylist’s full take on each look.',
       `Up to ${limits.avatarRuns} avatar changes a month.`,
       'Try on the seasonal Edits.',
-      'Look Great: a photo of your face whenever you like, your face age and tips each time, and your timeline.',
+      'Face Age: a photo of your face whenever you like, the age it reads and all your tips each time, and your timeline.',
     ],
     fairUse: (images: number) => `Fair use: up to ${images} new pictures a day.`,
     firstWeek: (first: number, credits: number, days: number) =>
@@ -413,12 +413,12 @@ export const enEmails = {
     expiry: 'The link signs you in. It works once and expires in 3 days.',
   },
 
-  // Look Great: the reminder she asked for (daily, a few times a week or
+  // Face Age: the reminder she asked for (daily, a few times a week or
   // weekly). Her own numbers only; no prices, no AI.
   lookReminder: {
-    subject: (reminder: 'daily' | 'few' | 'weekly'): string => (reminder === 'weekly' ? 'Your Look Great photo for this week 📸' : 'Your Look Great photo for today 📸'),
+    subject: (reminder: 'daily' | 'few' | 'weekly'): string => (reminder === 'weekly' ? '📸 This week’s photo: how old does your face look?' : '📸 Today’s photo: how old does your face look?'),
     preheader: 'Ten seconds, the same window light, and see how your face reads today.',
-    eyebrow: 'Look Great',
+    eyebrow: 'Face Age',
     heading: (age: number | null, realAge: number | null) =>
       age === null ? 'Time for your photo.' : realAge !== null && age < realAge ? `Last time your face read ${age}. Keep it going.` : `Last time your face read ${age}. Let’s bring it down.`,
     intro: (photos: number) =>

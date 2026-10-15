@@ -12,7 +12,7 @@ import { reminderDue } from '../reminders.js'
 import lookRoutes from '../routes.js'
 import { UNLOCK_HEADER, deleteLookData, lookAvailable, signUnlock } from '../service.js'
 
-// Look Great (Oct 15, 2026): face photos over time, how old the face reads
+// Face Age (Oct 15, 2026; "Look Great" its first day): face photos over time, how old the face reads
 // (calibrated, never cruel), and a release, a state gate and a Face ID lock
 // around it.
 
@@ -214,8 +214,11 @@ describe('Look Great routes', () => {
     assert.equal(ai.bodies[0]?.store, false)
     assert.ok(!String(ai.bodies[0]?.instructions).includes('Her best colors'))
 
+    // Her real age's decade goes in for the tips only.
+    assert.ok(String(ai.bodies[0]?.instructions).includes(`She is in her ${Math.floor(ageOn('1970-05-20', new Date())! / 10) * 10}s`))
+
     const state = (await app.inject({ method: 'GET', url: '/look', headers })).json<{
-      checks: { age: number; realAge: number; potentialAge: number; photoUrl: string | null; reading: { tips: unknown[] } }[]
+      checks: { age: number; realAge: number; potentialAge: number; photoUrl: string | null; reading: { tips: unknown[]; lockedTips: number } }[]
       summary: { age: number; younger: number }
       allowance: { freeLeft: number }
     }>()
@@ -223,7 +226,9 @@ describe('Look Great routes', () => {
 
     assert.equal(state.checks[0]?.age, Math.min(realAge + 6, 52 + env.LOOK_AGE_OFFSET))
     assert.equal(state.checks[0]?.potentialAge, state.checks[0].age - 4)
-    assert.equal(state.checks[0]?.reading.tips.length, 3)
+    // Without Pro: the first tip; the other two are what Pro unlocks.
+    assert.equal(state.checks[0]?.reading.tips.length, 1)
+    assert.equal(state.checks[0]?.reading.lockedTips, 2)
     assert.ok(state.checks[0]?.photoUrl)
     assert.equal(state.summary.younger, realAge - state.summary.age)
     assert.equal(state.allowance.freeLeft, 2)
@@ -246,6 +251,51 @@ describe('Look Great routes', () => {
     const state = (await app.inject({ method: 'GET', url: '/look', headers })).json<{ checks: { problem: string | null; age: number | null }[] }>()
     assert.equal(state.checks[0]?.problem, 'several_faces')
     assert.equal(state.checks[0]?.age, null)
+  })
+
+  it('shows all three tips with Pro (an admin here)', async () => {
+    const owner = person({ email: 'owner@avarobe.test', lookGreat: profile() })
+    const { app, headers, send, collection } = await setup(owner)
+
+    await send({ source: 'camera' })
+    await until(async () => (collection('faceChecks').docs[0] as FaceCheckDocument).status !== 'processing')
+
+    const state = (await app.inject({ method: 'GET', url: '/look', headers })).json<{ checks: { reading: { tips: unknown[]; lockedTips: number } }[]; summary: { areas: Record<string, number> } }>()
+    assert.equal(state.checks[0]?.reading.tips.length, 3)
+    assert.equal(state.checks[0]?.reading.lockedTips, 0)
+    assert.deepEqual(state.summary.areas, { color: 1, light: 1, brows: 1 })
+  })
+
+  it('works without a birth date: no real age, no decade, old photos taken', async () => {
+    const rosa = person()
+    const { app, headers, send, collection } = await setup(rosa)
+    const started = await app.inject({ method: 'POST', url: '/look/profile', headers, payload: { consent: true, consentName: 'Rosa Diaz' } })
+    assert.equal(started.statusCode, 200)
+
+    assert.equal((await send({ source: 'import', takenAt: '1985-06' })).statusCode, 202)
+    await until(async () => (collection('faceChecks').docs[0] as FaceCheckDocument).status !== 'processing')
+    assert.ok(!String(ai.bodies[0]?.instructions).includes('She is in her'))
+
+    const state = (await app.inject({ method: 'GET', url: '/look', headers })).json<{ checks: { age: number; realAge: number | null }[]; summary: { realAge: number | null; younger: number | null } }>()
+    assert.equal(state.checks[0]?.age, 52 + env.LOOK_AGE_OFFSET)
+    assert.equal(state.checks[0]?.realAge, null)
+    assert.equal(state.summary.younger, null)
+  })
+
+  it('lets an admin start over as a first-timer, free photos included; nobody else', async () => {
+    const owner = person({ email: 'owner@avarobe.test', lookGreat: profile(), lookPhotosAdded: 3 })
+    const { app, headers, collection } = await setup(owner)
+
+    const reset = await app.inject({ method: 'POST', url: '/look/reset', headers })
+    assert.equal(reset.statusCode, 200)
+    assert.equal(reset.json<{ profile: unknown }>().profile, null)
+    const saved = collection('users').docs[0] as UserDocument
+    assert.equal(saved.lookGreat, undefined)
+    assert.equal(saved.lookPhotosAdded, undefined)
+
+    const rosa = person({ lookGreat: profile() })
+    const other = await setup(rosa)
+    assert.equal((await other.app.inject({ method: 'POST', url: '/look/reset', headers: other.headers })).statusCode, 403)
   })
 
   it('dates an old photo by her pick, and never takes one of her under 18', async () => {

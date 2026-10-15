@@ -109,11 +109,11 @@ export type UserDocument = {
   // recognize someone who comes back.
   deletedAt?: Date | null
   emailHash?: string | null
-  // Look Great (modules/look): her birth date, the release she signed for
-  // her face photos, how often she wants a reminder, and whether her photos
-  // need Face ID / Touch ID (a passkey) to show.
+  // Face Age (modules/look; "Look Great" its first day): her birth date if she
+  // gave it, the release she signed for her face photos, how often she wants
+  // a reminder, and whether her photos need Face ID / Touch ID (a passkey).
   lookGreat?: LookGreatProfile | null
-  // Photos she has added to Look Great, ever: the free ones count from it,
+  // Photos she has added to Face Age, ever: the free ones count from it,
   // so deleting one (or everything) doesn't give it back. A photo that
   // couldn't be read gives its place back.
   lookPhotosAdded?: number
@@ -122,8 +122,9 @@ export type UserDocument = {
 export type LookReminder = 'off' | 'daily' | 'few' | 'weekly'
 
 export type LookGreatProfile = {
-  // 'YYYY-MM-DD', 18 or older.
-  birthDate: string
+  // 'YYYY-MM-DD', 18 or older; optional (Oct 15): without it there's no
+  // comparison with her real age.
+  birthDate: string | null
   // The written release (BIPA-style) she signed before her first photo:
   // when, which text, and the full name she typed as her signature.
   consentAt: Date
@@ -239,7 +240,7 @@ export type LifecycleEmailKind =
   // A color read that failed for the AI provider, done later (they asked to
   // be told): a sign-in link to their colors.
   | 'colors_ready'
-  // Look Great: the reminder she asked for (daily, a few times a week or
+  // Face Age: the reminder she asked for (daily, a few times a week or
   // weekly) to add today's photo. Each send updates lookGreat.reminderLastAt;
   // lifecycleEmails keeps only the latest.
   | 'look_reminder'
@@ -592,7 +593,7 @@ export type PasskeyDocument = {
 
 export type AuthChallengeDocument = {
   _id: string
-  // 'look_unlock': Face ID / Touch ID before her Look Great photos show.
+  // 'look_unlock': Face ID / Touch ID before her Face Age photos show.
   purpose: 'passkey_register' | 'passkey_login' | 'look_unlock'
   userId: ObjectId | null
   challenge: string
@@ -1434,11 +1435,11 @@ export type ColorCheckDocument = {
   photosDeletedAt?: Date | null
 }
 
-// Look Great (modules/look): one face photo she added (today's selfie or an
+// Face Age (modules/look): one face photo she added (today's selfie or an
 // old photo, dated when it was taken) and what the AI read in it. Her
 // photos never leave her account, are never matched against each other
 // (no face recognition, no faceprints) and go entirely when she deletes
-// them, Look Great or her account.
+// them, Face Age or her account.
 export type FaceCheckDocument = {
   _id: ObjectId
   userId: ObjectId

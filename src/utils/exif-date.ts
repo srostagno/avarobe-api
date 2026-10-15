@@ -1,5 +1,5 @@
 // The day a photo was taken, from its EXIF (DateTimeOriginal, else
-// DateTime): Look Great dates an old photo by it. `exif` is sharp's
+// DateTime): Face Age dates an old photo by it. `exif` is sharp's
 // metadata().exif, with or without its "Exif\0\0" header. Null when the
 // photo carries none (most photos sent through WhatsApp) or it's unreadable.
 

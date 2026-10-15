@@ -9,7 +9,7 @@ import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
 
 // Everything someone made in the app: their photos, avatar, colors and
-// reports, looks, haircuts, taste notes, collections and Look Great, and the pictures
+// reports, looks, haircuts, taste notes, collections and Face Age, and the pictures
 // made for their emails, files included. Their account, sign-in and
 // purchases stay. Used when an admin starts over as a brand-new user; a
 // deleted account keeps all of it but its pictures (delete-account.ts).

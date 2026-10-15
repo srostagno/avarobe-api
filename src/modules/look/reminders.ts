@@ -91,7 +91,7 @@ export async function sendLookReminders(app: FastifyInstance, now = new Date()) 
 
     const points = checks
       .filter((check) => check.reading?.usable)
-      .map((check) => ({ takenAt: check.takenAt, age: shownAge(check.reading!.apparentAge, ageOn(profile.birthDate, check.takenAt)) }))
+      .map((check) => ({ takenAt: check.takenAt, age: shownAge(check.reading!.apparentAge, profile.birthDate ? ageOn(profile.birthDate, check.takenAt) : null) }))
     const latestTip = checks.find((check) => check.reading?.usable)?.reading?.tips[0]?.text ?? null
 
     if (await sendReminder(app, user, { age: currentAge(points), photos: points.length, tip: latestTip }, now)) {
@@ -109,7 +109,7 @@ async function sendReminder(app: FastifyInstance, user: UserDocument, numbers: {
   const ads = storedAdIds(user)
 
   try {
-    const url = new URL(await emailLink(app, user, '/studio/look-great?from=email', { ads }))
+    const url = new URL(await emailLink(app, user, '/studio/face-age?from=email', { ads }))
     url.searchParams.set('utm_source', 'email')
     url.searchParams.set('utm_medium', 'lifecycle')
     url.searchParams.set('utm_campaign', 'look_reminder')
@@ -121,18 +121,18 @@ async function sendReminder(app: FastifyInstance, user: UserDocument, numbers: {
       region: regionForCountry(user.location?.country),
       reminder: profile.reminder as 'daily' | 'few' | 'weekly',
       age: numbers.age,
-      realAge: ageOn(profile.birthDate, now),
+      realAge: profile.birthDate ? ageOn(profile.birthDate, now) : null,
       photos: numbers.photos,
       tip: numbers.tip,
       url: url.toString(),
-      settingsUrl: await emailLink(app, user, '/studio/look-great#settings', { ads }),
+      settingsUrl: await emailLink(app, user, '/studio/face-age#settings', { ads }),
     })
 
     await app.collections.emailSends.insertOne({ _id: sendId, userId: user._id, kind: 'look_reminder', subject: content.subject, sentAt: now, opens: 0, clicks: 0 })
 
     return await deliverEmail({ log: app.log, to: { email: user.email, name: user.firstName }, content: trackContent(content, sendId) })
   } catch (error) {
-    app.log.error({ err: error, userId: user._id.toString() }, 'Look Great reminder failed')
+    app.log.error({ err: error, userId: user._id.toString() }, 'Face Age reminder failed')
     await app.collections.emailSends.deleteOne({ _id: sendId })
     return false
   }
@@ -177,11 +177,11 @@ export async function failStaleFaceReads(app: FastifyInstance, now = new Date())
 
 export function startLookGreat(app: FastifyInstance) {
   const run = () => {
-    void failStaleFaceReads(app).catch((error: unknown) => app.log.error({ err: error }, 'Look Great stale reads crashed'))
-    void forgetStaleLookData(app).catch((error: unknown) => app.log.error({ err: error }, 'Look Great retention crashed'))
+    void failStaleFaceReads(app).catch((error: unknown) => app.log.error({ err: error }, 'Face Age stale reads crashed'))
+    void forgetStaleLookData(app).catch((error: unknown) => app.log.error({ err: error }, 'Face Age retention crashed'))
     // Emails only where the lifecycle emails go out (production).
     if (env.LIFECYCLE_EMAILS) {
-      void sendLookReminders(app).catch((error: unknown) => app.log.error({ err: error }, 'Look Great reminders crashed'))
+      void sendLookReminders(app).catch((error: unknown) => app.log.error({ err: error }, 'Face Age reminders crashed'))
     }
   }
 

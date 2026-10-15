@@ -1,6 +1,6 @@
 import type { ColorAnalysis, FaceReading } from '../../types/mongo.js'
 
-// Look Great: one face photo in; how old the face reads, what adds years in
+// Face Age: one face photo in; how old the face reads, what adds years in
 // this photo and what would take them off out. The age it gives is the
 // model's own; what she sees is calibrated (look/age.ts), so no number ever
 // appears in the words it writes.
@@ -47,7 +47,9 @@ export const FACE_SCHEMA = {
 
 // Her palette goes in only once she owns it: no best colors before paying
 // (Oct 3, 2026). Without it the color tip is about what this photo shows.
-export function buildFaceInstructions(input: { palette: ColorAnalysis | null; old: boolean }) {
+// `decade`: her real age's decade (50 for her 50s) when she gave her birth
+// date, for tips that fit her stage of life; never for the age it reads.
+export function buildFaceInstructions(input: { palette: ColorAnalysis | null; old: boolean; decade: number | null }) {
   const swatches = (list: { name: string; hex: string }[]) => list.map((swatch) => swatch.name).join(', ')
   const palette = input.palette
     ? [
@@ -74,6 +76,9 @@ export function buildFaceInstructions(input: { palette: ColorAnalysis | null; ol
     'agingFactors: one to three things in this photo that add years and that she can change: colors near the face, hair color or cut, makeup, brows, glasses frames, the light, the expression. Say them kindly.',
     'tips: exactly three concrete changes for her next photo or today, each with its area. Practical and specific to what you see, things she can do herself.',
     ...palette,
+    ...(input.decade !== null
+      ? [`She is in her ${input.decade}s. Use that only to make the tips fit her stage of life; it must not change apparentAge, which comes from the face alone.`]
+      : []),
     'potentialYears: how many years those three changes could realistically take off how old she reads in a photo like this, from 0 to 8.',
     'headline: one warm, honest sentence about her face today, to her ("you").',
     'Never write any age, number of years or other number in headline, strengths, agingFactors or tips. Never comment on weight, body or face shape, wrinkles as such, or features she cannot change. Never suggest medical or cosmetic procedures, injections, surgery or brand names. Write to her as "you", like a kind expert friend.',

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
-import type { FaceCheckDocument, UserDocument, UserLocation } from '../../types/mongo.js'
+import type { FaceCheckDocument, FaceTipArea, UserDocument, UserLocation } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { createStructuredResponse, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
@@ -13,16 +13,18 @@ import { PaywallError, billingState, loadBillingUser } from '../billing/entitlem
 import { ageOn, currentAge, recentOf, shownAge } from './age.js'
 import { FACE_SCHEMA, type FaceReadingRaw, buildFaceInstructions, toFaceReading } from './prompts.js'
 
-// Look Great: face photos she adds whenever she likes (today's, or old ones
-// dated when they were taken), how old her face reads in each, and what
-// takes years off. Her own timeline, never matched across photos, gone
-// whenever she deletes it.
+// Face Age ("Look Great" its first day): face photos she adds whenever she
+// likes (today's, or old ones dated when they were taken), how old her face
+// reads in each, and what takes years off. Her own timeline, never matched
+// across photos, gone whenever she deletes it.
 
 // The release she signs (the web shows its text in her language, under
 // lookGreat.consent): a new version when that text changes.
-export const LOOK_CONSENT_VERSION = 'look-2026-10-15'
+// face-age-2026-10-15: renamed Face Age, birth date optional, "I'm 18 or
+// older" in the box she ticks.
+export const LOOK_CONSENT_VERSION = 'face-age-2026-10-15'
 
-// Look Great is off where a face photo is a "biometric identifier" people
+// Face Age is off where a face photo is a "biometric identifier" people
 // can sue over: Illinois (BIPA; the try-on suits against beauty brands) and
 // Washington (My Health My Data Act). By where she signed up and where she
 // is now.
@@ -95,8 +97,10 @@ export async function runFaceRead(app: FastifyInstance, checkId: ObjectId) {
     const owner = await app.collections.users.findOne({ _id: check.userId }, { projection: { locale: 1 } })
     const palette = user && billingState(user).colorReport ? (avatar?.colorAnalysis ?? null) : null
     const old = check.source === 'import'
+    const profile = await app.collections.users.findOne({ _id: check.userId }, { projection: { lookGreat: 1 } })
+    const age = profile?.lookGreat?.birthDate ? ageOn(profile.lookGreat.birthDate, check.takenAt) : null
     const raw = await createStructuredResponse<FaceReadingRaw>({
-      instructions: buildFaceInstructions({ palette, old }),
+      instructions: buildFaceInstructions({ palette, old, decade: age === null ? null : Math.floor(age / 10) * 10 }),
       content: [
         { type: 'input_text', text: old ? 'An older photo of me. How did my face read then?' : 'My photo for today. How does my face read?' },
         { type: 'input_image', image_url: toDataUrl(photo, 'image/jpeg'), detail: 'high' },
@@ -121,14 +125,14 @@ export async function runFaceRead(app: FastifyInstance, checkId: ObjectId) {
       props: { usable: reading.usable, problem: reading.problem ?? 'none', source: check.source, light: reading.photo.light },
     })
   } catch (error) {
-    app.log.error({ checkId: checkId.toString(), err: errorMessage(error) }, 'Look Great read failed')
+    app.log.error({ checkId: checkId.toString(), err: errorMessage(error) }, 'Face Age read failed')
     await fail('We could not read that photo. Try again in a moment.')
   }
 }
 
 export function startFaceRead(app: FastifyInstance, checkId: ObjectId) {
   void runFaceRead(app, checkId).catch((error: unknown) => {
-    app.log.error({ err: error, checkId: checkId.toString() }, 'Look Great read crashed')
+    app.log.error({ err: error, checkId: checkId.toString() }, 'Face Age read crashed')
   })
 }
 
@@ -170,7 +174,11 @@ function problemOf(check: FaceCheckDocument) {
   return check.error?.startsWith('unreadable:') ? check.error.slice('unreadable:'.length) : null
 }
 
-export async function serializeFaceCheck(check: FaceCheckDocument, birthDate: string | null, showPhoto: boolean) {
+// Without Pro she sees the first of the three tips; the other two (and the
+// years they take off) are what Pro unlocks.
+const FREE_TIPS = 1
+
+export async function serializeFaceCheck(check: FaceCheckDocument, birthDate: string | null, showPhoto: boolean, pro: boolean) {
   const realAge = birthDate ? ageOn(birthDate, check.takenAt) : null
   const reading = check.status === 'ready' && check.reading?.usable ? check.reading : null
   const age = reading ? shownAge(reading.apparentAge, realAge) : null
@@ -194,7 +202,8 @@ export async function serializeFaceCheck(check: FaceCheckDocument, birthDate: st
           headline: reading.headline,
           strengths: reading.strengths,
           agingFactors: reading.agingFactors,
-          tips: reading.tips,
+          tips: pro ? reading.tips : reading.tips.slice(0, FREE_TIPS),
+          lockedTips: pro ? 0 : Math.max(0, reading.tips.length - FREE_TIPS),
           photo: reading.photo,
         }
       : null,
@@ -219,12 +228,23 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
 
   const checks = await app.collections.faceChecks.find({ userId: user._id }).sort({ takenAt: -1, createdAt: -1 }).limit(TIMELINE_LIMIT).toArray()
   const showPhotos = !profile.lock || isUnlocked(app, request, user._id)
-  const serialized = await Promise.all(checks.map((check) => serializeFaceCheck(check, profile.birthDate, showPhotos)))
+  const serialized = await Promise.all(checks.map((check) => serializeFaceCheck(check, profile.birthDate, showPhotos, billing.proActive)))
   const points = serialized
     .filter((check) => check.age !== null)
     .map((check) => ({ takenAt: new Date(check.takenAt), age: check.age! }))
   const today = currentAge(points)
-  const realAge = ageOn(profile.birthDate, new Date())
+  const realAge = profile.birthDate ? ageOn(profile.birthDate, new Date()) : null
+  // Where her years come from: how often each area came up in her tips,
+  // across every photo (the counts only: the tips beyond the first are Pro's).
+  const areas: Partial<Record<FaceTipArea, number>> = {}
+
+  for (const check of checks) {
+    if (check.status === 'ready' && check.reading?.usable) {
+      for (const tip of check.reading.tips) {
+        areas[tip.area] = (areas[tip.area] ?? 0) + 1
+      }
+    }
+  }
   const latest = serialized.find((check) => check.age !== null) ?? null
   const used = user.lookPhotosAdded ?? 0
   const passkeys = await app.collections.passkeys.countDocuments({ userId: user._id })
@@ -237,6 +257,7 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
       lock: profile.lock,
       hasPasskey: passkeys > 0,
       guest: Boolean(user.guest),
+      admin: billing.admin,
     },
     checks: serialized,
     summary: {
@@ -248,6 +269,7 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
       photos: points.length,
       // How many photos "today" is read from.
       recent: recentOf(points).length,
+      areas,
       firstAt: points.length ? points[points.length - 1]!.takenAt.toISOString() : null,
     },
     allowance: allowanceOf(billing.proActive, used),

@@ -1096,7 +1096,7 @@ export function costumeOfferEmail(
   })
 }
 
-// Look Great: the reminder she asked for, as often as she picked. Her own
+// Face Age: the reminder she asked for, as often as she picked. Her own
 // numbers and last tip; a link to change how often. Asked for, so not
 // promotional.
 export function lookReminderEmail(

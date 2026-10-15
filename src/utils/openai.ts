@@ -300,7 +300,7 @@ export async function createStructuredResponse<T>(input: {
   // The person's language: what they read comes back in it (utils/locale).
   locale?: Locale | null
   // false: OpenAI keeps no copy of the request for the dashboard (their
-  // default is 30 days). For face photos (Look Great).
+  // default is 30 days). For face photos (Face Age).
   store?: boolean
 }): Promise<T> {
   const payload = await postOpenAi<ResponsesPayload>(

@@ -15,7 +15,7 @@ import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { saveChallenge, takeChallenge, toTransports } from '../auth/passkeys.js'
-import { PaywallError, sendPaywall } from '../billing/entitlements.js'
+import { PaywallError, billingState, isAdmin, sendPaywall } from '../billing/entitlements.js'
 
 import { ageOn, parseBirthDate } from './age.js'
 import {
@@ -33,8 +33,8 @@ import {
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 const REMINDERS = ['off', 'daily', 'few', 'weekly'] as const
-const CLOSED = { code: 'look_unavailable', message: 'Look Great isn’t available where you are yet.' }
-const NO_PROFILE = { code: 'look_setup', message: 'Start Look Great first.' }
+const CLOSED = { code: 'look_unavailable', message: 'Face Age isn’t available where you are yet.' }
+const NO_PROFILE = { code: 'look_setup', message: 'Start Face Age first.' }
 
 const birthDate = z.string().refine((value) => {
   const age = parseBirthDate(value) ? ageOn(value, new Date()) : null
@@ -42,15 +42,17 @@ const birthDate = z.string().refine((value) => {
   return age !== null && age >= 18 && age <= 110
 }, 'Enter your birth date (you must be 18 or older).')
 
+// The birth date is optional: it only compares her face age with her real
+// age and makes the tips fit her stage of life.
 const profileSchema = z.object({
-  birthDate,
+  birthDate: birthDate.nullish(),
   consent: z.literal(true),
   consentName: z.string().trim().min(3).max(100),
   reminder: z.enum(REMINDERS).default('few'),
 })
 
 const settingsSchema = z.object({
-  birthDate: birthDate.optional(),
+  birthDate: birthDate.nullish(),
   reminder: z.enum(REMINDERS).optional(),
   lock: z.boolean().optional(),
 })
@@ -74,7 +76,7 @@ function chosenDate(value: string | undefined) {
   return date.toISOString().slice(0, 10) === `${match[1]}-${match[2]}-${day}` && date.getTime() <= Date.now() ? date : null
 }
 
-// Look Great (modules/look/service.ts): her face photos over time, how old
+// Face Age (modules/look/service.ts): her face photos over time, how old
 // her face reads in each, and what takes years off.
 const lookRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -109,7 +111,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
 
     const now = new Date()
     const profile: LookGreatProfile = {
-      birthDate: parsed.data.birthDate,
+      birthDate: parsed.data.birthDate ?? null,
       consentAt: now,
       consentVersion: LOOK_CONSENT_VERSION,
       consentName: parsed.data.consentName,
@@ -120,7 +122,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     }
 
     await app.collections.users.updateOne({ _id: userId }, { $set: { lookGreat: profile, updatedAt: now } })
-    void trackServerEvent(app, { name: 'look_started', userId, props: { reminder: profile.reminder, again: Boolean(user.lookGreat) } })
+    void trackServerEvent(app, { name: 'look_started', userId, props: { reminder: profile.reminder, again: Boolean(user.lookGreat), birth_date: Boolean(profile.birthDate) } })
 
     return lookState(app, request, { ...user, lookGreat: profile })
   })
@@ -185,7 +187,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         }
       }
     } catch (error) {
-      request.log.warn({ err: error }, 'Look Great upload rejected')
+      request.log.warn({ err: error }, 'Face Age upload rejected')
       return reply.code(413).send({ message: 'The photo must be an image under 15 MB.' })
     }
 
@@ -210,10 +212,11 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       takenAt = (chosen ?? fromCamera)!
       dateSource = chosen ? 'chosen' : 'exif'
 
-      // Never a photo of her as a minor.
-      const then = ageOn(user.lookGreat.birthDate, takenAt)
+      // Never a photo of her as a minor (by her birth date when she gave it;
+      // the read itself turns away anyone who looks under 18).
+      const then = user.lookGreat.birthDate ? ageOn(user.lookGreat.birthDate, takenAt) : null
 
-      if (then === null || then < 18) {
+      if (then !== null && then < 18) {
         return reply.code(400).send({ code: 'too_young', message: 'Add photos from when you were 18 or older.' })
       }
     }
@@ -266,7 +269,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     startFaceRead(app, checkId)
     void trackServerEvent(app, { name: 'look_photo_added', userId, props: { source, dateSource } })
 
-    return reply.code(202).send({ check: await serializeFaceCheck(check, user.lookGreat.birthDate, true) })
+    return reply.code(202).send({ check: await serializeFaceCheck(check, user.lookGreat.birthDate, true, billingState(user).proActive) })
   })
 
   app.delete('/photos/:id', async (request, reply) => {
@@ -278,6 +281,23 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return { ok: true }
+  })
+
+  // Admins testing the whole thing again, as a first-timer: everything,
+  // the count of free photos included.
+  app.post('/reset', async (request, reply) => {
+    const userId = requireUserId(request)
+    const user = await app.collections.users.findOne({ _id: userId })
+
+    if (!user || !isAdmin(user)) {
+      return reply.code(403).send({ message: 'Only for admins.' })
+    }
+
+    await deleteLookData(app, userId, { profile: true })
+    await app.collections.users.updateOne({ _id: userId }, { $unset: { lookPhotosAdded: '' } })
+    const fresh = await app.collections.users.findOne({ _id: userId })
+
+    return lookState(app, request, fresh!)
   })
 
   // Everything: photos, readings, birth date, release and settings.
@@ -354,7 +374,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
         { $set: { counter: verification.authenticationInfo.newCounter, lastUsedAt: new Date() } },
       )
     } catch (error) {
-      request.log.warn({ err: errorMessage(error) }, 'Look Great unlock rejected')
+      request.log.warn({ err: errorMessage(error) }, 'Face Age unlock rejected')
       return reply.code(401).send(failed)
     }
 

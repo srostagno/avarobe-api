@@ -129,7 +129,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.surveyAnswers.createIndex({ userId: 1, question: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ createdAt: -1 }),
     collections.colorChecks.createIndex({ userId: 1, createdAt: -1 }),
-    // Look Great: her timeline by the photo's date, and the day's count.
+    // Face Age: her timeline by the photo's date, and the day's count.
     collections.faceChecks.createIndex({ userId: 1, takenAt: -1 }),
     collections.faceChecks.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(

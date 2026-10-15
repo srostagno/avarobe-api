@@ -47,7 +47,7 @@ export const esEmails: EmailCopy = {
       'La opinión completa de tu estilista sobre cada look.',
       `Hasta ${limits.avatarRuns} cambios de avatar al mes.`,
       'Pruébate los Edits de cada temporada.',
-      'Look Great: una foto de tu rostro cuando quieras, la edad que refleja y consejos cada vez, y tu línea de tiempo.',
+      'Edad del rostro: una foto de tu rostro cuando quieras, la edad que refleja y todos tus consejos cada vez, y tu línea de tiempo.',
     ],
     fairUse: (images: number) => `Uso justo: hasta ${images} imágenes nuevas al día.`,
     firstWeek: (first: number, credits: number, days: number) =>
@@ -372,9 +372,9 @@ export const esEmails: EmailCopy = {
   },
 
   lookReminder: {
-    subject: (reminder: 'daily' | 'few' | 'weekly') => (reminder === 'weekly' ? 'Tu foto de Look Great de esta semana 📸' : 'Tu foto de Look Great de hoy 📸'),
+    subject: (reminder: 'daily' | 'few' | 'weekly') => (reminder === 'weekly' ? '📸 Tu foto de la semana: ¿qué edad refleja tu rostro?' : '📸 Tu foto de hoy: ¿qué edad refleja tu rostro?'),
     preheader: 'Diez segundos, la misma luz de ventana, y mira qué edad refleja tu rostro hoy.',
-    eyebrow: 'Look Great',
+    eyebrow: 'Edad del rostro',
     heading: (age: number | null, realAge: number | null) =>
       age === null ? 'Es hora de tu foto.' : realAge !== null && age < realAge ? `La última vez tu rostro reflejó ${age}. Sigue así.` : `La última vez tu rostro reflejó ${age}. Vamos a bajarlo.`,
     intro: (photos: number) =>

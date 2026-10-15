@@ -8,7 +8,7 @@ type AccessTokenPayload = {
   sub: string
   email: string
   // Only the other tokens we sign carry a `typ` (an email's sign-in link, a
-  // Look Great unlock): they open their own door, never the API's.
+  // Face Age unlock): they open their own door, never the API's.
   typ?: string
 }
 
