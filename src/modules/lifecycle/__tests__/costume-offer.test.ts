@@ -212,16 +212,16 @@ describe('the costume offer’s names', () => {
 
     assert.deepEqual(costumeOfferNames('en', 'hw-medusa', picks, now), {
       costume: 'Medusa',
-      picks: ['Ghost Bride', 'Ice Queen'],
+      picks: ['Victorian Ghost', 'Snow Queen'],
       next: [
         { name: 'The Last-Minute Costume Edit', emoji: '🦇', at: '2026-10-20' },
         { name: 'The Sweater Weather Edit', emoji: '🧶', at: '2026-10-27' },
       ],
     })
     const es = costumeOfferNames('es', 'hw-medusa', picks, now)
-    assert.deepEqual(es.picks, ['Novia Fantasma', 'Reina de Hielo'])
+    assert.deepEqual(es.picks, ['Fantasma Victoriana', 'Reina de las Nieves'])
     assert.equal(es.next[0]!.name, 'Edit Disfraz de Último Minuto')
-    assert.deepEqual(costumeOfferNames('pt-BR', 'hw-medusa', picks, now).picks, ['Noiva Fantasma', 'Rainha do Gelo'])
+    assert.deepEqual(costumeOfferNames('pt-BR', 'hw-medusa', picks, now).picks, ['Fantasma Vitoriana', 'Rainha da Neve'])
   })
 
   it('leave out an Edit once it dropped in New York', () => {
