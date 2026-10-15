@@ -178,6 +178,9 @@ function problemOf(check: FaceCheckDocument) {
 // years they take off) are what Pro unlocks.
 const FREE_TIPS = 1
 
+// No "with your tips: about 41" (Oct 15, 2026): applying the tips to the same
+// face, the read stayed the same, so a number of years off would promise
+// what the next read doesn't show. potentialYears stays in the reading only.
 export async function serializeFaceCheck(check: FaceCheckDocument, birthDate: string | null, showPhoto: boolean, pro: boolean) {
   const realAge = birthDate ? ageOn(birthDate, check.takenAt) : null
   const reading = check.status === 'ready' && check.reading?.usable ? check.reading : null
@@ -196,7 +199,6 @@ export async function serializeFaceCheck(check: FaceCheckDocument, birthDate: st
     locked: !visible && Boolean(check.photoKey),
     age,
     realAge,
-    potentialAge: reading && age !== null ? age - reading.potentialYears : null,
     reading: reading
       ? {
           headline: reading.headline,
@@ -245,7 +247,6 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
       }
     }
   }
-  const latest = serialized.find((check) => check.age !== null) ?? null
   const used = user.lookPhotosAdded ?? 0
   const passkeys = await app.collections.passkeys.countDocuments({ userId: user._id })
 
@@ -265,7 +266,6 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
       realAge,
       // Years under her age (negative: over).
       younger: today !== null && realAge !== null ? realAge - today : null,
-      potentialAge: latest?.potentialAge ?? null,
       photos: points.length,
       // How many photos "today" is read from.
       recent: recentOf(points).length,

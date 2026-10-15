@@ -218,14 +218,15 @@ describe('Look Great routes', () => {
     assert.ok(String(ai.bodies[0]?.instructions).includes(`She is in her ${Math.floor(ageOn('1970-05-20', new Date())! / 10) * 10}s`))
 
     const state = (await app.inject({ method: 'GET', url: '/look', headers })).json<{
-      checks: { age: number; realAge: number; potentialAge: number; photoUrl: string | null; reading: { tips: unknown[]; lockedTips: number } }[]
+      checks: { age: number; realAge: number; potentialAge?: number; photoUrl: string | null; reading: { tips: unknown[]; lockedTips: number } }[]
       summary: { age: number; younger: number }
       allowance: { freeLeft: number }
     }>()
     const realAge = ageOn('1970-05-20', new Date())!
 
     assert.equal(state.checks[0]?.age, Math.min(realAge + 6, 52 + env.LOOK_AGE_OFFSET))
-    assert.equal(state.checks[0]?.potentialAge, state.checks[0].age - 4)
+    // No promised number of years off: the next read wouldn't show it.
+    assert.equal(state.checks[0]?.potentialAge, undefined)
     // Without Pro: the first tip; the other two are what Pro unlocks.
     assert.equal(state.checks[0]?.reading.tips.length, 1)
     assert.equal(state.checks[0]?.reading.lockedTips, 2)
