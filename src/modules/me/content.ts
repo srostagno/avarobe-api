@@ -4,11 +4,12 @@ import type { ObjectId } from 'mongodb'
 import { storage } from '../../utils/storage.js'
 import { checkStorageKeys } from '../check/service.js'
 import { deleteHairstyles } from '../hair/service.js'
+import { deleteLookData } from '../look/service.js'
 import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
 
 // Everything someone made in the app: their photos, avatar, colors and
-// reports, looks, haircuts, taste notes and collections, and the pictures
+// reports, looks, haircuts, taste notes, collections and Look Great, and the pictures
 // made for their emails, files included. Their account, sign-in and
 // purchases stay. Used when an admin starts over as a brand-new user; a
 // deleted account keeps all of it but its pictures (delete-account.ts).
@@ -44,6 +45,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
 
   await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
   await deleteHairstyles(app, userId)
+  const look = await deleteLookData(app, userId, { profile: true })
   await Promise.all([
     app.collections.looks.deleteMany({ userId }),
     app.collections.tastes.deleteMany({ userId }),
@@ -54,10 +56,10 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.surveyAnswers.deleteMany({ userId }),
     app.collections.colorChecks.deleteMany({ userId }),
     app.collections.styleEvents.deleteMany({ userId }),
-    app.collections.users.updateOne({ _id: userId }, { $unset: { xsellAssets: '' } }),
+    app.collections.users.updateOne({ _id: userId }, { $unset: { xsellAssets: '', lookPhotosAdded: '' } }),
   ])
 
-  return { files: keys.length }
+  return { files: keys.length + look.photos }
 }
 
 // A deleted account's purchases stay as they were, for the books, the

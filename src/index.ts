@@ -4,6 +4,7 @@ import { startGuestCleanup } from './modules/auth/guests.js'
 import { startColorRetries } from './modules/avatar/retry.js'
 import { startCreditRefills } from './modules/billing/stripe.js'
 import { startLifecycleEmails } from './modules/lifecycle/service.js'
+import { startLookGreat } from './modules/look/reminders.js'
 import { watchOpenAi } from './modules/ops/alerts.js'
 import { resumeTasteLearning } from './modules/taste/service.js'
 import { failStaleJobs } from './utils/stale-jobs.js'
@@ -31,6 +32,7 @@ async function main() {
     startCreditRefills(app)
     startGuestCleanup(app)
     startColorRetries(app)
+    startLookGreat(app)
   } catch (error) {
     if (app) {
       app.log.error(error, 'Failed to start avarobe-api')

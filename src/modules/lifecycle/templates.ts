@@ -1096,6 +1096,41 @@ export function costumeOfferEmail(
   })
 }
 
+// Look Great: the reminder she asked for, as often as she picked. Her own
+// numbers and last tip; a link to change how often. Asked for, so not
+// promotional.
+export function lookReminderEmail(
+  input: Recipient & {
+    reminder: 'daily' | 'few' | 'weekly'
+    age: number | null
+    realAge: number | null
+    photos: number
+    tip: string | null
+    url: string
+    settingsUrl: string
+  },
+): EmailContent {
+  const { c } = reader(input)
+  const copy = c.lookReminder
+
+  return layout({
+    subject: copy.subject(input.reminder),
+    preheader: copy.preheader,
+    recipient: input,
+    blocks: [
+      eyebrow(copy.eyebrow),
+      heading(copy.heading(input.age, input.realAge)),
+      greeting(c, input.firstName),
+      paragraph(copy.intro(input.photos)),
+      ...(input.tip ? [eyebrow(copy.tipLabel), paragraph(input.tip)] : []),
+      button(copy.button, input.url),
+      textLink(copy.settings, input.settingsUrl),
+      small(copy.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // Their color read failed because the AI was busy (or out of credits), they
 // asked to be told, and it's done now: a link that signs them in on their
 // colors. They asked for it, so it goes out even to people who turned off

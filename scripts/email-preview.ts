@@ -22,6 +22,7 @@ import {
   avatarNudgeEmail,
   colorsReadyEmail,
   crossSellEmail,
+  lookReminderEmail,
   looksNudgeEmail,
   magazineReadyEmail,
   outfitGuideEmail,
@@ -109,6 +110,16 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     // later: a sign-in link to their colors (avatar/retry.ts). Also the
     // email for the people the 11-Oct-2026 outage left without theirs.
     'colors-ready': colorsReadyEmail({ ...recipient, season: 'Warm Autumn', url: link }),
+    'look-reminder': lookReminderEmail({
+      ...recipient,
+      reminder: 'few',
+      age: 52,
+      realAge: 56,
+      photos: 4,
+      tip: 'Face the window for your next photo: soft, even light takes years off.',
+      url: link,
+      settingsUrl: link,
+    }),
     // Tapped Buy inside Instagram on an iPhone (lifecycle/checkout-link.ts).
     'checkout-link': checkoutLinkEmail({
       ...recipient,

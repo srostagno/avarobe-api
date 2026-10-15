@@ -10,6 +10,7 @@ import type {
   AvatarDocument,
   CollectionDocument,
   ColorCheckDocument,
+  FaceCheckDocument,
   EmailSendDocument,
   HairstyleDocument,
   LookDocument,
@@ -37,6 +38,7 @@ export type MongoCollections = {
   collections: Collection<CollectionDocument>
   surveyAnswers: Collection<SurveyAnswerDocument>
   colorChecks: Collection<ColorCheckDocument>
+  faceChecks: Collection<FaceCheckDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
@@ -67,6 +69,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     collections: mongoDb.collection<CollectionDocument>('collections'),
     surveyAnswers: mongoDb.collection<SurveyAnswerDocument>('survey_answers'),
     colorChecks: mongoDb.collection<ColorCheckDocument>('color_checks'),
+    faceChecks: mongoDb.collection<FaceCheckDocument>('face_checks'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
@@ -126,6 +129,9 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.surveyAnswers.createIndex({ userId: 1, question: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ createdAt: -1 }),
     collections.colorChecks.createIndex({ userId: 1, createdAt: -1 }),
+    // Look Great: her timeline by the photo's date, and the day's count.
+    collections.faceChecks.createIndex({ userId: 1, takenAt: -1 }),
+    collections.faceChecks.createIndex({ userId: 1, createdAt: -1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
       { expireAfterSeconds: 0 },

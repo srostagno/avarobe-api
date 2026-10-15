@@ -299,6 +299,9 @@ export async function createStructuredResponse<T>(input: {
   temperature?: number
   // The person's language: what they read comes back in it (utils/locale).
   locale?: Locale | null
+  // false: OpenAI keeps no copy of the request for the dashboard (their
+  // default is 30 days). For face photos (Look Great).
+  store?: boolean
 }): Promise<T> {
   const payload = await postOpenAi<ResponsesPayload>(
     '/responses',
@@ -306,6 +309,7 @@ export async function createStructuredResponse<T>(input: {
       model: input.model ?? env.AI_TEXT_MODEL,
       reasoning: { effort: input.reasoningEffort ?? env.AI_TEXT_REASONING_EFFORT },
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      ...(input.store !== undefined ? { store: input.store } : {}),
       instructions: localizeInstructions(input.instructions, input.locale ?? currentLocale()),
       input: [{ role: 'user', content: input.content }],
       text: {

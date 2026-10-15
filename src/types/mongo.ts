@@ -109,6 +109,30 @@ export type UserDocument = {
   // recognize someone who comes back.
   deletedAt?: Date | null
   emailHash?: string | null
+  // Look Great (modules/look): her birth date, the release she signed for
+  // her face photos, how often she wants a reminder, and whether her photos
+  // need Face ID / Touch ID (a passkey) to show.
+  lookGreat?: LookGreatProfile | null
+  // Photos she has added to Look Great, ever: the free ones count from it,
+  // so deleting one (or everything) doesn't give it back. A photo that
+  // couldn't be read gives its place back.
+  lookPhotosAdded?: number
+}
+
+export type LookReminder = 'off' | 'daily' | 'few' | 'weekly'
+
+export type LookGreatProfile = {
+  // 'YYYY-MM-DD', 18 or older.
+  birthDate: string
+  // The written release (BIPA-style) she signed before her first photo:
+  // when, which text, and the full name she typed as her signature.
+  consentAt: Date
+  consentVersion: string
+  consentName: string
+  reminder: LookReminder
+  reminderLastAt?: Date | null
+  lock: boolean
+  createdAt: Date
 }
 
 // A cross-sell email's own picture of her: a gift look, her ideal cut, an
@@ -215,6 +239,10 @@ export type LifecycleEmailKind =
   // A color read that failed for the AI provider, done later (they asked to
   // be told): a sign-in link to their colors.
   | 'colors_ready'
+  // Look Great: the reminder she asked for (daily, a few times a week or
+  // weekly) to add today's photo. Each send updates lookGreat.reminderLastAt;
+  // lifecycleEmails keeps only the latest.
+  | 'look_reminder'
 
 export type ProSubscription = {
   subscriptionId: string
@@ -564,7 +592,8 @@ export type PasskeyDocument = {
 
 export type AuthChallengeDocument = {
   _id: string
-  purpose: 'passkey_register' | 'passkey_login'
+  // 'look_unlock': Face ID / Touch ID before her Look Great photos show.
+  purpose: 'passkey_register' | 'passkey_login' | 'look_unlock'
   userId: ObjectId | null
   challenge: string
   expiresAt: Date
@@ -1403,6 +1432,48 @@ export type ColorCheckDocument = {
   // The account was deleted: both pictures are gone (garmentKey ''), the
   // reading stays.
   photosDeletedAt?: Date | null
+}
+
+// Look Great (modules/look): one face photo she added (today's selfie or an
+// old photo, dated when it was taken) and what the AI read in it. Her
+// photos never leave her account, are never matched against each other
+// (no face recognition, no faceprints) and go entirely when she deletes
+// them, Look Great or her account.
+export type FaceCheckDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  status: GenerationStatus
+  error: string | null
+  photoKey: string
+  // The day the photo is from: today for a new one; for an old photo, its
+  // camera date or the month she picked.
+  takenAt: Date
+  source: 'camera' | 'upload' | 'import'
+  dateSource: 'now' | 'exif' | 'chosen'
+  reading: FaceReading | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export type FaceTipArea = 'color' | 'hair' | 'makeup' | 'brows' | 'skin' | 'glasses' | 'light' | 'expression'
+
+export type FaceReading = {
+  // false: no face, more than one, someone under 18, or too dark or blurry
+  // to read; the photo is deleted and the check fails with `problem`.
+  usable: boolean
+  problem: 'no_face' | 'several_faces' | 'minor' | 'too_dark' | 'too_blurry' | null
+  // The model's estimate, as is. What she sees is calibrated (look/age.ts).
+  apparentAge: number
+  // Years the tips could realistically take off (0–8).
+  potentialYears: number
+  headline: string
+  // What reads fresh and youthful in this photo.
+  strengths: string[]
+  // What adds years in this photo, kindly said.
+  agingFactors: string[]
+  tips: { area: FaceTipArea; text: string }[]
+  // The conditions, which move the estimate by a few years.
+  photo: { light: 'good' | 'dim' | 'harsh'; glasses: boolean; makeup: 'none' | 'light' | 'full'; expression: 'neutral' | 'smile' | 'other'; angle: 'front' | 'tilted' }
 }
 
 // Operations alerts to the founder (modules/ops/alerts.ts), one document per

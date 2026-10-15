@@ -46,6 +46,7 @@ export const ptBrEmails: EmailCopy = {
       'A análise completa do seu stylist sobre cada look.',
       `Até ${limits.avatarRuns} mudanças no avatar por mês.`,
       'Prove os Edits de cada estação.',
+      'Look Great: uma foto do seu rosto quando quiser, a idade que ele aparenta e dicas a cada vez, e sua linha do tempo.',
     ],
     fairUse: (images: number) => `Uso justo: até ${images} imagens novas por dia.`,
     firstWeek: (first: number, credits: number, days: number) =>
@@ -369,6 +370,22 @@ export const ptBrEmails: EmailCopy = {
     drop: (emoji: string, name: string, date: string) => `${emoji} ${name} · ${date}`,
     button: 'Provar minhas próximas fantasias',
     expiry: 'O link já entra na sua conta. Funciona uma vez e expira em 3 dias.',
+  },
+
+  lookReminder: {
+    subject: (reminder: 'daily' | 'few' | 'weekly') => (reminder === 'weekly' ? 'Sua foto do Look Great desta semana 📸' : 'Sua foto do Look Great de hoje 📸'),
+    preheader: 'Dez segundos, a mesma luz da janela, e veja que idade seu rosto aparenta hoje.',
+    eyebrow: 'Look Great',
+    heading: (age: number | null, realAge: number | null) =>
+      age === null ? 'Hora da sua foto.' : realAge !== null && age < realAge ? `Da última vez seu rosto aparentou ${age}. Continue assim.` : `Da última vez seu rosto aparentou ${age}. Vamos baixar esse número.`,
+    intro: (photos: number) =>
+      photos <= 1
+        ? 'Uma foto é um começo. Mais algumas, tiradas do mesmo jeito, e sua linha do tempo mostra o que realmente muda seu rosto.'
+        : `Você tem ${photos} fotos na sua linha do tempo. Mesmo lugar, mesma luz da janela, sem óculos: é assim que as mudanças aparecem.`,
+    tipLabel: 'Sua dica da última vez',
+    button: 'Enviar a foto de hoje',
+    settings: 'Mudar a frequência deste e-mail',
+    expiry: 'O link faz seu login por 14 dias.',
   },
 
   colorsReady: {

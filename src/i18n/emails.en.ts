@@ -60,6 +60,7 @@ export const enEmails = {
       'Your stylist’s full take on each look.',
       `Up to ${limits.avatarRuns} avatar changes a month.`,
       'Try on the seasonal Edits.',
+      'Look Great: a photo of your face whenever you like, your face age and tips each time, and your timeline.',
     ],
     fairUse: (images: number) => `Fair use: up to ${images} new pictures a day.`,
     firstWeek: (first: number, credits: number, days: number) =>
@@ -410,6 +411,24 @@ export const enEmails = {
     drop: (emoji: string, name: string, date: string) => `${emoji} ${name} · ${date}`,
     button: 'Try on my next costumes',
     expiry: 'The link signs you in. It works once and expires in 3 days.',
+  },
+
+  // Look Great: the reminder she asked for (daily, a few times a week or
+  // weekly). Her own numbers only; no prices, no AI.
+  lookReminder: {
+    subject: (reminder: 'daily' | 'few' | 'weekly'): string => (reminder === 'weekly' ? 'Your Look Great photo for this week 📸' : 'Your Look Great photo for today 📸'),
+    preheader: 'Ten seconds, the same window light, and see how your face reads today.',
+    eyebrow: 'Look Great',
+    heading: (age: number | null, realAge: number | null) =>
+      age === null ? 'Time for your photo.' : realAge !== null && age < realAge ? `Last time your face read ${age}. Keep it going.` : `Last time your face read ${age}. Let’s bring it down.`,
+    intro: (photos: number) =>
+      photos <= 1
+        ? 'One photo is a start. A few more, taken the same way, and your timeline shows what really changes your face.'
+        : `You have ${photos} photos in your timeline. Same spot, same window light, no glasses: that’s how the changes show.`,
+    tipLabel: 'Your tip from last time',
+    button: 'Add today’s photo',
+    settings: 'Change how often I get this',
+    expiry: 'The link signs you in for 14 days.',
   },
 
   // Their color read failed because the AI was busy, and it's done now (they

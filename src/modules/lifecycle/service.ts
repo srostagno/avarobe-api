@@ -303,6 +303,9 @@ export function lifecycleContentFor(
       throw new Error('costume_offer emails are built by sendCostumeOffer')
     case 'colors_ready':
       return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
+    case 'look_reminder':
+      // Her own numbers: look/reminders.ts makes it.
+      throw new Error('look_reminder emails are built by sendLookReminders')
     case 'price_drop':
       return priceDropEmail({
         ...recipient,

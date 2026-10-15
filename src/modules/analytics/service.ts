@@ -115,8 +115,9 @@ export async function optionalUserId(request: FastifyRequest) {
   }
 
   try {
-    const payload = await request.server.jwt.verify<{ sub: string }>(token)
-    return toObjectId(payload.sub)
+    const payload = await request.server.jwt.verify<{ sub: string; typ?: string }>(token)
+    // A link or unlock token is not a session (plugins/authenticate.ts).
+    return payload.typ ? null : toObjectId(payload.sub)
   } catch {
     return null
   }

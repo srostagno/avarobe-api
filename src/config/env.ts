@@ -197,6 +197,14 @@ const envSchema = z.object({
   // Trying before an account (guests): how long an unsaved guest is kept,
   // and how many can start in a day (each selfie costs an AI read).
   GUEST_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(14),
+  // Look Great (modules/look): face photos read without Pro (her first
+  // selfie and a couple of old photos, enough for a timeline), the day's
+  // cap for everyone, and the years taken off the model's estimate, which
+  // leans old on older women (NIST IR 8525, 2024). Re-measure the lean from
+  // real ages once enough have joined (look/age.ts).
+  LOOK_FREE_PHOTOS: z.coerce.number().int().min(0).default(3),
+  LOOK_DAILY_PHOTOS: z.coerce.number().int().min(1).default(20),
+  LOOK_AGE_OFFSET: z.coerce.number().min(-10).max(10).default(-2),
   // Rough dollars per real and per peso, only for the admin's revenue totals
   // (billing/pricing.ts); Stripe does the real conversion.
   FX_USD_PER_BRL: z.coerce.number().positive().default(0.18),

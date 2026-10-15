@@ -70,7 +70,7 @@ function deviceName(request: FastifyRequest) {
   return devices.find(([pattern]) => pattern.test(agent))?.[1] ?? 'Passkey'
 }
 
-async function saveChallenge(
+export async function saveChallenge(
   app: FastifyInstance,
   purpose: AuthChallengeDocument['purpose'],
   challenge: string,
@@ -90,7 +90,7 @@ async function saveChallenge(
 }
 
 // Challenges are single use: taking one deletes it.
-async function takeChallenge(
+export async function takeChallenge(
   app: FastifyInstance,
   challengeId: string,
   purpose: AuthChallengeDocument['purpose'],
@@ -105,7 +105,7 @@ async function takeChallenge(
   return challenge && challenge.expiresAt.getTime() > Date.now() ? challenge : null
 }
 
-function toTransports(values: string[]) {
+export function toTransports(values: string[]) {
   return values as AuthenticatorTransportFuture[]
 }
 

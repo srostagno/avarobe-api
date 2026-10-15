@@ -4,6 +4,7 @@ import type { ObjectId } from 'mongodb'
 import { deletedEmail, emailHash, isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { isValidStorageKey, storage } from '../../utils/storage.js'
 import { forgetRefundRequests } from '../billing/refund-requests.js'
+import { deleteLookData } from '../look/service.js'
 
 import { forgetPurchases } from './content.js'
 
@@ -15,7 +16,8 @@ import { forgetPurchases } from './content.js'
 // magazines, checks, answers, usage, purchases and statistics stay, without
 // a single picture of her: every photo and render is deleted, its file and
 // its key. Refund requests lose their screenshot, email and name
-// (forgetRefundRequests). Used by DELETE /me and for guests who never saved
+// (forgetRefundRequests). Look Great goes entirely: photos, readings, birth
+// date and release. Used by DELETE /me and for guests who never saved
 // (auth/guests.ts).
 
 // Keys typed as a plain string are left as '' when their file goes; the
@@ -166,6 +168,9 @@ export async function deleteAccount(app: FastifyInstance, userId: ObjectId, now 
 
   const alias = deletedEmail(userId)
   const files = await deletePhotos(app, userId, now)
+  // Look Great is the exception to keeping records: her face photos, their
+  // readings, her birth date and release all go (what the release promises).
+  const look = await deleteLookData(app, userId, { profile: true })
   // Refund requests stay for the books: screenshots go, decided ones are
   // scrubbed, open ones can still be decided (money back only).
   await forgetRefundRequests(app, userId)
@@ -214,5 +219,5 @@ export async function deleteAccount(app: FastifyInstance, userId: ObjectId, now 
     },
   )
 
-  return { files, swept }
+  return { files: files + look.photos, swept }
 }

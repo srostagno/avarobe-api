@@ -7,6 +7,9 @@ import { extractBearerToken } from '../utils/tokens.js'
 type AccessTokenPayload = {
   sub: string
   email: string
+  // Only the other tokens we sign carry a `typ` (an email's sign-in link, a
+  // Look Great unlock): they open their own door, never the API's.
+  typ?: string
 }
 
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
@@ -20,7 +23,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 
   try {
     const payload = await request.server.jwt.verify<AccessTokenPayload>(token)
-    const userId = toObjectId(payload.sub)
+    const userId = payload.typ ? null : toObjectId(payload.sub)
 
     if (!userId) {
       return reply.code(401).send({ message: 'Unauthorized' })
