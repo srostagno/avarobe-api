@@ -54,6 +54,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.usageCounters.deleteMany({ userId }),
     app.collections.shopSearches.deleteMany({ userId }),
     app.collections.surveyAnswers.deleteMany({ userId }),
+    app.collections.feedback.deleteMany({ userId }),
     app.collections.colorChecks.deleteMany({ userId }),
     app.collections.styleEvents.deleteMany({ userId }),
     app.collections.users.updateOne({ _id: userId }, { $unset: { xsellAssets: '', lookPhotosAdded: '' } }),

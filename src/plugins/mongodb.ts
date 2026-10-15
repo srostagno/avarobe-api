@@ -24,6 +24,7 @@ import type {
   GuideOrderDocument,
   OpsAlertDocument,
   SurveyAnswerDocument,
+  FeedbackDocument,
   TasteDocument,
   UsageCounterDocument,
   UserDocument,
@@ -37,6 +38,7 @@ export type MongoCollections = {
   hairstyles: Collection<HairstyleDocument>
   collections: Collection<CollectionDocument>
   surveyAnswers: Collection<SurveyAnswerDocument>
+  feedback: Collection<FeedbackDocument>
   colorChecks: Collection<ColorCheckDocument>
   faceChecks: Collection<FaceCheckDocument>
   tastes: Collection<TasteDocument>
@@ -68,6 +70,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     hairstyles: mongoDb.collection<HairstyleDocument>('hairstyles'),
     collections: mongoDb.collection<CollectionDocument>('collections'),
     surveyAnswers: mongoDb.collection<SurveyAnswerDocument>('survey_answers'),
+    feedback: mongoDb.collection<FeedbackDocument>('feedback'),
     colorChecks: mongoDb.collection<ColorCheckDocument>('color_checks'),
     faceChecks: mongoDb.collection<FaceCheckDocument>('face_checks'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
@@ -128,6 +131,8 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.collections.createIndex({ userId: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ userId: 1, question: 1, createdAt: -1 }),
     collections.surveyAnswers.createIndex({ createdAt: -1 }),
+    collections.feedback.createIndex({ userId: 1, product: 1 }, { unique: true }),
+    collections.feedback.createIndex({ createdAt: -1 }),
     collections.colorChecks.createIndex({ userId: 1, createdAt: -1 }),
     // Face Age: her timeline by the photo's date, and the day's count.
     collections.faceChecks.createIndex({ userId: 1, takenAt: -1 }),

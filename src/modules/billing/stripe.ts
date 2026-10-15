@@ -383,6 +383,34 @@ async function creditCoupon(cents: number, currency = 'usd') {
   }
 }
 
+// Pro's first month at half price (modules/feedback): `cents` off the first
+// payment, named in the buyer's language on Stripe's page. One coupon per
+// amount, currency and language, created on first use.
+const HALF_NAME: Record<Locale, string> = {
+  en: '50% off your first month',
+  'pt-BR': '50% de desconto no seu primeiro mês',
+  es: '50% de descuento en tu primer mes',
+}
+
+async function halfMonthCoupon(cents: number, currency: string, locale: Locale) {
+  const id = `avarobe_pro_half_${cents}_${currency}_${locale.toLowerCase()}`
+
+  try {
+    return (await stripe().coupons.retrieve(id)).id
+  } catch {
+    return (
+      await stripe().coupons.create({
+        id,
+        name: HALF_NAME[locale],
+        amount_off: cents,
+        currency,
+        duration: 'once',
+        metadata: { app: APP, offer: 'pro_half' },
+      })
+    ).id
+  }
+}
+
 const INTL_LOCALE: Record<Locale, string> = { en: 'en-US', 'pt-BR': 'pt-BR', es: 'es-MX' }
 
 const money = (cents: number, currency = 'usd', locale: Locale = 'en') =>
@@ -417,7 +445,9 @@ const EMBEDDED_BRANDING = Object.fromEntries(Object.entries(BRANDING).filter(([k
 // What checkout says next to the pay button: how a subscription renews and
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
-export function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en') {
+// `firstCents`: a first payment below the plan's price (Pro's half-price
+// first month), said before the renewal.
+export function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en', firstCents?: number) {
   const config = PRODUCTS[product]
   const currency = REGION_CURRENCY[region]
   const price = (item: PurchaseProduct) => money(regionalAmount(item, region), currency, locale)
@@ -439,6 +469,25 @@ export function submitMessage(product: PurchaseProduct, region: PricingRegion = 
       'pt-BR': `Renova automaticamente por ${price(product)} por ${every} até você cancelar. Cancele quando quiser nas configurações da sua conta Avarobe; o Pro continua até o fim do período pago.`,
       es: `Se renueva automáticamente por ${price(product)} al ${every} hasta que canceles. Cancela cuando quieras en la configuración de tu cuenta de Avarobe; conservas Pro hasta el final del período que pagaste.`,
     }[locale]
+    const first =
+      firstCents !== undefined
+        ? {
+            en: `${money(firstCents, currency, locale)} today for your first month.`,
+            'pt-BR': `${money(firstCents, currency, locale)} hoje pelo seu primeiro mês.`,
+            es: `${money(firstCents, currency, locale)} hoy por tu primer mes.`,
+          }[locale]
+        : null
+
+    if (first) {
+      return `${first} ${
+        {
+          en: `Then ${price(product)} per ${every} from your second month, until you cancel. Cancel anytime in your Avarobe account settings; you keep Pro until the end of the period you paid for.`,
+          'pt-BR': `Depois, ${price(product)} por ${every} a partir do segundo mês, até você cancelar. Cancele quando quiser nas configurações da sua conta Avarobe; o Pro continua até o fim do período pago.`,
+          es: `Después, ${price(product)} al ${every} desde tu segundo mes, hasta que canceles. Cancela cuando quieras en la configuración de tu cuenta de Avarobe; conservas Pro hasta el final del período que pagaste.`,
+        }[locale]
+      }`
+    }
+
     // Annual's first month comes in two parts (annualFirstWeek), said
     // before paying.
     const week = product === 'pro_annual' ? annualFirstWeek() : null
@@ -531,6 +580,9 @@ export async function createCheckout(input: {
   returnPath: string
   // Reports bought recently, counted toward Pro annual.
   discountCents?: number
+  // Pro monthly's first month at half price (modules/feedback): what comes
+  // off the first payment.
+  halfOffCents?: number
   // Analytics ids for server-side purchase events (conversions.ts).
   attribution?: Record<string, string>
   // Checkout inside our page (Stripe's embedded form) instead of Stripe's:
@@ -557,9 +609,14 @@ export async function createCheckout(input: {
     region,
     locale,
     ...(input.placement ? { placement: input.placement } : {}),
+    ...(input.halfOffCents ? { offer: 'pro_half' } : {}),
   }
   const discount =
-    input.discountCents && input.discountCents > 0 ? await creditCoupon(input.discountCents, REGION_CURRENCY[region]) : null
+    input.halfOffCents && input.halfOffCents > 0
+      ? await halfMonthCoupon(input.halfOffCents, REGION_CURRENCY[region], locale)
+      : input.discountCents && input.discountCents > 0
+        ? await creditCoupon(input.discountCents, REGION_CURRENCY[region])
+        : null
   const common = {
     line_items: [{ price: await priceFor(input.product, region, locale), quantity: 1 }],
     locale: STRIPE_LOCALE[locale],
@@ -578,7 +635,16 @@ export async function createCheckout(input: {
       : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
         ? { allow_promotion_codes: true }
         : {}),
-    custom_text: { submit: { message: submitMessage(input.product, region, locale) } },
+    custom_text: {
+      submit: {
+        message: submitMessage(
+          input.product,
+          region,
+          locale,
+          input.halfOffCents ? regionalAmount(input.product, region) - input.halfOffCents : undefined,
+        ),
+      },
+    },
     // The embedded form comes back to the same success page; closing it is
     // the way back, so it has no cancel link.
     ...(input.embedded
@@ -1008,6 +1074,14 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
 
     if (!subscriptionId || !isPro(product)) {
       return null
+    }
+
+    // Paid with Pro's half-price first month: it's used (once per person).
+    if (session.metadata?.offer === 'pro_half') {
+      await app.collections.users.updateOne(
+        { _id: userId, 'proHalfOffer.usedAt': null },
+        { $set: { 'proHalfOffer.usedAt': new Date() } },
+      )
     }
 
     const applied = await grantProPayment(app, {

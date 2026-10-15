@@ -62,6 +62,9 @@ export type UserDocument = {
   paidAt?: Date | null
   // When they started their Pro trial: one per account.
   proTrialAt?: Date | null
+  // Pro's first month at half price, offered once after rating a paid
+  // advisor 7 or more (modules/feedback): until when, and when it was used.
+  proHalfOffer?: ProHalfOffer | null
   // Avatar renders used without Pro (create, redo, adjust, a new haircut).
   freeAvatarRuns?: number
   // Hairstyle renders used without the Style Advisor or Pro (FREE_HAIR_RUNS).
@@ -1392,6 +1395,39 @@ export type SurveyAnswerDocument = {
   // Their first touch at the time, to read answers by campaign.
   content: string | null
   createdAt: Date
+}
+
+// The paid advisors rated at the end of their report (modules/feedback).
+export type FeedbackProduct = 'color_advisor' | 'style_advisor' | 'hair_advisor'
+
+// How likely they'd recommend a paid advisor (0–10, the NPS question) and
+// the review they wrote, at the end of its report. One per person and
+// advisor (a new answer replaces it); deleted with the account's content.
+export type FeedbackDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  product: FeedbackProduct
+  score: number
+  comment: string | null
+  // They agreed Avarobe may quote the review, with their first name only.
+  quoteOk: boolean
+  locale: string
+  region: string
+  // On Pro (or comp) when they answered, rather than a one-time purchase.
+  pro: boolean
+  // Their first touch, to read answers by campaign.
+  content: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export type ProHalfOffer = {
+  // The advisor whose rating brought it.
+  from: FeedbackProduct
+  at: Date
+  until: Date
+  // Paid with it (the first month at half price).
+  usedAt: Date | null
 }
 
 // "Does this color suit me?" (modules/check): a garment photo they uploaded,

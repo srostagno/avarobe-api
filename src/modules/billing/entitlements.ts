@@ -8,6 +8,7 @@ import { emailHash } from '../../utils/deleted-accounts.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { timeZoneFor } from '../../utils/timezones.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { offerView } from '../feedback/rules.js'
 import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
@@ -77,6 +78,7 @@ type BillingFields = Pick<
   | 'freeTryOns'
   | 'compPaused'
   | 'proTrialAt'
+  | 'proHalfOffer'
   | 'guest'
   | 'locale'
   | 'location'
@@ -334,6 +336,9 @@ export function serializeBilling(user: BillingFields) {
         }
       : null,
     trialEligible: state.trialEligible,
+    // Pro monthly's first month at half price, while their offer is open
+    // (modules/feedback), in their region's prices.
+    proHalfOffer: state.proLive || state.comp ? null : offerView(user.proHalfOffer, regionForCountry(user.location?.country)),
     paid: state.paid,
     credits: state.credits,
     unlimited: state.comp,
@@ -367,6 +372,7 @@ export const BILLING_PROJECTION = {
   freeTryOns: 1,
   compPaused: 1,
   proTrialAt: 1,
+  proHalfOffer: 1,
   guest: 1,
   locale: 1,
   location: 1,

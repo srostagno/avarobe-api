@@ -13,6 +13,7 @@ import { analyticsReport } from '../analytics/report.js'
 import { isColorsLocked } from '../avatar/reads.js'
 import { BILLING_PROJECTION, adminUserIds } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
+import { feedbackReport } from '../feedback/report.js'
 import { refundsReport } from '../billing/refunds.js'
 import { requestStats } from '../billing/refund-requests.js'
 import { recentCheckouts } from '../billing/stripe.js'
@@ -79,6 +80,7 @@ const emailActivitySchema = z.object({ from: DAY.optional(), to: DAY.optional() 
 const transactionsSchema = z.object({ from: DAY.optional(), to: DAY.optional() })
 const hairSchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
 const whySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })
+const feedbackSchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) })
 
 const EMAIL_ORDER: LifecycleEmailKind[] = [
   'welcome',
@@ -515,6 +517,22 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return whyReport(app, parsed.data.days)
+  })
+
+  // How the paid advisors are rated at the end of their reports (NPS), the
+  // reviews, and the half-price Pro offer it brings (modules/feedback).
+  app.get('/feedback', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(feedbackSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return feedbackReport(app, parsed.data.days)
   })
 
   // The Hair studio: its funnel and the accounts using it (hair-report.ts).

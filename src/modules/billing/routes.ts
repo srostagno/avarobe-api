@@ -13,6 +13,7 @@ import { serializeUser } from '../../utils/serializers.js'
 import { optionalUserId, trackServerEvent } from '../analytics/service.js'
 import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
+import { halfPrice, offerOpen } from '../feedback/rules.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
 import { claimGuestFromSession } from './guest-checkout.js'
 import { DAILY_CHECKS } from '../../constants/checks.js'
@@ -365,11 +366,16 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         // Reports bought in the last days count toward Pro annual, at the
         // prices of the buyer's region (entitlements.ts reportCreditFor).
         const discountCents = parsed.data.product === 'pro_annual' ? (reportCreditFor(user, region)?.amount ?? 0) : 0
+        // Pro monthly's first month at half price, while their offer is open
+        // (modules/feedback): wherever the checkout opens from, a pay link or
+        // the jump to Safari included.
+        const halfOffCents = parsed.data.product === 'pro_monthly' && offerOpen(user.proHalfOffer) ? halfPrice(region).off : 0
         const { url, clientSecret } = await createCheckout({
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
           discountCents,
+          halfOffCents,
           embedded: parsed.data.embedded,
           region,
           placement: parsed.data.placement,
@@ -384,7 +390,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           userId,
           props: {
             product: parsed.data.product,
-            amount: Math.max(0, regionalAmount(parsed.data.product, region) - discountCents),
+            amount: Math.max(0, regionalAmount(parsed.data.product, region) - discountCents - halfOffCents),
+            ...(halfOffCents ? { offer: 'pro_half' } : {}),
             currency: REGION_CURRENCY[region],
             placement: parsed.data.placement ?? 'unknown',
             ui: parsed.data.embedded ? 'embedded' : 'hosted',
