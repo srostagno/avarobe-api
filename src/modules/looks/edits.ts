@@ -9,7 +9,10 @@ import type { IconLook } from './icons.js'
 // (design/ai-samples/diverse/<person>) or Greta, Silvio's character from the
 // Halloween reels. No real person, brand, logo or lettering. The images come
 // from design/ai-samples/edits/generate.mts, which reads this file, so it has
-// no runtime imports.
+// no runtime imports. Each Edit also has a public page in the web
+// (/collections/<slug>): after a change here, run `node scripts/sync-edits.mts`
+// in avarobe-web, and give a new Edit its slug and search copy there
+// (src/content/collections.ts, i18n/slugs.ts).
 
 export type EditLook = IconLook & {
   // Where the catalog photo is set (for the image generator; costume
@@ -60,6 +63,15 @@ const GRETA = 'ads/2026-10-halloween-wow/src/stills'
 // Halloween ad shows, first in the Edit. The older Spider Queen and Black
 // Swan were renamed (Spider Web Gown, Dark Ballerina) for these.
 const PART2 = 'social/2026-10-halloween-part2/gen'
+// The white-dress reel (Oct 15, design/social/2026-10-halloween-white): one
+// white satin slip dress, six costumes, each a few pieces over it. The older
+// Ghost Bride and Ice Queen were renamed (Victorian Ghost, Snow Queen) for
+// these. Its creator is fictional, like Greta.
+const WHITE = 'social/2026-10-halloween-white/gen'
+const WHITE_BASE: EditLook['items'] = [
+  { slot: 'dress', name: 'Satin slip dress', color: 'White', colorHex: '#F3F0EA', material: 'Satin', fit: 'Midi, cowl neck, thin straps, bias cut' },
+  { slot: 'shoes', name: 'Strappy sandals', color: 'White', colorHex: '#EFECE6', material: 'Leather', fit: 'Thin straps, stiletto heel' },
+]
 
 const halloween: EditLook[] = [
   {
@@ -126,6 +138,75 @@ const halloween: EditLook[] = [
       { slot: 'accessory', name: 'Skeleton gloves', color: 'Black and white', colorHex: '#E8E6E1', material: 'Stretch fabric', fit: 'Bone print, wrist length' },
       { slot: 'bottom', name: 'Mini skirt', color: 'Black', colorHex: '#161616', material: 'Crepe', fit: 'A-line, above the knee, over sheer black tights' },
       { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hw-white-swan', presentation: 'womenswear', name: 'White Swan', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/swan.png`,
+    scene: 'a living room at night lit by cold blue moonlight from the window, with a few candles',
+    makeup: 'silver winged liner, silver shimmer on the lids and tiny rhinestones at the outer corners of the eyes',
+    description: 'A feather crown and feathers down the arms like wings: the swan, in two pieces over a white dress.',
+    items: [
+      { slot: 'accessory', name: 'Feather crown', color: 'White', colorHex: '#F5F3EE', material: 'Feathers and crystals', fit: 'Spiky, with small crystals' },
+      { slot: 'outerwear', name: 'Feather wing shawl', color: 'White', colorHex: '#F2F0EB', material: 'Feathers', fit: 'Over the shoulders and down the arms like wings' },
+      ...WHITE_BASE,
+    ],
+  },
+  {
+    id: 'hw-white-ghost-bride', presentation: 'womenswear', name: 'Ghost Bride', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/ghostbride.png`,
+    scene: 'a living room at night filled with low pale green fog',
+    makeup: 'pale skin, grey hollow shading around the eyes and dark plum lips',
+    description: 'A torn veil to the floor and a wilted bouquet: the white dress, haunted.',
+    items: [
+      { slot: 'accessory', name: 'Torn tulle veil', color: 'Ivory', colorHex: '#ECE7DC', material: 'Tulle', fit: 'From the top of the head to the floor, with frayed edges' },
+      { slot: 'accessory', name: 'Wilted rose bouquet', color: 'Dusty rose and brown', colorHex: '#7E5A52', material: 'Dried flowers', fit: 'Held at the waist' },
+      ...WHITE_BASE,
+    ],
+  },
+  {
+    id: 'hw-white-fallen-angel', presentation: 'womenswear', name: 'Fallen Angel', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/fallenangel.png`,
+    scene: 'a dark living room with a strong white backlight behind her and a light haze',
+    makeup: 'smoky dark eyes and a deep oxblood lip',
+    description: 'Big black wings and a crooked halo over a white dress: an angel who fell, beautifully.',
+    items: [
+      { slot: 'accessory', name: 'Feather wings', color: 'Black', colorHex: '#121212', material: 'Feathers', fit: 'Large, on the back, down to the knees' },
+      { slot: 'accessory', name: 'Broken halo headband', color: 'Gold', colorHex: '#C9A44C', material: 'Metal wire', fit: 'A tilted, broken ring above the head' },
+      ...WHITE_BASE,
+    ],
+  },
+  {
+    id: 'hw-white-greek-goddess', presentation: 'womenswear', name: 'Greek Goddess', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/goddess.png`,
+    scene: 'a living room at night lit by dozens of candles in warm amber light',
+    makeup: 'gold shimmer on the eyelids and a soft nude lip',
+    description: 'A gold laurel crown, a chiffon drape and gold cuffs: a goddess, from a white dress.',
+    items: [
+      { slot: 'accessory', name: 'Laurel crown', color: 'Gold', colorHex: '#C9A44C', material: 'Metal leaves', fit: 'Around the head' },
+      { slot: 'outerwear', name: 'Chiffon toga drape', color: 'Ivory', colorHex: '#F1ECE2', material: 'Chiffon', fit: 'Over one shoulder, falling to the floor' },
+      { slot: 'accessory', name: 'Rope belt', color: 'Gold', colorHex: '#C8A24A', material: 'Braided cord', fit: 'At the waist, with tassels' },
+      { slot: 'accessory', name: 'Arm cuffs', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'On the upper arms' },
+      ...WHITE_BASE,
+    ],
+  },
+  {
+    id: 'hw-white-ice-queen', presentation: 'womenswear', name: 'Ice Queen', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/icequeen.png`,
+    scene: 'a living room at night in icy cyan-blue light with a low mist',
+    makeup: 'frosted white lashes, silver shimmer on the lids and pale glossy lips',
+    description: 'A crystal crown and a white faux-fur stole: frozen glamour over a white dress.',
+    items: [
+      { slot: 'accessory', name: 'Crystal crown', color: 'Silver', colorHex: '#D8DDE2', material: 'Crystals', fit: 'Tall spikes' },
+      { slot: 'outerwear', name: 'Faux-fur stole', color: 'White', colorHex: '#F4F2EE', material: 'Faux fur', fit: 'Big, around the shoulders and arms' },
+      ...WHITE_BASE,
+    ],
+  },
+  {
+    id: 'hw-white-vampire-bride', presentation: 'womenswear', name: 'Vampire Bride', era: HALLOWEEN, mood: 'Costume party', person: 'creator-c', source: `${WHITE}/vampirebride.png`,
+    scene: 'a living room at night bathed in deep red light, with red candles and rose petals on the floor',
+    makeup: 'a deep red lip with a small drawn blood drip at one corner and dark smoky eyes',
+    description: 'Red lace gloves, a choker and one red rose: the white dress, bitten.',
+    items: [
+      { slot: 'accessory', name: 'Lace opera gloves', color: 'Red', colorHex: '#9E1520', material: 'Lace', fit: 'Above the elbow' },
+      { slot: 'accessory', name: 'Lace choker', color: 'Red', colorHex: '#8E1420', material: 'Lace', fit: 'With a small drop pendant' },
+      { slot: 'accessory', name: 'Red rose', color: 'Red', colorHex: '#A3121A', material: 'Faux flower', fit: 'Held in one hand' },
+      ...WHITE_BASE,
     ],
   },
   {
@@ -225,7 +306,7 @@ const halloween: EditLook[] = [
     ],
   },
   {
-    id: 'hw-ghost-bride', presentation: 'womenswear', name: 'Ghost Bride', era: HALLOWEEN, mood: 'Costume party', person: 'helen',
+    id: 'hw-ghost-bride', presentation: 'womenswear', name: 'Victorian Ghost', era: HALLOWEEN, mood: 'Costume party', person: 'helen',
     scene: 'a foggy garden at night with a lantern',
     description: 'Tattered lace, a torn veil and a dried bouquet: romantic and chilling.',
     items: [
@@ -301,7 +382,7 @@ const halloween: EditLook[] = [
     ],
   },
   {
-    id: 'hw-ice-queen', presentation: 'womenswear', name: 'Ice Queen', era: HALLOWEEN, mood: 'Costume party', person: 'imani',
+    id: 'hw-ice-queen', presentation: 'womenswear', name: 'Snow Queen', era: HALLOWEEN, mood: 'Costume party', person: 'imani',
     scene: 'a dark party lit in cold blue light',
     description: 'Icy sequins, a crystal cape and a crown of icicles.',
     items: [
