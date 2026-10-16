@@ -10,6 +10,7 @@ import { signedUrlOrNull } from '../../utils/storage.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { serializeReport } from '../report/routes.js'
 import { viewerIfAdmin } from './guard.js'
+import { proBadge } from './pro-badge.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -66,6 +67,9 @@ async function summary(app: FastifyInstance, avatar: AvatarDocument, user: UserD
       failed: boards.filter((board) => board?.status === 'failed').length,
     },
     access: accessOf(user),
+    // Pro: its plan and state, even when the reports were bought (null:
+    // never subscribed).
+    pro: proBadge(user.pro ?? null),
     purchases: purchases.map((purchase) => ({ product: purchase.product, at: purchase.createdAt.toISOString() })),
     // The drape test (their face in their best and worst colors), else the
     // avatar: something to recognize the report by in the list.

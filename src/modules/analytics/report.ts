@@ -5,6 +5,7 @@ import type { AnalyticsChannel, AnalyticsEventDocument, UserLocation } from '../
 import { addDays, daysBetween, pacificDay, pacificStart } from '../../utils/pacific.js'
 import { adminUserIds } from '../billing/entitlements.js'
 import { toUsdCents } from '../billing/pricing.js'
+import { faceAgeFunnel, faceAgeTotals } from './face-age.js'
 import { parseGeo } from './geo.js'
 
 // The admin's analytics: the funnel step by step, where people come from,
@@ -455,6 +456,9 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
     }
   }
 
+  // Face Age: its funnel in these days, and where it stands overall.
+  const faceAge = { ...faceAgeFunnel(scoped, (row) => touch.get(personOf(row))), totals: await faceAgeTotals(app, admins) }
+
   const people = (entry: Tally) => ({ events: entry.events, people: entry.people.size })
 
   return {
@@ -463,6 +467,7 @@ export async function analyticsReport(app: FastifyInstance, input: { from: strin
     days: daysBetween(input.from, input.to),
     channel: input.channel,
     funnel,
+    faceAge,
     sources: [...sources.values()]
       .map((source) => ({
         channel: source.channel,

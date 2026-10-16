@@ -21,6 +21,7 @@ import { ICON_LOOKS } from '../looks/icons.js'
 import { addDays, emailActivity, pacificDay, pacificStart } from './email-activity.js'
 import { hairReport } from './hair-report.js'
 import { viewerIfAdmin } from './guard.js'
+import { liveProIds, proBadge } from './pro-badge.js'
 import { defaultRange, transactionsReport } from './transactions.js'
 
 const avatarsSchema = z.object({
@@ -30,6 +31,8 @@ const avatarsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(48).default(24),
   // Only the avatars of people who paid for something.
   buyers: z.enum(['1', '0']).optional(),
+  // Only the avatars of people with Pro running now.
+  pro: z.enum(['1', '0']).optional(),
 })
 
 // What each account bought (one-time products, Pro, the book), for the
@@ -232,12 +235,14 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: parsed.message })
     }
 
-    const { days, before, limit, buyers } = parsed.data
+    const { days, before, limit, buyers, pro } = parsed.data
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const [admins, paid] = await Promise.all([adminUserIds(app), buyerIds(app)])
+    const [admins, paid, pros] = await Promise.all([adminUserIds(app), buyerIds(app), liveProIds(app)])
     const notAdmin = { $nin: admins }
-    const inPeriod = buyers === '1' ? { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } } : { createdAt: { $gte: since }, userId: notAdmin }
-    const [found, total, stats, buyersInPeriod] = await Promise.all([
+    // Pro's subscribers are buyers too, so "only Pro" is the narrower one.
+    const only = pro === '1' ? pros : buyers === '1' ? paid : null
+    const inPeriod = only ? { createdAt: { $gte: since }, userId: { ...notAdmin, $in: only } } : { createdAt: { $gte: since }, userId: notAdmin }
+    const [found, total, stats, buyersInPeriod, prosInPeriod] = await Promise.all([
       app.collections.avatars
         .find(before ? { ...inPeriod, createdAt: { $gte: since, $lt: before } } : inPeriod, {
           projection: { selfieKey: 0, colorReport: 0, styleProfile: 0, reportBoards: 0, drape: 0, 'previousColors.report.data': 0 },
@@ -264,18 +269,30 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         ])
         .toArray(),
       app.collections.avatars.distinct('userId', { createdAt: { $gte: since }, userId: { ...notAdmin, $in: paid } }),
+      app.collections.avatars.distinct('userId', { createdAt: { $gte: since }, userId: { ...notAdmin, $in: pros } }),
     ])
     const page = found.slice(0, limit)
-    const [bought, owners, reported] = await Promise.all([
+    const [bought, owners, reported, faceReads] = await Promise.all([
       purchasesByUser(app, page.map((avatar) => avatar.userId)),
       app.collections.users
-        .find({ _id: { $in: page.map((avatar) => avatar.userId) } }, { projection: { ...BILLING_PROJECTION, location: 1, deletedAt: 1 } })
+        .find(
+          { _id: { $in: page.map((avatar) => avatar.userId) } },
+          { projection: { ...BILLING_PROJECTION, location: 1, deletedAt: 1, 'lookGreat.createdAt': 1 } },
+        )
         .toArray(),
       // The report itself stays out of the listing; only whether it's there.
       app.collections.avatars
         .find({ _id: { $in: page.map((avatar) => avatar._id) }, colorReport: { $ne: null } }, { projection: { _id: 1 } })
         .toArray(),
+      // Face Age: the photos it could read, and the latest.
+      app.collections.faceChecks
+        .aggregate<{ _id: ObjectId; reads: number; lastAt: Date }>([
+          { $match: { userId: { $in: page.map((avatar) => avatar.userId) }, status: 'ready', 'reading.usable': true } },
+          { $group: { _id: '$userId', reads: { $sum: 1 }, lastAt: { $max: '$createdAt' } } },
+        ])
+        .toArray(),
     ])
+    const faceByUser = new Map(faceReads.map((row) => [row._id.toString(), row]))
     const locationByUser = new Map(owners.map((owner) => [owner._id.toString(), owner.location ?? null]))
     const ownerByUser = new Map(owners.map((owner) => [owner._id.toString(), owner]))
     const withReport = new Set(reported.map((avatar) => avatar._id.toString()))
@@ -302,6 +319,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         const lookStats = looksByAvatar.get(avatar._id.toString())
         const purchase = bought.get(avatar.userId.toString())
         const location = locationByUser.get(avatar.userId.toString())
+        const owner = ownerByUser.get(avatar.userId.toString())
+        const face = faceByUser.get(avatar.userId.toString())
 
         return {
           id: avatar._id.toString(),
@@ -386,6 +405,10 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
           },
           // What this account paid for, if anything (US cents).
           buyer: purchase ? { total: purchase.total, products: purchase.products, lastAt: purchase.lastAt } : null,
+          // Pro: its plan and state (null: never subscribed).
+          pro: proBadge(owner?.pro ?? null),
+          // Started Face Age: how many photos it read, and when the last.
+          faceAge: owner?.lookGreat ? { reads: face?.reads ?? 0, lastAt: face?.lastAt ?? null } : null,
         }
       }),
     )
@@ -398,8 +421,10 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
       ready: stats[0]?.ready ?? 0,
       failed: stats[0]?.failed ?? 0,
       refined: stats[0]?.refined ?? 0,
-      // Accounts with an avatar in the period that paid for something.
+      // Accounts with an avatar in the period that paid for something, and
+      // those with Pro running now.
       buyers: buyersInPeriod.length,
+      pros: prosInPeriod.length,
       items,
       nextBefore: found.length > limit ? page.at(-1)?.createdAt ?? null : null,
     }
