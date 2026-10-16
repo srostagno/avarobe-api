@@ -987,10 +987,13 @@ export async function sendProWelcomes(app: FastifyInstance, now = new Date()) {
 
 // ---------------------------------------------------------------- face age launch
 
-// Oct 2026, once each, while FACE_AGE_LAUNCH is on: Face Age to people who
-// bought something and don't have Pro, in their daytime, a batch a run.
+// Oct 2026, once each, while FACE_AGE_LAUNCH is on: Face Age to everyone
+// registered without Pro (Silvio, Oct 16: all of them, not only buyers),
+// in their daytime, a batch a run.
 // Promotional: not to anyone who turned off tips, not where Face Age is
 // closed (Illinois, Washington), not to anyone already using it.
+const LAUNCH_BATCH = 2000
+
 export async function sendFaceAgeLaunch(app: FastifyInstance, now = new Date()) {
   if (!env.FACE_AGE_LAUNCH) {
     return 0
@@ -998,7 +1001,6 @@ export async function sendFaceAgeLaunch(app: FastifyInstance, now = new Date()) 
 
   const users = await app.collections.users
     .find({
-      paidAt: { $ne: null },
       'pro.status': { $nin: ['active', 'trialing'] },
       'lifecycleEmails.face_age_launch': { $exists: false },
       lookGreat: { $exists: false },
@@ -1006,7 +1008,9 @@ export async function sendFaceAgeLaunch(app: FastifyInstance, now = new Date()) 
       deletedAt: null,
       guest: { $ne: true },
     })
-    .limit(BATCH)
+    // Everyone in one pass (~700 people): those outside their daytime are
+    // skipped and come back on a later run.
+    .limit(LAUNCH_BATCH)
     .toArray()
   let sent = 0
 

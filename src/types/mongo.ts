@@ -230,7 +230,7 @@ export type LifecycleEmailKind =
   | 'purchase_in_account'
   // Pro started: where to begin, once (lifecycle/service.ts sendProWelcomes).
   | 'pro_welcome'
-  // Oct 2026, once: Face Age announced to buyers without Pro (sendFaceAgeLaunch).
+  // Oct 2026, once: Face Age announced to everyone without Pro (sendFaceAgeLaunch).
   | 'face_age_launch'
   // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
   // the old price and bought nothing.
