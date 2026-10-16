@@ -35,6 +35,8 @@ import {
   upgradeOfferEmail,
   upgradeReminderEmail,
   welcomeEmail,
+  faceAgeLaunchEmail,
+  proWelcomeEmail,
   type EmailContent,
 } from '../src/modules/lifecycle/templates.js'
 import {
@@ -120,6 +122,10 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
       url: link,
       settingsUrl: link,
     }),
+    // Pro started (lifecycle sendProWelcomes), and Face Age announced to
+    // buyers without Pro (sendFaceAgeLaunch, FACE_AGE_LAUNCH=on).
+    'pro-welcome': proWelcomeEmail({ ...recipient, hasColors: true }),
+    'face-age-launch': faceAgeLaunchEmail(recipient),
     // Tapped Buy inside Instagram on an iPhone (lifecycle/checkout-link.ts).
     'checkout-link': checkoutLinkEmail({
       ...recipient,

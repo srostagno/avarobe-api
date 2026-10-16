@@ -37,6 +37,8 @@ import {
   checkoutRescueEmail,
   colorsReadyEmail,
   costumeOfferEmail,
+  faceAgeLaunchEmail,
+  proWelcomeEmail,
   reportUnopenedEmail,
   crossSellEmail,
   looksNudgeEmail,
@@ -52,6 +54,7 @@ import {
   type WelcomeStage,
 } from './templates.js'
 import { emailLink, signInStudioLinks } from '../../utils/auth-links.js'
+import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { focusOf } from '../../utils/serializers.js'
 
 const RUN_EVERY_MS = 10 * 60 * 1000
@@ -299,6 +302,10 @@ export function lifecycleContentFor(
     case 'purchase_in_account':
       // Sent when a guest pays with this account's email, by billing/guest-checkout.ts.
       throw new Error('purchase_in_account emails are built by shareWithEmailOwner')
+    case 'pro_welcome':
+      return proWelcomeEmail({ ...recipient, hasColors: Boolean(analysis) })
+    case 'face_age_launch':
+      return faceAgeLaunchEmail(recipient)
     case 'report_unopened':
       return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
     case 'costume_offer':
@@ -930,6 +937,134 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
           ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
           : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
       ),
+    ])
+    return false
+  }
+}
+
+// ---------------------------------------------------------------- pro welcome
+
+// Pro started in the last days (Oct 16, 2026; Silvio: to everyone who
+// subscribes): where to begin, once. A subscriber who uses only her colors
+// in the first month is the one who cancels.
+const PRO_WELCOME_WITHIN_MS = 3 * 24 * 60 * 60 * 1000
+
+export async function sendProWelcomes(app: FastifyInstance, now = new Date()) {
+  const since = new Date(now.getTime() - PRO_WELCOME_WITHIN_MS)
+  const ids = await app.collections.purchases.distinct('userId', {
+    product: { $in: ['pro_monthly', 'pro_annual', 'pro_trial'] },
+    createdAt: { $gte: since },
+  })
+
+  if (ids.length === 0) {
+    return 0
+  }
+
+  const users = await app.collections.users
+    .find({
+      _id: { $in: ids },
+      'pro.status': { $in: ['active', 'trialing'] },
+      'pro.subscriptionId': { $ne: SIMULATED_SUBSCRIPTION },
+      'lifecycleEmails.pro_welcome': { $exists: false },
+      deletedAt: null,
+    })
+    .limit(BATCH)
+    .toArray()
+  let sent = 0
+
+  for (const user of users) {
+    if (isAdmin(user) || isPlaceholderEmail(user.email)) {
+      continue
+    }
+
+    if (await sendOneOff(app, user, 'pro_welcome', now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+// ---------------------------------------------------------------- face age launch
+
+// Oct 2026, once each, while FACE_AGE_LAUNCH is on: Face Age to people who
+// bought something and don't have Pro, in their daytime, a batch a run.
+// Promotional: not to anyone who turned off tips, not where Face Age is
+// closed (Illinois, Washington), not to anyone already using it.
+export async function sendFaceAgeLaunch(app: FastifyInstance, now = new Date()) {
+  if (!env.FACE_AGE_LAUNCH) {
+    return 0
+  }
+
+  const users = await app.collections.users
+    .find({
+      paidAt: { $ne: null },
+      'pro.status': { $nin: ['active', 'trialing'] },
+      'lifecycleEmails.face_age_launch': { $exists: false },
+      lookGreat: { $exists: false },
+      emailTipsOptOutAt: null,
+      deletedAt: null,
+      guest: { $ne: true },
+    })
+    .limit(BATCH)
+    .toArray()
+  let sent = 0
+
+  for (const user of users) {
+    if (isAdmin(user) || isPlaceholderEmail(user.email) || faceAgeClosed(user)) {
+      continue
+    }
+
+    const hour = localHour(user.location, now)
+
+    if (hour < CROSS_SELL_RULES.sendHours.from || hour >= CROSS_SELL_RULES.sendHours.to) {
+      continue
+    }
+
+    if (await sendOneOff(app, user, 'face_age_launch', now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+// Face Age isn't offered in Illinois or Washington (modules/look).
+function faceAgeClosed(user: UserDocument) {
+  const where = user.location
+  return where?.country === 'US' && (where.region === 'IL' || where.region === 'WA')
+}
+
+// One email of a kind, once: marked before sending (two processes never
+// send it twice), rolled back if it fails, its studio links signing in.
+async function sendOneOff(app: FastifyInstance, user: UserDocument, kind: 'pro_welcome' | 'face_age_launch', now: Date) {
+  const field = `lifecycleEmails.${kind}`
+  const claimed = await app.collections.users.updateOne({ _id: user._id, [field]: { $exists: false } }, { $set: { [field]: now } })
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const avatar = await app.collections.avatars.findOne({ userId: user._id })
+    const content = lifecycleContentFor(kind, user, avatar ?? undefined, { count: 0, lastAt: null }, sendId)
+
+    await app.collections.emailSends.insertOne({ _id: sendId, userId: user._id, kind, subject: content.subject, sentAt: now, opens: 0, clicks: 0 })
+
+    const delivered = await deliverEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+    })
+    app.log.info({ userId: user._id.toString(), kind, delivered }, 'One-off email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString(), kind }, 'One-off email failed; will retry')
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne({ _id: user._id }, { $unset: { [field]: '' } }),
     ])
     return false
   }
@@ -1875,6 +2010,12 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendCostumeOffers(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Costume offer run crashed')
+    })
+    void sendProWelcomes(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Pro welcome run crashed')
+    })
+    void sendFaceAgeLaunch(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Face Age launch run crashed')
     })
     // Refund requests: emails that didn't go out, and the founder's reminder
     // of requests waiting too long.

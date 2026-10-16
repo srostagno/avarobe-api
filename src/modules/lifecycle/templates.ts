@@ -479,6 +479,8 @@ const HERO = {
   wedding: (c: EmailCopy) => ({ src: `${ASSETS}/welcome-hero.jpg`, alt: c.hero.wedding }),
   drape: (c: EmailCopy) => ({ src: `${ASSETS}/color-report.jpg`, alt: c.hero.drape }),
   occasions: (c: EmailCopy) => ({ src: `${ASSETS}/occasions.jpg`, alt: c.hero.occasions }),
+  // A woman's photo next to the age her face reads (the Face Age ad's model).
+  faceAge: (c: EmailCopy) => ({ src: `${ASSETS}/face-age.jpg`, alt: c.hero.faceAge }),
 }
 
 // ---------------------------------------------------------------- emails
@@ -1025,6 +1027,61 @@ export function checkoutLinkEmail(
       paragraph(c.payLink.intro(input.app ?? c.payLink.anyApp, input.wallet)),
       button(c.payLink.button(input.wallet), input.url),
       small(c.payLink.expiry),
+      signature(c),
+    ],
+  })
+}
+
+// Pro started (lifecycle/service.ts sendProWelcomes): where to begin, each
+// a minute, every link signing them in. About what they pay for, so it goes
+// out even to people who turned off tips.
+export function proWelcomeEmail(input: Recipient & { hasColors: boolean }): EmailContent {
+  const { c, locale } = reader(input)
+  const link = (path: string) => appLink(path, 'pro_welcome', {}, locale)
+
+  return layout({
+    subject: c.proWelcome.subject,
+    preheader: c.proWelcome.preheader,
+    hero: HERO.occasions(c),
+    recipient: input,
+    blocks: [
+      eyebrow('Avarobe Pro'),
+      heading(c.proWelcome.heading),
+      greeting(c, input.firstName),
+      paragraph(c.proWelcome.intro),
+      choices([
+        { label: input.hasColors ? c.proWelcome.colors : c.proWelcome.findColors, url: link(input.hasColors ? '/studio/report' : '/studio/avatar?mode=colors') },
+        { label: c.proWelcome.look, url: link('/studio/new') },
+        { label: c.proWelcome.hair, url: link('/studio/hair') },
+        { label: c.proWelcome.faceAge, url: link('/studio/face-age') },
+      ]),
+      paragraph(c.proWelcome.check),
+      small(c.common.manage(appUrl(locale, '/studio/account#plan'))),
+      signature(c),
+    ],
+  })
+}
+
+// Oct 2026, once (sendFaceAgeLaunch): Face Age, to buyers without Pro, the
+// link signing them in straight into it (its offer then leads to Pro).
+export function faceAgeLaunchEmail(input: Recipient): EmailContent {
+  const { c, locale } = reader(input)
+  const url = appLink('/studio/face-age', 'face_age_launch', {}, locale)
+
+  return layout({
+    subject: c.faceAgeLaunch.subject,
+    preheader: c.faceAgeLaunch.preheader,
+    hero: HERO.faceAge(c),
+    recipient: input,
+    promotional: true,
+    blocks: [
+      eyebrow(c.faceAgeLaunch.eyebrow),
+      heading(c.faceAgeLaunch.heading),
+      greeting(c, input.firstName),
+      paragraph(c.faceAgeLaunch.intro),
+      checklist(c.faceAgeLaunch.points),
+      button(c.faceAgeLaunch.button, url),
+      small(c.faceAgeLaunch.privacy),
       signature(c),
     ],
   })

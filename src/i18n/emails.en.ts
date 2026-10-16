@@ -123,6 +123,7 @@ export const enEmails = {
     wedding: 'Before and after: the outfit Avarobe planned for her daughter’s wedding',
     drape: 'A drape test: the same face next to black, camel, fuchsia and sage',
     occasions: 'The same woman styled by Avarobe for a wedding, an anniversary dinner and brunch with friends',
+    faceAge: 'A woman’s photo next to the age her face reads',
     avatarFlow: 'A selfie becomes a full-body avatar, then a styled look',
     paletteOffer:
       'Your photo: three panels in your best colors, blurred until you open your Color Advisor, and one in the color that drains you',
@@ -378,6 +379,34 @@ export const enEmails = {
 
   // Bought the Color Advisor, never opened the report (it's written the
   // first time they open it).
+  proWelcome: {
+    subject: 'Welcome to Avarobe Pro',
+    preheader: 'All three advisors, your looks and Face Age are open. Here’s where to start.',
+    heading: 'You’re in. Here’s where to start.',
+    intro: 'All three advisors, your monthly looks and Face Age are open now. Four things to do this week, about a minute each:',
+    colors: '🎨 Open your colors and your #1',
+    findColors: '🎨 Find your colors from one selfie',
+    look: '👗 Style a look for your next plan',
+    hair: '✂️ Try a haircut on your own face',
+    faceAge: '✨ A Face Age photo by a window',
+    check: 'Shopping? “Will it suit me?” checks any piece against your colors before you buy it.',
+  },
+
+  faceAgeLaunch: {
+    subject: 'New: how old does your face look?',
+    preheader: 'Face Age reads the age your face shows in a photo, and what’s adding years.',
+    eyebrow: 'New in Avarobe',
+    heading: 'How old does your face look?',
+    intro: 'We just added Face Age. Take a selfie and see the age your face reads in the photo, what’s adding years (the light, the colors near your face, your expression) and what to change.',
+    points: [
+      'The age your face reads, next to your real age if you add it',
+      'What’s adding years in each photo, and what to change',
+      'Old photos too: your face over time, in charts',
+    ],
+    button: 'See my face age',
+    privacy: 'It takes a minute. Only you see your photos, and you can delete them anytime.',
+  },
+
   purchaseInAccount: {
     subject: (name: string) => `Your ${name} is in your account`,
     preheader: 'You paid with this email, so it’s in your Avarobe account. No need to pay again.',

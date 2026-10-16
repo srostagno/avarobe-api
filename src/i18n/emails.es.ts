@@ -107,6 +107,7 @@ export const esEmails: EmailCopy = {
     wedding: 'Antes y después: el outfit que Avarobe planeó para la boda de su hija',
     drape: 'Una prueba de telas: la misma cara junto al negro, el camel, el fucsia y el verde salvia',
     occasions: 'La misma mujer vestida por Avarobe para una boda, una cena de aniversario y un brunch con amigos',
+    faceAge: 'La foto de una mujer junto a la edad que refleja su rostro',
     avatarFlow: 'Una selfie se convierte en un avatar de cuerpo completo y luego en un look armado',
     paletteOffer:
       'Tu foto: tres paneles en tus mejores colores, difuminados hasta que abras tu Asesor de Color, y uno en el color que te apaga',
@@ -339,6 +340,34 @@ export const esEmails: EmailCopy = {
     anyApp: 'Instagram o Facebook',
     button: (wallet: string) => `Pagar con ${wallet}`,
     expiry: '¿Ya pagaste en la app? Entonces está todo listo. El enlace inicia tu sesión, funciona una sola vez y caduca en 3 días.',
+  },
+
+  proWelcome: {
+    subject: 'Bienvenida a Avarobe Pro',
+    preheader: 'Los tres asesores, tus looks y la Edad del rostro ya están abiertos. Por aquí puedes empezar.',
+    heading: 'Ya eres Pro. Por aquí puedes empezar.',
+    intro: 'Los tres asesores, tus looks del mes y la Edad del rostro ya están abiertos. Cuatro cosas para hacer esta semana, de un minuto cada una:',
+    colors: '🎨 Abre tus colores y tu color #1',
+    findColors: '🎨 Descubre tus colores con una selfie',
+    look: '👗 Arma un look para tu próximo plan',
+    hair: '✂️ Pruébate un corte en tu propio rostro',
+    faceAge: '✨ Una foto de Edad del rostro frente a una ventana',
+    check: '¿De compras? “¿Me quedará bien?” revisa cualquier prenda contra tus colores antes de comprarla.',
+  },
+
+  faceAgeLaunch: {
+    subject: 'Nuevo: ¿qué edad refleja tu rostro?',
+    preheader: 'La Edad del rostro lee qué edad refleja tu rostro en una foto, y qué te está sumando años.',
+    eyebrow: 'Nuevo en Avarobe',
+    heading: '¿Qué edad refleja tu rostro?',
+    intro: 'Acabamos de sumar la Edad del rostro. Tómate una selfie y mira qué edad refleja tu rostro en la foto, qué te está sumando años (la luz, los colores cerca de tu rostro, tu expresión) y qué cambiar.',
+    points: [
+      'La edad que refleja tu rostro, junto a tu edad real si la agregas',
+      'Qué te suma años en cada foto, y qué cambiar',
+      'También fotos antiguas: tu rostro en el tiempo, en gráficos',
+    ],
+    button: 'Ver la edad de mi rostro',
+    privacy: 'Toma un minuto. Solo tú ves tus fotos, y puedes borrarlas cuando quieras.',
   },
 
   purchaseInAccount: {

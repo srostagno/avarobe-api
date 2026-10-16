@@ -106,6 +106,7 @@ export const ptBrEmails: EmailCopy = {
     wedding: 'Antes e depois: o look que o Avarobe montou para o casamento da filha dela',
     drape: 'Um teste de tecidos: o mesmo rosto ao lado de preto, camelo, fúcsia e sálvia',
     occasions: 'A mesma mulher vestida pelo Avarobe para um casamento, um jantar de aniversário de casamento e um brunch com amigos',
+    faceAge: 'A foto de uma mulher ao lado da idade que o rosto dela aparenta',
     avatarFlow: 'Uma selfie vira um avatar de corpo inteiro e, depois, um look completo',
     paletteOffer:
       'Sua foto: três painéis nas suas melhores cores, desfocados até você abrir seu Consultor de Cores, e um na cor que apaga você',
@@ -340,6 +341,34 @@ export const ptBrEmails: EmailCopy = {
     anyApp: 'Instagram ou do Facebook',
     button: (wallet: string) => `Pagar com ${wallet}`,
     expiry: 'Já pagou no app? Então está tudo certo. O link conecta sua conta, funciona uma vez e expira em 3 dias.',
+  },
+
+  proWelcome: {
+    subject: 'Boas-vindas ao Avarobe Pro',
+    preheader: 'Os três consultores, seus looks e a Idade do rosto já estão liberados. Comece por aqui.',
+    heading: 'Você já é Pro. Comece por aqui.',
+    intro: 'Os três consultores, seus looks do mês e a Idade do rosto já estão liberados. Quatro coisas para fazer esta semana, cerca de um minuto cada:',
+    colors: '🎨 Abra suas cores e a sua cor nº 1',
+    findColors: '🎨 Descubra suas cores com uma selfie',
+    look: '👗 Monte um look para o seu próximo programa',
+    hair: '✂️ Prove um corte no seu próprio rosto',
+    faceAge: '✨ Uma foto da Idade do rosto de frente para uma janela',
+    check: 'Indo às compras? “Vai ficar bem em mim?” confere qualquer peça com suas cores antes de você comprar.',
+  },
+
+  faceAgeLaunch: {
+    subject: 'Novo: que idade seu rosto aparenta?',
+    preheader: 'A Idade do rosto lê que idade seu rosto aparenta numa foto, e o que está somando anos.',
+    eyebrow: 'Novo no Avarobe',
+    heading: 'Que idade seu rosto aparenta?',
+    intro: 'Acabamos de lançar a Idade do rosto. Tire uma selfie e veja que idade seu rosto aparenta na foto, o que está somando anos (a luz, as cores perto do rosto, a expressão) e o que mudar.',
+    points: [
+      'A idade que seu rosto aparenta, ao lado da sua idade real se você adicionar',
+      'O que soma anos em cada foto, e o que mudar',
+      'Fotos antigas também: seu rosto ao longo do tempo, em gráficos',
+    ],
+    button: 'Ver a idade do meu rosto',
+    privacy: 'Leva um minuto. Só você vê suas fotos, e pode apagá-las quando quiser.',
   },
 
   purchaseInAccount: {

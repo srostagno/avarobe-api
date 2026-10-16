@@ -205,6 +205,9 @@ const envSchema = z.object({
   LOOK_FREE_PHOTOS: z.coerce.number().int().min(0).default(3),
   LOOK_DAILY_PHOTOS: z.coerce.number().int().min(1).default(20),
   LOOK_AGE_OFFSET: z.coerce.number().min(-10).max(10).default(-2),
+  // The one-time email announcing Face Age to buyers without Pro: 'on' sends
+  // it in their daytime, a batch every run, until everyone has it.
+  FACE_AGE_LAUNCH: z.enum(['on', 'off']).optional(),
   // Rough dollars per real and per peso, only for the admin's revenue totals
   // (billing/pricing.ts); Stripe does the real conversion.
   FX_USD_PER_BRL: z.coerce.number().positive().default(0.18),
@@ -290,6 +293,7 @@ export const env = {
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
+  FACE_AGE_LAUNCH: (raw.FACE_AGE_LAUNCH ?? 'off') === 'on',
   PRO_AVATAR_GRANDFATHER: (raw.PRO_AVATAR_GRANDFATHER ?? 'on') === 'on',
   PRO_ROLLOVER_GRANDFATHER: (raw.PRO_ROLLOVER_GRANDFATHER ?? 'on') === 'on',
   PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE: (raw.PRO_CREDIT_EMAIL_SKIP_ADVISORS_BUNDLE ?? 'on') === 'on',

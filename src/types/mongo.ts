@@ -228,6 +228,10 @@ export type LifecycleEmailKind =
   // A guest paid with an email that already has an account: what they
   // bought is in that account too, with a link that signs them in on it.
   | 'purchase_in_account'
+  // Pro started: where to begin, once (lifecycle/service.ts sendProWelcomes).
+  | 'pro_welcome'
+  // Oct 2026, once: Face Age announced to buyers without Pro (sendFaceAgeLaunch).
+  | 'face_age_launch'
   // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
   // the old price and bought nothing.
   | 'price_drop'
