@@ -296,6 +296,9 @@ export function lifecycleContentFor(
     case 'checkout_link':
       // Sent the moment they tap Buy, by lifecycle/checkout-link.ts.
       throw new Error('checkout_link emails are built by sendCheckoutLink')
+    case 'purchase_in_account':
+      // Sent when a guest pays with this account's email, by billing/guest-checkout.ts.
+      throw new Error('purchase_in_account emails are built by shareWithEmailOwner')
     case 'report_unopened':
       return reportUnopenedEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio/report') })
     case 'costume_offer':

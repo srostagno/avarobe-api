@@ -1030,6 +1030,30 @@ export function checkoutLinkEmail(
   })
 }
 
+// A guest paid with an email that already had an account: what they bought
+// is in that account too, with a link that signs them in on it
+// (billing/guest-checkout.ts). About what they paid for, so it goes out
+// even to people who turned off tips.
+export function purchaseInAccountEmail(input: Recipient & { name: string; url: string }): EmailContent {
+  const { c } = reader(input)
+
+  return layout({
+    subject: c.purchaseInAccount.subject(input.name),
+    preheader: c.purchaseInAccount.preheader,
+    hero: HERO.drape(c),
+    recipient: input,
+    blocks: [
+      eyebrow(input.name),
+      heading(c.purchaseInAccount.heading(input.name)),
+      greeting(c, input.firstName),
+      paragraph(c.purchaseInAccount.intro(input.name)),
+      button(c.purchaseInAccount.button, input.url),
+      small(c.purchaseInAccount.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // Bought the Color Advisor and never opened the report: a link that signs
 // them in on it. About what they paid for, so it goes out even to people who
 // turned off tips.

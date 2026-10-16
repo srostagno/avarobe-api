@@ -341,6 +341,16 @@ export const esEmails: EmailCopy = {
     expiry: '¿Ya pagaste en la app? Entonces está todo listo. El enlace inicia tu sesión, funciona una sola vez y caduca en 3 días.',
   },
 
+  purchaseInAccount: {
+    subject: (name: string) => `Tu ${name} está en tu cuenta`,
+    preheader: 'Pagaste con este email, así que está en tu cuenta de Avarobe. No necesitas pagar de nuevo.',
+    heading: (name: string) => `Tu ${name} está en tu cuenta.`,
+    intro: (name: string) =>
+      `Compraste tu ${name} sin haber iniciado sesión, con este email. Es el de tu cuenta de Avarobe, así que también lo agregamos ahí: ábrelo desde cualquier dispositivo, y no necesitas pagar de nuevo.`,
+    button: 'Abrirlo en mi cuenta',
+    expiry: 'El link inicia tu sesión por 14 días.',
+  },
+
   reportUnopened: {
     subject: 'Tu reporte de color está listo para abrir',
     preheader: 'Tus mejores colores, tu nº 1 y tu paleta completa, en tu propia cara.',

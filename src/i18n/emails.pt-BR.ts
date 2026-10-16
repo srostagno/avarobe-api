@@ -342,6 +342,16 @@ export const ptBrEmails: EmailCopy = {
     expiry: 'Já pagou no app? Então está tudo certo. O link conecta sua conta, funciona uma vez e expira em 3 dias.',
   },
 
+  purchaseInAccount: {
+    subject: (name: string) => `Seu ${name} está na sua conta`,
+    preheader: 'Você pagou com este email, então ele está na sua conta Avarobe. Não precisa pagar de novo.',
+    heading: (name: string) => `Seu ${name} está na sua conta.`,
+    intro: (name: string) =>
+      `Você comprou seu ${name} sem estar conectada, com este email. Ele é o da sua conta Avarobe, então também o adicionamos lá: abra de qualquer aparelho, sem precisar pagar de novo.`,
+    button: 'Abrir na minha conta',
+    expiry: 'O link mantém você conectada por 14 dias.',
+  },
+
   reportUnopened: {
     subject: 'Seu relatório de cores está pronto para abrir',
     preheader: 'Suas melhores cores, a sua nº 1 e sua cartela completa, no seu próprio rosto.',

@@ -28,6 +28,11 @@ export type UserDocument = {
   checkoutLinkNonceHash?: string | null
   checkoutLinkSentAt?: Date | null
   checkoutLinkEmails?: Partial<Record<PurchaseProduct, Date>>
+  // Purchases a guest made with this account's email at checkout, unlocked
+  // here too (billing/guest-checkout.ts), one entry per checkout.
+  sharedPurchases?: { sessionId: string; product: PurchaseProduct; fromUserId: ObjectId; at: Date }[]
+  // On that guest: the account its checkout's email belonged to.
+  purchaseSharedWith?: ObjectId | null
   // The link to their colors after a read the AI did late (lifecycle
   // sendColorsReady): its own, so the offers' sign-in links don't void it.
   colorsLinkNonceHash?: string | null
@@ -220,6 +225,9 @@ export type LifecycleEmailKind =
   // Tapped Buy inside Instagram's or Facebook's browser: at once, a link
   // that pays in the phone's own browser, with Apple Pay or Google Pay.
   | 'checkout_link'
+  // A guest paid with an email that already has an account: what they
+  // bought is in that account too, with a link that signs them in on it.
+  | 'purchase_in_account'
   // Once, after the 2-Oct-2026 price cut: to people who opened an offer at
   // the old price and bought nothing.
   | 'price_drop'

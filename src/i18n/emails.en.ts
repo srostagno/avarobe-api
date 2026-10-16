@@ -378,6 +378,16 @@ export const enEmails = {
 
   // Bought the Color Advisor, never opened the report (it's written the
   // first time they open it).
+  purchaseInAccount: {
+    subject: (name: string) => `Your ${name} is in your account`,
+    preheader: 'You paid with this email, so it’s in your Avarobe account. No need to pay again.',
+    heading: (name: string) => `Your ${name} is in your account.`,
+    intro: (name: string) =>
+      `You bought your ${name} without being signed in, with this email. It belongs to your Avarobe account, so we added it there too: open it from any device, and there’s no need to pay again.`,
+    button: 'Open it in my account',
+    expiry: 'The link signs you in for 14 days.',
+  },
+
   reportUnopened: {
     subject: 'Your color report is ready to open',
     preheader: 'Your best colors, your #1 and your full palette, on your own face.',

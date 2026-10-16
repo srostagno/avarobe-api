@@ -15,7 +15,7 @@ import { sendCheckoutLink } from '../lifecycle/checkout-link.js'
 import { deleteUserContent } from '../me/content.js'
 import { halfPrice, offerOpen } from '../feedback/rules.js'
 import { attributionMetadata, storedMetaClick } from './conversions.js'
-import { claimGuestFromSession } from './guest-checkout.js'
+import { claimGuestFromSession, shareWithEmailOwner } from './guest-checkout.js'
 import { DAILY_CHECKS } from '../../constants/checks.js'
 import {
   EVENT_LOOKS,
@@ -469,8 +469,13 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ message: 'The payment is still processing. Refresh in a moment.' })
       }
 
-      await claimGuestFromSession(app, session)
+      const claim = await claimGuestFromSession(app, session)
       await grantSession(app, session)
+
+      // Paid as a guest with an email that has an account: it's there too.
+      if (claim?.status === 'taken') {
+        await shareWithEmailOwner(app, session, claim.ownerId)
+      }
 
       const user = await app.collections.users.findOne({ _id: userId })
 
@@ -487,6 +492,9 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           // otherwise. The page's browser events use it, so the two merge.
           eventId: (typeof session.invoice === 'string' ? session.invoice : session.invoice?.id) ?? session.id,
         },
+        // Paid as a guest with an email that has an account: the address
+        // the sign-in link went to, so the page can say where it is.
+        inAccount: claim?.status === 'taken' ? { email: session.customer_details?.email ?? null } : null,
       }
     },
   )
@@ -962,8 +970,14 @@ export const billingWebhookRoutes: FastifyPluginAsync = async (app) => {
       switch (event.type) {
         case 'checkout.session.completed':
         case 'checkout.session.async_payment_succeeded':
-          await claimGuestFromSession(app, event.data.object)
-          await grantSession(app, event.data.object)
+          {
+            const claim = await claimGuestFromSession(app, event.data.object)
+            await grantSession(app, event.data.object)
+
+            if (claim?.status === 'taken') {
+              await shareWithEmailOwner(app, event.data.object, claim.ownerId)
+            }
+          }
           break
         case 'invoice.paid':
           await handleInvoicePaid(app, event.data.object)
