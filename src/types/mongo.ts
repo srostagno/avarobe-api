@@ -133,11 +133,13 @@ export type LookGreatProfile = {
   // 'YYYY-MM-DD', 18 or older; optional (Oct 15): without it there's no
   // comparison with her real age.
   birthDate: string | null
-  // The written release (BIPA-style) she signed before her first photo:
-  // when, which text, and the full name she typed as her signature.
+  // Her consent before her first photo: when and which text. Until Oct 16,
+  // 2026 a written release she signed with her typed full name; since
+  // then her tap on "Agree and continue", with the text beside it (no
+  // name: null). Face Age stays closed in Illinois and Washington.
   consentAt: Date
   consentVersion: string
-  consentName: string
+  consentName: string | null
   reminder: LookReminder
   reminderLastAt?: Date | null
   lock: boolean

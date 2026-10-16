@@ -47,7 +47,9 @@ const birthDate = z.string().refine((value) => {
 const profileSchema = z.object({
   birthDate: birthDate.nullish(),
   consent: z.literal(true),
-  consentName: z.string().trim().min(3).max(100),
+  // Older pages send the name she typed to sign; since Oct 16 her tap is
+  // the consent.
+  consentName: z.string().trim().min(3).max(100).nullish(),
   reminder: z.enum(REMINDERS).default('few'),
 })
 
@@ -91,7 +93,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     return lookState(app, request, user)
   })
 
-  // Starting: her birth date and the release she signs (her typed name).
+  // Starting: her birth date (optional) and her consent.
   app.post('/profile', async (request, reply) => {
     const userId = requireUserId(request)
     const user = await app.collections.users.findOne({ _id: userId })
@@ -114,7 +116,7 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
       birthDate: parsed.data.birthDate ?? null,
       consentAt: now,
       consentVersion: LOOK_CONSENT_VERSION,
-      consentName: parsed.data.consentName,
+      consentName: parsed.data.consentName ?? null,
       reminder: parsed.data.reminder,
       reminderLastAt: user.lookGreat?.reminderLastAt ?? null,
       lock: user.lookGreat?.lock ?? false,

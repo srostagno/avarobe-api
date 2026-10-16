@@ -187,7 +187,7 @@ describe('Look Great routes', () => {
     return { ...built, headers, send }
   }
 
-  it('starts only with her signed release, at 18 or older, and not from Illinois', async () => {
+  it('starts only with her consent, at 18 or older, and not from Illinois', async () => {
     const rosa = person()
     const { app, headers } = await setup(rosa)
     const start = (payload: Record<string, unknown>, extra: Record<string, string> = {}) =>
@@ -200,6 +200,18 @@ describe('Look Great routes', () => {
     const ok = await start({ birthDate: '1970-05-20', consent: true, consentName: 'Rosa Diaz', reminder: 'daily' })
     assert.equal(ok.statusCode, 200)
     assert.equal(ok.json<{ profile: { reminder: string } }>().profile.reminder, 'daily')
+
+    // Since Oct 16 her tap on "Agree and continue" is the consent: no typed
+    // name. The page learns it from the state it loads before she starts.
+    const fresh = person({ email: 'fresh@avarobe.test' })
+    const other = await setup(fresh)
+    const before = await other.app.inject({ method: 'GET', url: '/look', headers: other.headers })
+    assert.equal(before.json<{ consentByTap?: boolean }>().consentByTap, true)
+    const tapped = await start({ consent: true })
+    assert.equal(tapped.statusCode, 200)
+    const saved = await app.collections.users.findOne({ _id: rosa._id })
+    assert.equal(saved?.lookGreat?.consentName, null)
+    assert.equal(saved?.lookGreat?.consentVersion, 'face-age-2026-10-16')
   })
 
   it('reads a photo, calibrated against her age, with her tips', async () => {

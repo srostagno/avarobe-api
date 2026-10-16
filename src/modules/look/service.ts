@@ -22,7 +22,10 @@ import { FACE_SCHEMA, type FaceReadingRaw, buildFaceInstructions, toFaceReading 
 // lookGreat.consent): a new version when that text changes.
 // face-age-2026-10-15: renamed Face Age, birth date optional, "I'm 18 or
 // older" in the box she ticks.
-export const LOOK_CONSENT_VERSION = 'face-age-2026-10-15'
+// face-age-2026-10-16: the button is the consent ("Agree and continue"),
+// its line beside it (18 or older, what we do with her photos); no typed
+// name or box to tick (Silvio, Oct 16: 7 of 29 got past the old form).
+export const LOOK_CONSENT_VERSION = 'face-age-2026-10-16'
 
 // Face Age is off where a face photo is a "biometric identifier" people
 // can sue over: Illinois (BIPA; the try-on suits against beauty brands) and
@@ -225,7 +228,16 @@ export async function lookState(app: FastifyInstance, request: FastifyRequest, u
   const billing = billingState(user)
 
   if (!profile) {
-    return { available, profile: null, checks: [], summary: null, allowance: allowanceOf(billing.proActive, user.lookPhotosAdded ?? 0) }
+    // consentByTap: this API takes her tap as consent (no typed name), so
+    // the page shows the button alone; before it, the page kept the name.
+    return {
+      available,
+      profile: null,
+      checks: [],
+      summary: null,
+      allowance: allowanceOf(billing.proActive, user.lookPhotosAdded ?? 0),
+      consentByTap: true,
+    }
   }
 
   const checks = await app.collections.faceChecks.find({ userId: user._id }).sort({ takenAt: -1, createdAt: -1 }).limit(TIMELINE_LIMIT).toArray()
