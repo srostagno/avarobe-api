@@ -789,7 +789,84 @@ const fall: EditLook[] = [
 
 // The Fall Wedding Guest Edit (Oct 13): every dress code and venue of an
 // American fall wedding. Never white or ivory on a guest.
+// The fall-weddings reel (Oct 16, design/social/2026-10-fall-weddings):
+// Greta's one emerald slip dress, styled for six venues with a few pieces
+// each. They lead the Edit, as the reel sends people here to try them on.
+const FALL_WEDDINGS_REEL = 'social/2026-10-fall-weddings/gen'
+const EMERALD_SLIP: EditLook['items'][number] = {
+  slot: 'dress', name: 'Satin slip dress', color: 'Emerald', colorHex: '#0F5A3C', material: 'Satin', fit: 'Midi, cowl neck, thin straps, bias cut',
+}
+
 const weddings: EditLook[] = [
+  {
+    id: 'wed-emerald-barn', presentation: 'womenswear', name: 'Emerald Slip · Barn', era: WEDDINGS, mood: 'Barn wedding', person: 'greta', source: `${FALL_WEDDINGS_REEL}/barn.png`,
+    scene: 'a barn wedding reception under warm string lights at dusk',
+    description: 'One emerald slip dress, a cropped suede jacket and western boots: dressed up, ready for hay bales.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'outerwear', name: 'Cropped suede jacket', color: 'Tan', colorHex: '#9A6A3E', material: 'Suede', fit: 'Cropped, worn open' },
+      { slot: 'shoes', name: 'Western ankle boots', color: 'Cognac', colorHex: '#8A4F2A', material: 'Leather', fit: 'Pointed toe, stacked heel' },
+      { slot: 'accessory', name: 'Turquoise drop earrings', color: 'Turquoise', colorHex: '#3FB6B2', material: 'Stone and silver', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-emerald-vineyard', presentation: 'womenswear', name: 'Emerald Slip · Vineyard', era: WEDDINGS, mood: 'Vineyard wedding', person: 'greta', source: `${FALL_WEDDINGS_REEL}/vineyard.png`,
+    scene: 'a vineyard wedding at golden hour between the vines',
+    description: 'The emerald slip with a camel pashmina for the sunset and block heels for the grass.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'outerwear', name: 'Cashmere pashmina', color: 'Camel', colorHex: '#C19A6B', material: 'Cashmere', fit: 'Draped over the shoulders' },
+      { slot: 'shoes', name: 'Block-heel sandals', color: 'Tan', colorHex: '#B08458', material: 'Suede', fit: 'Ankle strap, mid heel' },
+      { slot: 'bag', name: 'Woven clutch', color: 'Natural straw', colorHex: '#CDB27E', material: 'Straw', fit: 'Small' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Medium' },
+    ],
+  },
+  {
+    id: 'wed-emerald-city-hall', presentation: 'womenswear', name: 'Emerald Slip · City Hall', era: WEDDINGS, mood: 'City hall wedding', person: 'greta', source: `${FALL_WEDDINGS_REEL}/cityhall.png`,
+    scene: 'the steps of a city hall on a bright fall morning',
+    description: 'A black blazer over the shoulders, pumps and pearls: the emerald slip goes polished for a daytime ceremony.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'outerwear', name: 'Tailored blazer', color: 'Black', colorHex: '#151515', material: 'Wool crepe', fit: 'Worn over the shoulders' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Black', colorHex: '#121212', material: 'Leather', fit: 'High heel' },
+      { slot: 'bag', name: 'Top-handle bag', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Small' },
+      { slot: 'accessory', name: 'Pearl drop earrings', color: 'Pearl', colorHex: '#E9E1D3', material: 'Pearl and gold', fit: 'Small' },
+    ],
+  },
+  {
+    id: 'wed-emerald-mountain', presentation: 'womenswear', name: 'Emerald Slip · Mountain', era: WEDDINGS, mood: 'Mountain wedding', person: 'greta', source: `${FALL_WEDDINGS_REEL}/mountain.png`,
+    scene: 'a mountain lodge wedding by a stone fireplace at dusk',
+    description: 'A cream faux-fur stole and knee-high suede boots keep the emerald slip warm for a lodge in the mountains.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'outerwear', name: 'Faux-fur stole', color: 'Cream', colorHex: '#EDE3D1', material: 'Faux fur', fit: 'Around the shoulders' },
+      { slot: 'shoes', name: 'Knee-high boots', color: 'Brown', colorHex: '#5A3A24', material: 'Suede', fit: 'Block heel' },
+      { slot: 'accessory', name: 'Cuff bracelet', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Chunky' },
+    ],
+  },
+  {
+    id: 'wed-emerald-cocktail', presentation: 'womenswear', name: 'Emerald Slip · Cocktail', era: WEDDINGS, mood: 'Cocktail attire', person: 'greta', source: `${FALL_WEDDINGS_REEL}/cocktail.png`,
+    scene: 'an evening cocktail-hour wedding reception lit by candles',
+    description: 'A cropped gold sequin jacket and gold heels turn the emerald slip into evening cocktail attire.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'outerwear', name: 'Sequin jacket', color: 'Gold', colorHex: '#C8A24A', material: 'Sequins', fit: 'Cropped, worn open' },
+      { slot: 'shoes', name: 'Strappy sandals', color: 'Gold', colorHex: '#C9A24A', material: 'Metallic leather', fit: 'High heel' },
+      { slot: 'accessory', name: 'Statement earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Bold' },
+    ],
+  },
+  {
+    id: 'wed-emerald-black-tie', presentation: 'womenswear', name: 'Emerald Slip · Black Tie Optional', era: WEDDINGS, mood: 'Black tie optional', person: 'greta', source: `${FALL_WEDDINGS_REEL}/blacktie.png`,
+    scene: 'a ballroom wedding reception under crystal chandeliers',
+    description: 'Black satin opera gloves, crystal earrings and a low chignon: the emerald slip at its most formal.',
+    items: [
+      EMERALD_SLIP,
+      { slot: 'accessory', name: 'Opera gloves', color: 'Black', colorHex: '#111111', material: 'Satin', fit: 'Above the elbow' },
+      { slot: 'accessory', name: 'Crystal drop earrings', color: 'Crystal', colorHex: '#E6ECF2', material: 'Crystal', fit: 'Long' },
+      { slot: 'shoes', name: 'Pointed pumps', color: 'Black', colorHex: '#121212', material: 'Satin', fit: 'High heel' },
+      { slot: 'bag', name: 'Crystal clutch', color: 'Silver', colorHex: '#C9CED3', material: 'Crystals', fit: 'Small' },
+    ],
+  },
   {
     id: 'wed-velvet-column', presentation: 'womenswear', name: 'Velvet Column Gown', era: WEDDINGS, mood: 'Black tie', person: 'imani',
     scene: 'a grand hotel ballroom wedding reception with crystal chandeliers and candlelit round tables',

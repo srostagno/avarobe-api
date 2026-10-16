@@ -48,7 +48,7 @@ describe('Edits', () => {
     const { edits, next } = editsFor('womenswear', new Date('2026-10-13T12:00:00Z'))
     assert.equal(edits[0]!.id, 'fall-weddings-2026')
     assert.equal(edits[0]!.isNew, true)
-    assert.equal(edits[0]!.looks.length, 20)
+    assert.equal(edits[0]!.looks.length, 26)
     assert.equal(edits.find((edit) => edit.id === 'halloween-2026')!.isNew, false)
     assert.equal(next?.at, '2026-10-20')
 
