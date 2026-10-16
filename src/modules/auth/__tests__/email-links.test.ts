@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb'
 import { routeApp } from '../../../__tests__/color-reads.js'
 import { env } from '../../../config/env.js'
 import type { UserDocument } from '../../../types/mongo.js'
-import { createLink, emailLink, signInStudioLinks } from '../../../utils/auth-links.js'
+import { createLink, durationMs, emailLink, studioPathOf } from '../../../utils/auth-links.js'
 import authRoutes from '../routes.js'
 
 // The sign-in links in our emails (Oct 14, 2026): an email opened in Gmail's
@@ -103,43 +103,22 @@ describe('email links', () => {
   })
 })
 
-describe('signInStudioLinks', () => {
-  it('makes every studio link in an email a sign-in link to the same page, one per address', async () => {
-    const ana = person({ locale: 'pt-BR' })
-    const { app, nextOf } = await setup(ana)
-    const offer = `${env.APP_URL}/pt-br/studio?buy=color_report&from=email_x`
-    const html = [
-      `<a href="${offer.replace(/&/g, '&amp;')}">Comprar</a>`,
-      `<a href="${offer.replace(/&/g, '&amp;')}">De novo</a>`,
-      `<a href="${env.APP_URL}/pt-br/studio/account">Preferências</a>`,
-      `<a href="${env.APP_URL}/pt-br/color-analysis">Guia</a>`,
-      `<a href="${env.APP_URL}/pt-br/continue?token=abc">Já assinado</a>`,
-    ].join('\n')
-    const text = `Comprar: ${offer}\nGuia: ${env.APP_URL}/pt-br/color-analysis`
-
-    const out = await signInStudioLinks(app, ana, { subject: 'Oi', html, text })
-    const hrefs = [...out.html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replace(/&amp;/g, '&'))
-
-    assert.equal(hrefs[0], hrefs[1])
-    assert.ok(hrefs[0]!.startsWith(`${env.APP_URL}/pt-br/continue?token=`))
-    assert.ok(hrefs[2]!.startsWith(`${env.APP_URL}/pt-br/continue?token=`))
-    assert.equal(hrefs[3], `${env.APP_URL}/pt-br/color-analysis`)
-    assert.equal(hrefs[4], `${env.APP_URL}/pt-br/continue?token=abc`)
-    assert.equal(out.subject, 'Oi')
-
-    const textLink = out.text.match(/Comprar: (\S+)/)![1]!
-    assert.equal(textLink, hrefs[0])
-    assert.ok(out.text.includes(`${env.APP_URL}/pt-br/color-analysis`))
-    assert.equal(await nextOf(tokenOf(hrefs[0]!)), '/studio?buy=color_report&from=email_x')
-    assert.equal(await nextOf(tokenOf(hrefs[2]!)), '/studio/account')
+describe('studioPathOf', () => {
+  it('reads the studio page a link opens, without its language, and nothing else', () => {
+    assert.equal(studioPathOf(`${env.APP_URL}/pt-br/studio?buy=color_report&from=email_x`), '/studio?buy=color_report&from=email_x')
+    assert.equal(studioPathOf(`${env.APP_URL}/es/studio/account#plan`), '/studio/account#plan')
+    assert.equal(studioPathOf(`${env.APP_URL}/studio`), '/studio')
+    assert.equal(studioPathOf(`${env.APP_URL}/pt-br/color-analysis`), null)
+    assert.equal(studioPathOf(`${env.APP_URL}/studiox`), null)
+    assert.equal(studioPathOf('https://evil.example/studio'), null)
+    assert.equal(studioPathOf('not a link'), null)
   })
 
-  it('leaves an admin’s email as it is', async () => {
-    const owner = person({ email: 'owner@avarobe.test' })
-    const { app } = await setup(owner)
-    const content = { subject: 's', html: `<a href="${env.APP_URL}/studio">x</a>`, text: `${env.APP_URL}/studio` }
-
-    assert.deepEqual(await signInStudioLinks(app, owner, content), content)
+  it('reads lifetimes as the env writes them', () => {
+    assert.equal(durationMs('14d'), 14 * 24 * 60 * 60 * 1000)
+    assert.equal(durationMs('12h'), 12 * 60 * 60 * 1000)
+    assert.equal(durationMs('90'), 90 * 1000)
+    assert.equal(durationMs('soon'), null)
   })
 })
 

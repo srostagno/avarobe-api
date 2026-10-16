@@ -6,7 +6,7 @@ import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { emailLink } from '../../utils/auth-links.js'
 import { deliverLinkEmail } from '../../utils/email.js'
 import { isGuestEmail } from '../../utils/guests.js'
-import { isLocale } from '../../utils/locale.js'
+import { appUrl, isLocale } from '../../utils/locale.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { claimGuest } from '../auth/guests.js'
 import { shortProductName } from '../lifecycle/checkout-link.js'
@@ -143,7 +143,8 @@ export async function shareWithEmailOwner(app: FastifyInstance, session: Stripe.
 async function sendPurchaseInAccount(app: FastifyInstance, owner: UserDocument, product: PurchaseProduct, now: Date) {
   const locale = owner.locale ?? 'en'
   const sendId = new ObjectId()
-  const url = await emailLink(app, owner, ownerPage(product))
+  // The page; the click signs them in (lifecycle clickDestination).
+  const url = appUrl(locale, ownerPage(product))
   const content = purchaseInAccountEmail({
     firstName: owner.firstName,
     email: owner.email,
@@ -161,9 +162,17 @@ async function sendPurchaseInAccount(app: FastifyInstance, owner: UserDocument, 
     sentAt: now,
     opens: 0,
     clicks: 0,
+    // No ad ids, as its sign-in link had none.
+    ads: null,
   })
 
-  await deliverLinkEmail({ log: app.log, to: { email: owner.email, name: owner.firstName }, link: url, content: trackContent(content, sendId) })
+  await deliverLinkEmail({
+    log: app.log,
+    to: { email: owner.email, name: owner.firstName },
+    // Only for development, where nothing is sent: a link that signs in.
+    link: await emailLink(app, owner, ownerPage(product)),
+    content: trackContent(content, sendId),
+  })
 }
 
 // "MARIA DA SILVA" on the card → "Maria".

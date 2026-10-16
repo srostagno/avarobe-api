@@ -7,7 +7,9 @@ import { env } from '../../config/env.js'
 import { parseBody } from '../../utils/http.js'
 import { storage } from '../../utils/storage.js'
 import {
+  clickDestination,
   clickTarget,
+  countsAsClick,
   emailImageKey,
   emailImageTarget,
   emailImageUser,
@@ -147,11 +149,20 @@ const lifecycleRoutes: FastifyPluginAsync = async (app) => {
         return reply.redirect(env.APP_URL, 302)
       }
 
-      await recordClick(app, new ObjectId(request.params.id)).catch((error: unknown) =>
-        request.log.warn({ err: error }, 'Click not recorded'),
-      )
+      if (countsAsClick(target)) {
+        await recordClick(app, new ObjectId(request.params.id)).catch((error: unknown) =>
+          request.log.warn({ err: error }, 'Click not recorded'),
+        )
+      }
 
-      return reply.header('Cache-Control', 'no-store').redirect(target, 302)
+      // A studio page signs them in: its sign-in link is made here, so it's
+      // only ever in this response, never in a URL we log.
+      const destination = await clickDestination(app, request.params.id, target).catch((error: unknown) => {
+        request.log.warn({ err: error }, 'Click sign-in failed')
+        return target
+      })
+
+      return reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer').redirect(destination, 302)
     },
   )
 }

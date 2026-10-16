@@ -1,5 +1,6 @@
 import type { Binary, ObjectId } from 'mongodb'
 
+import type { LinkAdIds } from '../utils/auth-links.js'
 import type { Locale } from '../utils/locale.js'
 import type { AiFailure } from '../utils/openai.js'
 
@@ -590,6 +591,10 @@ export type EmailSendDocument = {
   firstClickAt?: Date
   lastClickAt?: Date
   unsubscribedAt?: Date
+  // The ad ids its links sign in with when clicked (lifecycle
+  // clickDestination). Missing: the account's stored Meta click; null: none
+  // (the browser it was asked from didn't allow tracking).
+  ads?: LinkAdIds | null
 }
 
 // A WebAuthn credential (passkey). The private key stays on the person's

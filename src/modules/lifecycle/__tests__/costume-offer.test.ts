@@ -8,7 +8,7 @@ import { env } from '../../../config/env.js'
 import type { EmailSendDocument, UserDocument } from '../../../types/mongo.js'
 import type { Locale } from '../../../utils/locale.js'
 import { pickLifecycleEmail } from '../schedule.js'
-import { costumeOfferNames, sendCostumeOffers, stateFor } from '../service.js'
+import { clickDestination, costumeOfferNames, sendCostumeOffers, stateFor } from '../service.js'
 import { costumeOfferEmail } from '../templates.js'
 
 const MINUTE = 60 * 1000
@@ -84,9 +84,13 @@ describe('the costume offer email', () => {
     assert.equal(sends()[0]!.kind, 'costume_offer')
     assert.equal(sends()[0]!.subject, 'You as Medusa 🎃')
     assert.equal((collection('users').docs[0] as UserDocument).lifecycleEmailLastAt?.getTime(), now.getTime())
-    // Signed in on the Halloween Edit (and on every other studio link in it,
-    // like their account's settings), by email links.
-    const edit = signed.find((payload) => payload.nx === '/studio/halloween?from=email')
+    // Signed in on the Halloween Edit when they click it (and on every other
+    // studio link in it, like their account's settings): no sign-in token
+    // is made before the click (clickDestination).
+    assert.equal(signed.length, 0)
+    const target = `${env.APP_URL}/studio/halloween?from=email&utm_source=email&utm_medium=lifecycle&utm_campaign=costume_offer`
+    assert.ok((await clickDestination(app, sends()[0]!._id.toString(), target, now.getTime())).includes('/continue?token='))
+    const edit = signed.find((payload) => String(payload.nx).startsWith('/studio/halloween?from=email&'))
     assert.ok(edit)
     assert.equal(edit.typ, 'email')
     assert.equal(String(edit.sub), userId.toString())
@@ -173,9 +177,10 @@ describe('the costume offer email', () => {
   })
 
   it('gives the claim back when the email can’t be made, for the next run', async () => {
-    const { app, offered, sends } = flow()
-    ;(app as unknown as { jwt: { sign: () => Promise<string> } }).jwt.sign = async () => {
-      throw new Error('signing is down')
+    const { app, offered, sends, collection } = flow()
+    // (Its links are made at the click now, so the record is what fails.)
+    ;(collection('emailSends') as unknown as { insertOne: () => Promise<never> }).insertOne = async () => {
+      throw new Error('the database is down')
     }
 
     await sendCostumeOffers(app, now)

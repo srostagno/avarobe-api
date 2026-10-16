@@ -3,11 +3,10 @@ import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import type { LookReminder, UserDocument } from '../../types/mongo.js'
-import { emailLink } from '../../utils/auth-links.js'
 import { deliverEmail } from '../../utils/email.js'
+import { appUrl } from '../../utils/locale.js'
 import { storage } from '../../utils/storage.js'
 import { localHour } from '../../utils/timezones.js'
-import { storedAdIds } from '../billing/conversions.js'
 import { regionForCountry } from '../billing/pricing.js'
 import { lookReminderEmail } from '../lifecycle/templates.js'
 import { trackContent, unsubscribeUrl } from '../lifecycle/service.js'
@@ -106,10 +105,10 @@ async function sendReminder(app: FastifyInstance, user: UserDocument, numbers: {
   const profile = user.lookGreat!
   const sendId = new ObjectId()
   const locale = user.locale ?? 'en'
-  const ads = storedAdIds(user)
 
   try {
-    const url = new URL(await emailLink(app, user, '/studio/face-age?from=email', { ads }))
+    // Studio pages: the click signs her in (lifecycle clickDestination).
+    const url = new URL(appUrl(locale, '/studio/face-age?from=email'))
     url.searchParams.set('utm_source', 'email')
     url.searchParams.set('utm_medium', 'lifecycle')
     url.searchParams.set('utm_campaign', 'look_reminder')
@@ -125,7 +124,7 @@ async function sendReminder(app: FastifyInstance, user: UserDocument, numbers: {
       photos: numbers.photos,
       tip: numbers.tip,
       url: url.toString(),
-      settingsUrl: await emailLink(app, user, '/studio/face-age#settings', { ads }),
+      settingsUrl: appUrl(locale, '/studio/face-age#settings'),
     })
 
     await app.collections.emailSends.insertOne({ _id: sendId, userId: user._id, kind: 'look_reminder', subject: content.subject, sentAt: now, opens: 0, clicks: 0 })

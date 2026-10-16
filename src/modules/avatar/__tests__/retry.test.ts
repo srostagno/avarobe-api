@@ -395,14 +395,13 @@ describe('retryColorReads', () => {
     ])
     // In development the link is logged, never sent. An email link (works in
     // any browser, more than once, and the offer's link a day later doesn't
-    // void it).
+    // void it); in the email, the button to their colors signs them in when
+    // clicked (lifecycle clickDestination).
     const links = logs.filter((line) => line.msg === 'Dev email link (not sent)')
     assert.equal(links.length, 5)
     assert.ok(links.every((line) => String((line.obj as { link: string }).link).includes('/continue?token=')))
     assert.ok(signed.length >= 5)
     assert.ok(signed.every((payload) => payload.typ === 'email'))
-    // Its button to their colors (the email's other studio links, like the
-    // account settings, sign in too).
     assert.ok(signed.filter((payload) => payload.nx === '/studio').length >= 5)
     const ready = await collection('analyticsEvents').find({ name: 'colors_ready' }).toArray()
     assert.ok(ready.every((event) => (event.props as { via?: string }).via === 'notify'))

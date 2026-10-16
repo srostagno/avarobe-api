@@ -5,7 +5,7 @@ import type { PurchaseProduct, UserDocument } from '../../types/mongo.js'
 import { emailLink, linkSentRecently, type LinkAdIds } from '../../utils/auth-links.js'
 import { deliverLinkEmail } from '../../utils/email.js'
 import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
-import type { Locale } from '../../utils/locale.js'
+import { appUrl, type Locale } from '../../utils/locale.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { storedAdIds } from '../billing/conversions.js'
 import { regionForCountry } from '../billing/pricing.js'
@@ -85,9 +85,12 @@ export async function sendCheckoutLink(
     // The browser's ad ids; its Meta click, when it had none, from the
     // account (only when it sent its ids at all, so tracking is allowed).
     const stored = input.ads ? storedAdIds(user) : undefined
-    const url = await emailLink(app, user, `/studio?buy=${input.product}&from=${input.placement}`, {
-      ads: input.ads ? { ...stored, ...definedOnly(input.ads) } : undefined,
-    })
+    const ads = input.ads ? { ...stored, ...definedOnly(input.ads) } : null
+    const path = `/studio?buy=${input.product}&from=${input.placement}`
+    // The studio page; the click signs them in with these ad ids
+    // (clickDestination). No utm: the purchase stays with the channel she
+    // came from, not the email.
+    const url = appUrl(locale, path)
     const content = checkoutLinkEmail({
       firstName: user.firstName,
       email: user.email,
@@ -109,12 +112,14 @@ export async function sendCheckoutLink(
       sentAt: now,
       opens: 0,
       clicks: 0,
+      ads,
     })
 
     const result = await deliverLinkEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      link: url,
+      // Only for development, where nothing is sent: a link that signs in.
+      link: await emailLink(app, user, path, { ads: ads ?? undefined }),
       content: trackContent(content, sendId),
     })
     void trackServerEvent(app, {

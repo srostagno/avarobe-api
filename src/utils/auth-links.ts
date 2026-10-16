@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { env } from '../config/env.js'
 import { isAdmin } from '../modules/billing/entitlements.js'
 import type { UserDocument } from '../types/mongo.js'
-import { appUrl, LOCALE_PREFIXES } from './locale.js'
+import { appUrl, withoutLocalePrefix } from './locale.js'
 import { toObjectId } from './object-id.js'
 import { generateSecureToken, hashToken } from './tokens.js'
 
@@ -242,45 +242,37 @@ export async function readEmailLink(app: FastifyInstance, token: string) {
   return { payload, user }
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// The studio page a link to the app opens, without its language prefix
+// ('…/pt-br/studio/report?x=1' → '/studio/report?x=1'), or null for any
+// other page (the guides, unsubscribing) or site. Our emails' studio links
+// sign the person in when clicked (lifecycle clickDestination), so the
+// sign-in token is made then and never sits in an email or a logged URL.
+export function studioPathOf(url: string) {
+  let parsed: URL
 
-// Every link to the studio in an email to someone with an account, made an
-// email link to the same page, so whichever browser opens it lands signed
-// in: one link per address. Admins' and deleted accounts' links stay plain.
-export async function signInStudioLinks<T extends { html: string; text: string }>(
-  app: FastifyInstance,
-  user: Pick<UserDocument, '_id' | 'email' | 'locale' | 'passwordUpdatedAt' | 'deletedAt'>,
-  content: T,
-  options: { ads?: LinkAdIds } = {},
-): Promise<T> {
-  if (user.deletedAt || isAdmin(user)) {
-    return content
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
   }
 
-  const prefixes = LOCALE_PREFIXES.filter(Boolean).map(escapeRegExp).join('|')
-  const pattern = new RegExp(`${escapeRegExp(env.APP_URL)}(?:${prefixes})?(/studio(?:[/?#][^"'\\s<>)]*)?)`, 'g')
-  const links = new Map<string, string>()
+  const host = (value: string) => value.replace(/^www\./, '')
 
-  for (const field of ['html', 'text'] as const) {
-    for (const match of content[field].matchAll(pattern)) {
-      const path = match[1]!.replace(/&amp;/g, '&')
-
-      if (!links.has(path)) {
-        links.set(path, await emailLink(app, user, path, options))
-      }
-    }
+  if (host(parsed.hostname) !== host(new URL(env.APP_URL).hostname)) {
+    return null
   }
 
-  if (links.size === 0) {
-    return content
-  }
+  const path = withoutLocalePrefix(parsed.pathname)
 
-  const swap = (value: string, html: boolean) =>
-    value.replace(pattern, (whole, path: string) => {
-      const url = links.get(path.replace(/&amp;/g, '&'))
-      return url ? (html ? url.replace(/&/g, '&amp;') : url) : whole
-    })
+  return /^\/studio(?:\/|$)/.test(path) ? `${path}${parsed.search}${parsed.hash}` : null
+}
 
-  return { ...content, html: swap(content.html, true), text: swap(content.text, false) }
+// A lifetime as the env writes it ('14d', '12h', '30m', '45s', or seconds),
+// in milliseconds; null when it can't be read.
+export function durationMs(value: string) {
+  const match = /^(\d+)\s*([smhd])?$/.exec(value.trim())
+  const unit = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }
+
+  return match ? Number(match[1]) * unit[(match[2] ?? 's') as keyof typeof unit] : null
 }
 

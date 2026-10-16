@@ -53,7 +53,7 @@ import {
   type EmailContent,
   type WelcomeStage,
 } from './templates.js'
-import { emailLink, signInStudioLinks } from '../../utils/auth-links.js'
+import { durationMs, emailLink, studioPathOf } from '../../utils/auth-links.js'
 import { isPlaceholderEmail } from '../../utils/deleted-accounts.js'
 import { focusOf } from '../../utils/serializers.js'
 
@@ -122,9 +122,14 @@ export function unsubscribeUrl(userId: ObjectId, sendId?: ObjectId, locale?: Loc
 
 // ---------------------------------------------------------------- tracking
 // Opens come from a 1x1 image and clicks from a redirect, both on the API.
-// Only links back to the app (tagged utm_source=email) are wrapped; the
-// footer's preferences and unsubscribe links stay direct. The redirect is
-// signed per link, so it can't be used to send people anywhere else.
+// Links back to the app are wrapped: the ones tagged utm_source=email, and
+// every studio page, which signs the person in when clicked
+// (clickDestination). The unsubscribe link stays direct, and a link with a
+// sign-in token in it is never wrapped (the redirect's address is logged).
+// The redirect is signed per link, so it can't send people anywhere else.
+// Oct 16, 2026: from Oct 14 the studio links were sign-in links made at
+// sending, which this skipped (0 clicks counted), and the few tagged ones
+// carried their token through the redirect.
 
 const clickSignature = (sendId: string, target: string) =>
   hmacSign(env.JWT_ACCESS_SECRET, `email-click:${sendId}:${target}`)
@@ -156,7 +161,46 @@ export function clickTarget(sendId: string, target: string, signature: string) {
 
 const unescapeHtml = (value: string) => value.replace(/&amp;/g, '&')
 const escapeAttribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-const isAppLink = (url: string) => url.startsWith(env.APP_URL) && url.includes('utm_source=email')
+const isAppLink = (url: string) =>
+  url.startsWith(env.APP_URL) && !/[?&]token=/.test(url) && (url.includes('utm_source=email') || studioPathOf(url) !== null)
+
+// Whether a click counts in Admin → Emails: not the footer's email
+// preferences or a "manage your plan" line (the account page, untagged).
+export function countsAsClick(target: string) {
+  return target.includes('utm_source=email') || !studioPathOf(target)?.startsWith('/studio/account')
+}
+
+// Where a tracked click goes: a studio page signs its recipient in, with a
+// sign-in link made now (emailLink: any browser, the email's ad ids), while
+// the email is recent (EMAIL_LINK_TTL) and their password hasn't changed
+// since it went out. Never for an admin or a deleted account; other pages,
+// and everyone else, get the page as it is.
+export async function clickDestination(app: FastifyInstance, sendId: string, target: string, now = Date.now()) {
+  const path = studioPathOf(target)
+  const send = path && ObjectId.isValid(sendId)
+    ? await app.collections.emailSends.findOne({ _id: new ObjectId(sendId) }, { projection: { userId: 1, sentAt: 1, ads: 1 } })
+    : null
+  const user = send ? await app.collections.users.findOne({ _id: send.userId }) : null
+  const ttl = durationMs(env.EMAIL_LINK_TTL) ?? 14 * 24 * 60 * 60 * 1000
+
+  if (
+    !path ||
+    !send ||
+    !user ||
+    user.deletedAt ||
+    isAdmin(user) ||
+    send.sentAt.getTime() + ttl < now ||
+    (user.passwordUpdatedAt && user.passwordUpdatedAt.getTime() > send.sentAt.getTime())
+  ) {
+    return target
+  }
+
+  // Missing: the account's stored Meta click; null: none (its browser
+  // didn't allow tracking).
+  const ads = send.ads === undefined ? storedAdIds(user) : (send.ads ?? undefined)
+
+  return emailLink(app, user, path, { ads, ttl: '1d' })
+}
 
 export function trackContent(content: EmailContent, sendId: ObjectId): EmailContent {
   const pixel = `<img src="${escapeAttribute(`${env.API_PUBLIC_URL}/api/v1/email/o/${sendId.toString()}.gif`)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">`
@@ -566,7 +610,7 @@ async function sendTrialNotice(app: FastifyInstance, user: UserDocument, kind: T
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'Trial notice')
     return delivered
@@ -661,7 +705,7 @@ async function sendOne(
     const offer =
       from && facts.looks.count === 0 && facts.avatar?.colorAnalysis
         ? {
-            url: await emailLink(app, user, `/studio?buy=color_report&from=${from}`, { ads: storedAdIds(user) }),
+            url: appUrl(user.locale, `/studio?buy=color_report&from=${from}`),
             heroUrl: facts.avatar.drapePreview?.status === 'ready' && facts.avatar.drapePreview.lockedKey ? emailImageUrl(user._id, now) : null,
           }
         : undefined
@@ -680,7 +724,7 @@ async function sendOne(
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'Lifecycle email')
     return delivered
@@ -803,7 +847,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
   const sendId = new ObjectId()
 
   try {
-    const url = await emailLink(app, user, rescueNext(product), { ads: storedAdIds(user) })
+    const url = appUrl(user.locale, rescueNext(product))
     const content = lifecycleContentFor('checkout_rescue', user, undefined, { count: 0, lastAt: null }, sendId, { product, url })
 
     await app.collections.emailSends.insertOne({
@@ -819,7 +863,7 @@ async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, prod
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), product, delivered }, 'Checkout rescue email')
     return delivered
@@ -899,7 +943,7 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
 
   try {
     const locale = user.locale ?? 'en'
-    const url = await emailLink(app, user, '/studio/report', { ads: storedAdIds(user) })
+    const url = appUrl(locale, '/studio/report')
     const content = reportUnopenedEmail({
       firstName: user.firstName,
       email: user.email,
@@ -923,7 +967,7 @@ async function sendReportReminder(app: FastifyInstance, user: UserDocument, seas
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), delivered }, 'Unopened report email')
     return delivered
@@ -1060,7 +1104,7 @@ async function sendOneOff(app: FastifyInstance, user: UserDocument, kind: 'pro_w
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), kind, delivered }, 'One-off email')
     return delivered
@@ -1189,9 +1233,7 @@ async function sendCostumeOffer(
     const locale = user.locale ?? 'en'
     const names = costumeOfferNames(locale, look.iconId ?? '', user.lookPicks?.ids ?? [], now)
     // Signed in from the email, in their own browser, on the Halloween Edit.
-    const signIn = new URL(
-      await emailLink(app, user, '/studio/halloween?from=email', { ads: storedAdIds(user) }),
-    )
+    const signIn = new URL(appUrl(locale, '/studio/halloween?from=email'))
     signIn.searchParams.set('utm_source', 'email')
     signIn.searchParams.set('utm_medium', 'lifecycle')
     signIn.searchParams.set('utm_campaign', 'costume_offer')
@@ -1221,7 +1263,7 @@ async function sendCostumeOffer(
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info(
       { userId: user._id.toString(), costume: look.iconId, picks: names.picks.length, photo: Boolean(photoUrl), delivered },
@@ -1277,7 +1319,7 @@ export async function sendColorsReady(
     await app.collections.users.updateOne({ _id: user._id }, { $set: { [field]: now, lifecycleEmailLastAt: now } })
 
     const locale = user.locale ?? 'en'
-    const url = await emailLink(app, user, '/studio', { ads: storedAdIds(user) })
+    const url = appUrl(locale, '/studio')
     const content = colorsReadyEmail({
       firstName: user.firstName,
       email: user.email,
@@ -1301,8 +1343,9 @@ export async function sendColorsReady(
     const delivery = await deliverLinkEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      link: url,
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      // Only for development, where nothing is sent: a link that signs in.
+      link: await emailLink(app, user, '/studio', { ads: storedAdIds(user) }),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), sent: delivery.sent }, 'Colors ready email')
     void trackServerEvent(app, {
@@ -1486,7 +1529,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
   try {
     // Signed in from the email, straight to the Color Advisor offer, in
     // their own browser (where Apple Pay works).
-    const signIn = new URL(await emailLink(app, user, '/studio?upgrade=palette', { ads: storedAdIds(user) }))
+    const signIn = new URL(appUrl(user.locale, '/studio?upgrade=palette'))
     signIn.searchParams.set('utm_source', 'email')
     signIn.searchParams.set('utm_medium', 'lifecycle')
     signIn.searchParams.set('utm_campaign', 'price_drop')
@@ -1509,7 +1552,7 @@ async function sendPriceDrop(app: FastifyInstance, user: UserDocument, avatar: A
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info({ userId: user._id.toString(), delivered, photo: Boolean(heroUrl) }, 'Price drop email')
     return delivered
@@ -1736,13 +1779,11 @@ async function crossSellPersonal(
   }
 }
 
-// Sign-in links for one email's buttons (emailLink: any browser, more than
-// once), tagged so the clicks are counted (trackContent).
-async function signInLinks(app: FastifyInstance, user: UserDocument, kind: CrossSellKind, nexts: string[]) {
-  const links = await Promise.all(nexts.map((next) => emailLink(app, user, next, { ads: storedAdIds(user) })))
-
-  return links.map((link) => {
-    const url = new URL(link)
+// The links for one email's buttons, tagged so the clicks are counted
+// (trackContent); a click signs them in (clickDestination).
+function signInLinks(user: UserDocument, kind: CrossSellKind, nexts: string[]) {
+  return nexts.map((next) => {
+    const url = new URL(appUrl(user.locale, next))
     url.searchParams.set('utm_source', 'email')
     url.searchParams.set('utm_medium', 'lifecycle')
     url.searchParams.set('utm_campaign', kind)
@@ -1806,20 +1847,20 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
 
     if (kind === 'xsell_event') {
       const occasions = emailCopy(user.locale).crossSell.event.occasions.map((item) => studioPath('/studio/events', { occasion: item.occasion }))
-      const links = await signInLinks(app, user, kind, [...occasions, ...proNext])
+      const links = signInLinks(user, kind, [...occasions, ...proNext])
       occasionUrls = links.slice(0, occasions.length)
       proLinks = links.slice(occasions.length)
     } else if (offer.product !== 'outfit_guide') {
       const target = crossSellTarget(kind, offer.product, edit)
       const giftLook = personal.giftLook
       const nexts = [studioPath(target.path, target.params), ...(giftLook ? [`/studio/looks/${giftLook.id}`] : [])]
-      const links = await signInLinks(app, user, kind, [...nexts, ...proNext])
+      const links = signInLinks(user, kind, [...nexts, ...proNext])
       const [checkout, look] = links
       url = checkout!
       gift = giftLook && look ? { url: look, color: giftLook.color } : null
       proLinks = links.slice(nexts.length)
     } else if (proNext.length) {
-      proLinks = await signInLinks(app, user, kind, proNext)
+      proLinks = signInLinks(user, kind, proNext)
     }
 
     const proCreditUrl = proLinks[0] ?? null
@@ -1862,7 +1903,7 @@ async function sendCrossSell(app: FastifyInstance, user: UserDocument, kind: Cro
     const delivered = await deliverEmail({
       log: app.log,
       to: { email: user.email, name: user.firstName },
-      content: trackContent(await signInStudioLinks(app, user, content, { ads: storedAdIds(user) }), sendId),
+      content: trackContent(content, sendId),
     })
     app.log.info(
       {
