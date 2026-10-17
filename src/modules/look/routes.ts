@@ -24,6 +24,7 @@ import {
   assertPhotoAllowed,
   deleteFaceCheck,
   deleteLookData,
+  isUnlocked,
   lookAvailableFor,
   lookState,
   serializeFaceCheck,
@@ -272,6 +273,33 @@ const lookRoutes: FastifyPluginAsync = async (app) => {
     void trackServerEvent(app, { name: 'look_photo_added', userId, props: { source, dateSource } })
 
     return reply.code(202).send({ check: await serializeFaceCheck(check, user.lookGreat.birthDate, true, billingState(user).proActive) })
+  })
+
+  // Her own photo, for the video of her timeline the page makes on her
+  // phone (a canvas only draws an image from the page's own API without
+  // tainting): only hers, only a read one, and never while her photos are
+  // locked on this device (Face ID).
+  app.get('/photos/:id/image', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const checkId = toObjectId((request.params as { id?: string }).id)
+    const user = checkId ? await app.collections.users.findOne({ _id: userId }, { projection: { lookGreat: 1 } }) : null
+    const check = checkId && user?.lookGreat ? await app.collections.faceChecks.findOne({ _id: checkId, userId }) : null
+
+    if (!user?.lookGreat || !check?.photoKey || check.status !== 'ready') {
+      return reply.code(404).send({ message: 'Photo not found.' })
+    }
+
+    if (user.lookGreat.lock && !isUnlocked(app, request, userId)) {
+      return reply.code(403).send({ code: 'look_locked', message: 'Unlock your photos first.' })
+    }
+
+    try {
+      const file = await storage.read(check.photoKey)
+
+      return reply.header('Content-Type', 'image/jpeg').header('Cache-Control', 'private, max-age=300').send(file)
+    } catch {
+      return reply.code(404).send({ message: 'Photo not found.' })
+    }
   })
 
   app.delete('/photos/:id', async (request, reply) => {

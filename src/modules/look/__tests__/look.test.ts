@@ -7,6 +7,7 @@ import { form, memoryStorage, photo, routeApp, until } from '../../../__tests__/
 import { env } from '../../../config/env.js'
 import type { FaceCheckDocument, UserDocument } from '../../../types/mongo.js'
 import { exifDate, parseExifDate } from '../../../utils/exif-date.js'
+import { storage } from '../../../utils/storage.js'
 import { ageOn, currentAge, shownAge } from '../age.js'
 import { reminderDue } from '../reminders.js'
 import lookRoutes from '../routes.js'
@@ -245,6 +246,13 @@ describe('Look Great routes', () => {
     assert.ok(state.checks[0]?.photoUrl)
     assert.equal(state.summary.younger, realAge - state.summary.age)
     assert.equal(state.allowance.freeLeft, 2)
+
+    // Her own photo, for the video her page makes; nobody else's.
+    const checkId = (collection('faceChecks').docs[0] as FaceCheckDocument)._id.toString()
+    const image = await app.inject({ method: 'GET', url: `/look/photos/${checkId}/image`, headers })
+    assert.equal(image.statusCode, 200)
+    assert.equal(image.headers['content-type'], 'image/jpeg')
+    assert.equal((await app.inject({ method: 'GET', url: `/look/photos/${new ObjectId().toString()}/image`, headers })).statusCode, 404)
   })
 
   it('deletes a photo it can’t read (two faces, a minor) and says why', async () => {
@@ -410,6 +418,13 @@ describe('Look Great routes', () => {
     const token = signUnlock(app, rosa._id)
     const open = (await app.inject({ method: 'GET', url: '/look', headers: { ...headers, [UNLOCK_HEADER]: token } })).json<{ checks: { photoUrl: string | null }[] }>()
     assert.ok(open.checks[0]?.photoUrl)
+
+    // The photo itself (for her timeline's video) stays shut too, until the unlock.
+    const image = (unlock?: string) =>
+      app.inject({ method: 'GET', url: `/look/photos/${old._id.toString()}/image`, headers: unlock ? { ...headers, [UNLOCK_HEADER]: unlock } : headers })
+    assert.equal((await image()).statusCode, 403)
+    await storage.put(old.photoKey, Buffer.from('jpeg'), 'image/jpeg')
+    assert.equal((await image(token)).statusCode, 200)
 
     // Someone else's unlock opens nothing, and an unlock is never a session.
     const other = signUnlock(app, new ObjectId())
