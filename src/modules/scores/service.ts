@@ -65,15 +65,17 @@ type MeasureRaw = {
   criteria: Record<string, number>
 }
 
-async function measureOnce(kind: ScoreKind, photo: Buffer, fixed: boolean): Promise<MeasureRaw> {
+type MeasureOptions = { partial?: boolean }
+
+async function measureOnce(kind: ScoreKind, photo: Buffer, fixed: boolean, options: MeasureOptions = {}): Promise<MeasureRaw> {
   return createStructuredResponse<MeasureRaw>({
-    instructions: buildMeasureInstructions(kind),
+    instructions: buildMeasureInstructions(kind, options),
     content: [
       { type: 'input_text', text: kind === 'look' ? 'Rate this outfit.' : 'Rate this hair.' },
       { type: 'input_image', image_url: toDataUrl(photo, 'image/jpeg'), detail: 'high' },
     ],
     schemaName: `${kind}_score_measure`,
-    schema: measureSchema(kind),
+    schema: measureSchema(kind, options),
     model: env.SCORE_MEASURE_MODEL,
     ...(fixed ? { reasoningEffort: 'none' as const, temperature: 0 } : {}),
     locale: 'en',
@@ -83,12 +85,12 @@ async function measureOnce(kind: ScoreKind, photo: Buffer, fixed: boolean): Prom
 
 // Fixed settings (reasoning none, temperature 0); a model that refuses them
 // is measured the classic way rather than failing every read.
-async function measure(kind: ScoreKind, photo: Buffer) {
+async function measure(kind: ScoreKind, photo: Buffer, options: MeasureOptions = {}) {
   try {
-    return await measureOnce(kind, photo, true)
+    return await measureOnce(kind, photo, true, options)
   } catch (error) {
     if (refusedSetting(error)) {
-      return measureOnce(kind, photo, false)
+      return measureOnce(kind, photo, false, options)
     }
 
     throw error
@@ -132,9 +134,27 @@ export async function measureScore(kind: ScoreKind, photo: Buffer) {
     Array.from({ length: env.SCORE_SAMPLES }, async (_, index) => measure(kind, await variantOf(photo, index))),
   )
   const minor = samples.find((sample) => sample.problem === 'minor')
-  const usable = samples.filter((sample) => sample.usable && sample.problem === 'none')
+  let usable = samples.filter((sample) => sample.usable && sample.problem === 'none')
+  let salvaged = false
 
-  if (minor || usable.length * 2 < samples.length || usable.length === 0) {
+  // A look turned away for its framing although the read itself saw the
+  // outfit (from the waist up, or more): Silvio's own selfie on Oct 17. It
+  // is measured again with framing unable to reject it, and rated on what
+  // shows (Silvio: "rank the look anyway").
+  if (!minor && usable.length === 0 && kind === 'look') {
+    const framed = samples.find((sample) => sample.problem === 'not_full_body' && (sample.shows === 'upper_body' || sample.shows === 'full_body'))
+
+    if (framed) {
+      const again = await measure(kind, photo, { partial: true })
+
+      if (again.usable && again.problem === 'none') {
+        usable = [{ ...again, photo: { ...again.photo, framing: 'partial' } }]
+        salvaged = true
+      }
+    }
+  }
+
+  if (minor || usable.length === 0 || (!salvaged && usable.length * 2 < samples.length)) {
     const problem = minor ? 'minor' : problemOf(kind, samples.find((sample) => sample.problem !== 'none')?.problem ?? 'too_blurry')
     const rejected = minor ?? samples.find((sample) => sample.problem !== 'none') ?? samples[0]!
     return { usable: false as const, problem, shows: rejected.shows ?? null, photo: samples[0]!.photo }

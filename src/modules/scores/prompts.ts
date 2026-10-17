@@ -30,8 +30,11 @@ const GUARDRAILS = [
 export const SHOWS = ['face', 'hair', 'upper_body', 'full_body', 'no_person'] as const
 export type Shows = (typeof SHOWS)[number]
 
-export function measureSchema(kind: ScoreKind) {
+// `partial`: a photo already known to show the outfit at least in part (the
+// first read said so and still turned it away): framing can't reject it.
+export function measureSchema(kind: ScoreKind, options: { partial?: boolean } = {}) {
   const ids = criterionIds(kind)
+  const problems = options.partial ? PROBLEMS[kind].filter((problem) => problem !== 'not_full_body') : PROBLEMS[kind]
 
   return {
     type: 'object',
@@ -39,7 +42,7 @@ export function measureSchema(kind: ScoreKind) {
     required: ['usable', 'problem', 'shows', 'photo', 'criteria'],
     properties: {
       usable: { type: 'boolean' },
-      problem: { type: 'string', enum: ['none', ...PROBLEMS[kind]] },
+      problem: { type: 'string', enum: ['none', ...problems] },
       // What the photo mainly shows, so a photo that can't be rated here
       // can be sent to the studio it fits (Face Age, Look Score, Hair Score).
       shows: { type: 'string', enum: SHOWS },
@@ -62,7 +65,7 @@ export function measureSchema(kind: ScoreKind) {
   } as const
 }
 
-export function buildMeasureInstructions(kind: ScoreKind) {
+export function buildMeasureInstructions(kind: ScoreKind, options: { partial?: boolean } = {}) {
   const criteria = CRITERIA[kind].map(
     (criterion) =>
       `- ${criterion.id} (${criterion.measures}): ${criterion.anchors.map((anchor, rating) => `${rating} = ${anchor}`).join('; ')}.`,
@@ -82,6 +85,9 @@ export function buildMeasureInstructions(kind: ScoreKind) {
       ? ['With framing "partial", rate every criterion on what is visible; never lower a rating for what is out of frame (shoes, hems).']
       : []),
     ...GUARDRAILS,
+    ...(options.partial
+      ? ['This photo shows at least part of the outfit (for example from the waist or chest up): it must be rated with framing "partial", on what is visible. Never turn it away for its framing.']
+      : []),
   ].join('\n')
 }
 

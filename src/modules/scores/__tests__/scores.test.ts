@@ -259,6 +259,22 @@ describe('Score routes', () => {
     assert.equal(user().freeUses?.look_score, 0)
   })
 
+  it('rates a waist-up look the first read turned away for its framing', async () => {
+    ai.state.reply = (call) =>
+      call.schema.endsWith('_measure')
+        ? String(call.body.instructions).includes('Never turn it away for its framing')
+          ? measured(LOOK_RATINGS, { shows: 'upper_body', photo: { light: 'good', framing: 'partial' } })
+          : measured(LOOK_RATINGS, { usable: false, problem: 'not_full_body', shows: 'upper_body' })
+        : words('look')
+    const { send, settled, checks } = await setup()
+
+    await send('look', 1)
+    await settled(1)
+    assert.equal(checks()[0]?.status, 'ready')
+    assert.equal(checks()[0]?.reading?.photo.framing, 'partial')
+    assert.equal(ai.calls.filter((call) => call.schema === 'look_score_measure').length, 2)
+  })
+
   it('says which studio a photo it can’t rate fits', async () => {
     ai.state.reply = (call) => (call.schema.endsWith('_measure') ? measured(LOOK_RATINGS, { usable: false, problem: 'not_full_body', shows: 'face' }) : words('look'))
     const { app, headers, send, settled } = await setup()
