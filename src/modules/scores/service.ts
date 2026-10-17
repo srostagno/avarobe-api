@@ -11,7 +11,7 @@ import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { refusedSetting } from '../avatar/measure.js'
 import { PaywallError, billingState, freeUsesLeft, hasPro, releaseFreeUse, useFreeUse } from '../billing/entitlements.js'
-import { buildMeasureInstructions, buildWordsInstructions, measureSchema, wordsSchema } from './prompts.js'
+import { type Shows, buildMeasureInstructions, buildWordsInstructions, measureSchema, wordsSchema } from './prompts.js'
 import { CRITERIA, PROBLEMS, RUBRIC_VERSION, TIP_AREAS, criterionIds } from './rubrics.js'
 import { averageCriteria, currentScore, scoreFrom, weakestFirst } from './score.js'
 
@@ -55,23 +55,12 @@ export async function claimScoreRead(app: FastifyInstance, userId: ObjectId, kin
   throw new PaywallError('needs_pro', kind === 'look' ? 'Scoring more looks comes with Avarobe Pro.' : 'Scoring your hair more comes with Avarobe Pro.')
 }
 
-async function giveBack(app: FastifyInstance, check: Pick<ScoreCheckDocument, '_id' | 'userId' | 'kind' | 'freeUse'>) {
-  await releaseGenerations(app, check.userId, 'score', 1)
-
-  if (check.freeUse) {
-    const claimed = await app.collections.scoreChecks.updateOne({ _id: check._id, freeUse: true }, { $set: { freeUse: false } })
-
-    if (claimed.modifiedCount) {
-      await releaseFreeUse(app, check.userId, freeKind(check.kind))
-    }
-  }
-}
-
 // ---------------------------------------------------------------- reading
 
 type MeasureRaw = {
   usable: boolean
   problem: ScoreProblem | 'none'
+  shows?: Shows
   photo: ScoreReading['photo']
   criteria: Record<string, number>
 }
@@ -147,7 +136,8 @@ export async function measureScore(kind: ScoreKind, photo: Buffer) {
 
   if (minor || usable.length * 2 < samples.length || usable.length === 0) {
     const problem = minor ? 'minor' : problemOf(kind, samples.find((sample) => sample.problem !== 'none')?.problem ?? 'too_blurry')
-    return { usable: false as const, problem, photo: samples[0]!.photo }
+    const rejected = minor ?? samples.find((sample) => sample.problem !== 'none') ?? samples[0]!
+    return { usable: false as const, problem, shows: rejected.shows ?? null, photo: samples[0]!.photo }
   }
 
   const ids = criterionIds(kind)
@@ -201,16 +191,25 @@ async function writeWords(app: FastifyInstance, check: ScoreCheckDocument, photo
   }
 }
 
-// A photo that can't be read: gone, and what it took given back.
+// A photo that can't be read: gone, and what it took given back. Her free
+// photo comes back before the failure shows, so the page that sees it
+// failed already counts it as hers again.
 async function failCheck(app: FastifyInstance, check: ScoreCheckDocument, error: string) {
   await storage.remove(check.photoKey).catch(() => undefined)
+
+  const claimed = await app.collections.scoreChecks.updateOne({ _id: check._id, status: 'processing', freeUse: true }, { $set: { freeUse: false } })
+
+  if (claimed.modifiedCount) {
+    await releaseFreeUse(app, check.userId, freeKind(check.kind))
+  }
+
   const result = await app.collections.scoreChecks.updateOne(
     { _id: check._id, status: 'processing' },
     { $set: { status: 'failed', error, photoKey: '', updatedAt: new Date() } },
   )
 
   if (result.modifiedCount) {
-    await giveBack(app, check)
+    await releaseGenerations(app, check.userId, 'score', 1)
   }
 }
 
@@ -226,7 +225,7 @@ export async function runScoreRead(app: FastifyInstance, checkId: ObjectId) {
     const measured = await measureScore(check.kind, photo)
 
     if (!measured.usable) {
-      await failCheck(app, check, `unreadable:${measured.problem}`)
+      await failCheck(app, check, `unreadable:${measured.problem}${measured.shows ? `:${measured.shows}` : ''}`)
       void trackServerEvent(app, { name: 'score_photo_read', userId: check.userId, props: { kind: check.kind, usable: false, problem: measured.problem } })
       return
     }
@@ -265,7 +264,30 @@ export function startScoreRead(app: FastifyInstance, checkId: ObjectId) {
 
 // ---------------------------------------------------------------- state
 
-const isProblem = (error: string | null) => (error?.startsWith('unreadable:') ? (error.slice('unreadable:'.length) as ScoreProblem) : null)
+// 'unreadable:<problem>' or 'unreadable:<problem>:<what it shows>'.
+function unreadable(error: string | null) {
+  if (!error?.startsWith('unreadable:')) {
+    return null
+  }
+
+  const [problem, shows] = error.slice('unreadable:'.length).split(':')
+  return { problem: problem as ScoreProblem, shows: (shows ?? null) as Shows | null }
+}
+
+// The studio a photo that couldn't be rated fits instead: a face photo in
+// Look Score goes to Face Age (and Hair Score); an outfit photo in Hair
+// Score, where the hair is too small, goes to Look Score. Never for a minor.
+export function suggestFor(kind: ScoreKind, problem: ScoreProblem, shows: Shows | null): ('face_age' | 'look_score' | 'hair_score')[] {
+  if (problem === 'minor' || problem === 'several_people' || !shows || shows === 'no_person') {
+    return []
+  }
+
+  if (kind === 'look') {
+    return shows === 'face' ? ['face_age', 'hair_score'] : shows === 'hair' ? ['hair_score'] : []
+  }
+
+  return shows === 'full_body' || shows === 'upper_body' ? ['look_score'] : shows === 'face' ? ['face_age'] : []
+}
 
 // Without Pro: the score, every criterion's name, the weakest one's rating
 // and the first tip. The other ratings and tips never leave the server.
@@ -273,13 +295,16 @@ export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolea
   const reading = check.status === 'ready' && check.reading?.usable ? check.reading : null
   const ids = criterionIds(check.kind)
   const weakest = reading ? weakestFirst(reading.criteria, ids)[0]! : null
-  const problem = isProblem(check.error)
+  const failure = unreadable(check.error)
+  const problem = failure?.problem ?? null
 
   return {
     id: check._id.toString(),
     kind: check.kind,
     status: check.status,
     problem,
+    // Where a photo that couldn't be rated here fits instead.
+    suggest: failure ? suggestFor(check.kind, failure.problem, failure.shows) : [],
     error: problem ? null : check.error,
     takenAt: check.takenAt.toISOString(),
     source: check.source,

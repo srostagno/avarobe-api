@@ -11,7 +11,7 @@ import { differenceHash, hashDistance } from '../../../utils/photo-hash.js'
 import { criterionIds } from '../rubrics.js'
 import scoreRoutes from '../routes.js'
 import { currentScore, scoreFrom, weakestFirst } from '../score.js'
-import { failStaleScoreReads } from '../service.js'
+import { failStaleScoreReads, suggestFor } from '../service.js'
 
 // Look Score and Hair Score (Oct 17, 2026): measured against the rubric in
 // English with fixed settings, scored in code, explained in her language;
@@ -42,7 +42,7 @@ async function pattern(seed: number) {
 const LOOK_RATINGS = { color: 3, fit: 2, proportion: 2, cohesion: 3, finish: 1 }
 
 const measured = (criteria: Record<string, number>, overrides: Record<string, unknown> = {}) =>
-  json(200, { output_text: JSON.stringify({ usable: true, problem: 'none', photo: { light: 'good', framing: 'good' }, criteria, ...overrides }) })
+  json(200, { output_text: JSON.stringify({ usable: true, problem: 'none', shows: 'full_body', photo: { light: 'good', framing: 'good' }, criteria, ...overrides }) })
 
 const words = (kind: 'look' | 'hair') =>
   json(200, {
@@ -253,10 +253,25 @@ describe('Score routes', () => {
 
     await settled(1)
     assert.equal(checks()[0]?.status, 'failed')
-    assert.equal(checks()[0]?.error, 'unreadable:not_full_body')
+    assert.equal(checks()[0]?.error, 'unreadable:not_full_body:full_body')
     assert.equal(checks()[0]?.photoKey, '')
     assert.ok(files.removed.some((file) => file.includes(key)))
     assert.equal(user().freeUses?.look_score, 0)
+  })
+
+  it('says which studio a photo it can’t rate fits', async () => {
+    ai.state.reply = (call) => (call.schema.endsWith('_measure') ? measured(LOOK_RATINGS, { usable: false, problem: 'not_full_body', shows: 'face' }) : words('look'))
+    const { app, headers, send, settled } = await setup()
+
+    await send('look', 1)
+    await settled(1)
+    const state = (await app.inject({ method: 'GET', url: '/scores/look', headers })).json<{ checks: { problem: string; suggest: string[] }[] }>()
+
+    assert.equal(state.checks[0]?.problem, 'not_full_body')
+    assert.deepEqual(state.checks[0]?.suggest, ['face_age', 'hair_score'])
+    assert.deepEqual(suggestFor('hair', 'hair_not_visible', 'full_body'), ['look_score'])
+    assert.deepEqual(suggestFor('look', 'minor', 'face'), [])
+    assert.deepEqual(suggestFor('look', 'too_dark', null), [])
   })
 
   it('stops at someone who looks under 18', async () => {
@@ -265,7 +280,7 @@ describe('Score routes', () => {
 
     await send('hair', 1)
     await settled(1)
-    assert.equal(checks()[0]?.error, 'unreadable:minor')
+    assert.equal(checks()[0]?.error, 'unreadable:minor:full_body')
     assert.ok(!ai.calls.some((call) => call.schema === 'hair_score_words'))
   })
 

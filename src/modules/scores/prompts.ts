@@ -27,16 +27,22 @@ const GUARDRAILS = [
   'No brand names, no medical or cosmetic procedures.',
 ]
 
+export const SHOWS = ['face', 'hair', 'upper_body', 'full_body', 'no_person'] as const
+export type Shows = (typeof SHOWS)[number]
+
 export function measureSchema(kind: ScoreKind) {
   const ids = criterionIds(kind)
 
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['usable', 'problem', 'photo', 'criteria'],
+    required: ['usable', 'problem', 'shows', 'photo', 'criteria'],
     properties: {
       usable: { type: 'boolean' },
       problem: { type: 'string', enum: ['none', ...PROBLEMS[kind]] },
+      // What the photo mainly shows, so a photo that can't be rated here
+      // can be sent to the studio it fits (Face Age, Look Score, Hair Score).
+      shows: { type: 'string', enum: SHOWS },
       photo: {
         type: 'object',
         additionalProperties: false,
@@ -67,6 +73,7 @@ export function buildMeasureInstructions(kind: ScoreKind) {
     'First check the photo:',
     ...PROBLEMS[kind].map((problem) => `- ${PROBLEM_RULES[problem]}`),
     'If any applies, set usable false, that problem, every criterion 0, and still describe the photo.',
+    'shows: what the photo mainly shows: "face" (a face or head and shoulders, the clothes barely visible), "hair" (mostly the hair, from behind or the side), "upper_body" (from the waist or chest up), "full_body" (head to knees or toes), "no_person".',
     'Otherwise set usable true, problem "none", and rate each criterion with the whole number whose description fits best:',
     ...criteria,
     "Rate each criterion on its own, from what you see for that criterion only; criteria often differ. When a 0 or 1 description names something visible in the photo, give that rating even if the rest is fine. Give 4 only when its description truly fits. Judge what is visible; the light of the photo is not the outfit's or the hair's fault.",
