@@ -200,7 +200,19 @@ const PORTRAIT_FINISH = [
 
 // One haircut on the person. Images: the full-body avatar, the selfie as a
 // close-up of the face, and (from a photo) the haircut they brought.
-export function buildHairstylePrompt(input: { name: string; render: string; hasReference: boolean }) {
+// `colorOnly`: a new hair color on the cut they have (a color preset).
+export function buildHairstylePrompt(input: { name: string; render: string; hasReference: boolean; colorOnly?: boolean }) {
+  if (input.colorOnly) {
+    return [
+      'Image 1 is this person in full body. Image 2 is a close-up of the same face.',
+      'Create a portrait photo of this SAME person with a new hair color: identical face, facial features, skin tone, eye color, facial hair and expression, instantly recognisable.',
+      `The new hair color: ${input.name}. ${input.render}`,
+      'Keep exactly the haircut they have in images 1 and 2: the same length, layers, fringe, parting, texture and volume. Change only the color.',
+      'The color looks freshly done by a professional colorist: realistic strands, natural dimension and shine, and it suits their skin.',
+      ...PORTRAIT_FINISH,
+    ].join(' ')
+  }
+
   return [
     `Image 1 is this person in full body. Image 2 is a close-up of the same face.${input.hasReference ? ' Image 3 is a photo of a haircut they want to try; it shows someone else.' : ''}`,
     'Create a portrait photo of this SAME person with a new haircut: identical face, facial features, skin tone, eye color, facial hair and expression, instantly recognisable.',

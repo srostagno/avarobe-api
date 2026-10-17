@@ -39,8 +39,21 @@ export function serializeUser(user: UserDocument) {
     emailVerified: Boolean(user.emailVerifiedAt),
     emailTips: !user.emailTipsOptOutAt,
     billing: serializeBilling(user),
+    // The studio features this API has on (Oct 2026), so the web shows each
+    // one only once the API that runs it is deployed and switched on.
+    features: enabledFeatures(),
     createdAt: user.createdAt.toISOString(),
   }
+}
+
+export type StudioFeature = 'scores' | 'makeup' | 'hair_presets'
+
+export function enabledFeatures(): StudioFeature[] {
+  return [
+    ...(env.SCORES_ENABLED === 'on' ? (['scores'] as const) : []),
+    ...(env.MAKEUP_ENABLED === 'on' ? (['makeup'] as const) : []),
+    ...(env.HAIR_PRESETS_ENABLED === 'on' ? (['hair_presets'] as const) : []),
+  ]
 }
 
 // Without the Color Advisor the palette shows the season, undertone and

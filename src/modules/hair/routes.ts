@@ -16,12 +16,15 @@ import { beforeAvatarJob, takeAvatarRender } from '../avatar/render-quota.js'
 import { startAvatarJob } from '../avatar/service.js'
 import {
   PaywallError,
+  billingState,
+  loadBillingUser,
   paletteAccess,
   refundCredits,
   requirePro,
   sendPaywall,
   spendCredits,
 } from '../billing/entitlements.js'
+import { PresetLockedError, PresetNotFoundError, resolveHairPreset, serializeHairPresets, startPresetHairstyle } from './preset-tryons.js'
 import {
   NotAHaircutError,
   hairstyleKeys,
@@ -123,6 +126,88 @@ const hairRoutes: FastifyPluginAsync = async (app) => {
 
       if (!started) {
         await releaseGenerations(app, userId, 'hair', 1)
+      }
+
+      return reply.code(started ? 202 : 200).send({
+        hairstyle: await serializeHairstyle(hairstyle, currentHair(avatar)?.hairstyleId ?? null),
+      })
+    } catch (error) {
+      await releaseGenerations(app, userId, 'hair', 1)
+
+      if (error instanceof PaywallError) {
+        return sendPaywall(reply, error)
+      }
+
+      throw error
+    }
+  })
+
+  // The hair presets (Oct 17, 2026): the catalog's cuts and colors, and her
+  // best hair colors, with what she can try free.
+  app.get('/presets', async (request, reply) => {
+    if (env.HAIR_PRESETS_ENABLED !== 'on') {
+      return reply.code(404).send({ message: 'Not found.' })
+    }
+
+    const userId = requireUserId(request)
+    const [avatar, user] = await Promise.all([app.collections.avatars.findOne({ userId }), loadBillingUser(app, userId)])
+
+    return {
+      ...(await serializeHairPresets(app, avatar, userId)),
+      freeLeft: user ? (billingState(user).freeLeft?.hair_preset ?? null) : 0,
+      remaining: await remainingGenerations(app, userId, 'hair'),
+    }
+  })
+
+  // One preset on her: the one she already has (200, no charge), or a new
+  // render (202): Pro spends a credit, otherwise her free one.
+  app.post('/presets/:id', { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (env.HAIR_PRESETS_ENABLED !== 'on') {
+      return reply.code(404).send({ message: 'Not found.' })
+    }
+
+    const userId = requireUserId(request)
+    const { id } = request.params as { id: string }
+
+    if (!/^[a-z0-9-]{2,40}$/.test(id)) {
+      return reply.code(404).send({ message: 'No such hairstyle.' })
+    }
+
+    const avatar = await app.collections.avatars.findOne({ userId })
+
+    if (!avatar?.avatarKey || avatar.status === 'failed') {
+      return reply.code(409).send({ message: 'Create your avatar first.' })
+    }
+
+    let preset: Awaited<ReturnType<typeof resolveHairPreset>>
+
+    try {
+      preset = await resolveHairPreset(app, avatar, id)
+    } catch (error) {
+      if (error instanceof PresetLockedError) {
+        return sendPaywall(reply, new PaywallError('needs_color_report', error.message))
+      }
+
+      if (error instanceof PresetNotFoundError) {
+        return reply.code(404).send({ message: 'No such hairstyle.' })
+      }
+
+      throw error
+    }
+
+    const reserved = await reserveUsage(app, userId, 'hair', 1)
+
+    if (!reserved.ok) {
+      return dailyLimitReply(reply, reserved, hairLimitBody())
+    }
+
+    try {
+      const { hairstyle, started } = await startPresetHairstyle(app, avatar, preset)
+
+      if (!started) {
+        await releaseGenerations(app, userId, 'hair', 1)
+      } else {
+        void trackServerEvent(app, { name: 'hairstyle_requested', userId, props: { source: 'preset', preset: preset.id } })
       }
 
       return reply.code(started ? 202 : 200).send({

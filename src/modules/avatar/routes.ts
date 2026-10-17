@@ -15,6 +15,7 @@ import { requestGeo, type Geo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { paletteAccess } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
+import { deleteMakeupTryOns } from '../makeup/service.js'
 import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
@@ -267,9 +268,10 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       await Promise.all(replaced.map((key) => storage.remove(key).catch(() => undefined)))
 
-      // Haircuts were read from, and drawn with, the old selfie.
+      // Haircuts and makeup were read from, and drawn with, the old selfie.
       if (selfieKey) {
         await deleteHairstyles(app, userId)
+        await deleteMakeupTryOns(app, userId)
       }
 
       startAvatarJob(app, avatarId, {
@@ -579,6 +581,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       if (keepNew) {
         if (moveSelfie) {
           await deleteHairstyles(app, userId)
+          await deleteMakeupTryOns(app, userId)
         }
 
         await startDrapePreview(app, existing._id).catch((error: unknown) => {
@@ -816,8 +819,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
     await app.collections.avatars.deleteOne({ _id: existing._id })
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
-    // The haircuts on them were drawn from these photos.
+    // The haircuts and makeup on them were drawn from these photos.
     await deleteHairstyles(app, userId)
+    await deleteMakeupTryOns(app, userId)
 
     return { ok: true }
   })

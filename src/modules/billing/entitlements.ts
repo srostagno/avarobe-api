@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import { limitMessages } from '../../i18n/limits.js'
-import type { ProSubscription, UserDocument } from '../../types/mongo.js'
+import type { FreeUseKind, ProSubscription, UserDocument } from '../../types/mongo.js'
 import { emailHash } from '../../utils/deleted-accounts.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { timeZoneFor } from '../../utils/timezones.js'
@@ -76,6 +76,7 @@ type BillingFields = Pick<
   | 'freeAvatarRuns'
   | 'freeHairRuns'
   | 'freeTryOns'
+  | 'freeUses'
   | 'compPaused'
   | 'proTrialAt'
   | 'proHalfOffer'
@@ -293,7 +294,27 @@ export function billingState(user: BillingFields, now = Date.now(), region: Pric
     freeHairRunsLeft: hairAdvisor ? null : Math.max(0, env.FREE_HAIR_RUNS - (user.freeHairRuns ?? 0)),
     // Collection looks they can still try on without Pro.
     freeTryOnsLeft: proActive ? null : Math.max(0, env.FREE_TRY_ONS - (user.freeTryOns ?? 0)),
+    // The studios' free uses left without Pro (Look Score and Hair Score
+    // photos, makeup and hair presets); null with Pro.
+    freeLeft: proActive ? null : freeUsesLeft(user.freeUses),
   }
+}
+
+// What each studio feature gives without Pro (Oct 17, 2026).
+export const FREE_USE_LIMITS: Record<FreeUseKind, () => number> = {
+  look_score: () => env.SCORE_FREE_PHOTOS,
+  hair_score: () => env.SCORE_FREE_PHOTOS,
+  makeup: () => env.FREE_MAKEUP_TRY_ONS,
+  hair_preset: () => env.FREE_HAIR_PRESETS,
+}
+
+const FREE_USE_KINDS = Object.keys(FREE_USE_LIMITS) as FreeUseKind[]
+
+export function freeUsesLeft(used: Partial<Record<FreeUseKind, number>> | undefined) {
+  return Object.fromEntries(FREE_USE_KINDS.map((kind) => [kind, Math.max(0, FREE_USE_LIMITS[kind]() - (used?.[kind] ?? 0))])) as Record<
+    FreeUseKind,
+    number
+  >
 }
 
 export function serializeBilling(user: BillingFields) {
@@ -349,6 +370,7 @@ export function serializeBilling(user: BillingFields) {
     hairCuts: state.hairCuts,
     freeHairRunsLeft: state.freeHairRunsLeft,
     freeTryOnsLeft: state.freeTryOnsLeft,
+    freeLeft: state.freeLeft,
     admin: state.admin,
     testingAsCustomer: state.admin && !state.comp,
   }
@@ -370,6 +392,7 @@ export const BILLING_PROJECTION = {
   freeAvatarRuns: 1,
   freeHairRuns: 1,
   freeTryOns: 1,
+  freeUses: 1,
   compPaused: 1,
   proTrialAt: 1,
   proHalfOffer: 1,
@@ -707,6 +730,38 @@ export async function useTryOn(app: FastifyInstance, userId: ObjectId, feature: 
   }
 
   return { free: true, creditSpent: false }
+}
+
+// One of her free uses of a studio feature, claimed atomically (so two
+// at once can't both take the last one). Returns whether she had one.
+export async function useFreeUse(app: FastifyInstance, userId: ObjectId, kind: FreeUseKind) {
+  const field = `freeUses.${kind}`
+  const result = await app.collections.users.updateOne(
+    { _id: userId, $or: [{ [field]: { $exists: false } }, { [field]: { $lt: FREE_USE_LIMITS[kind]() } }] },
+    { $inc: { [field]: 1 }, $set: { updatedAt: new Date() } },
+  )
+
+  return result.modifiedCount > 0
+}
+
+export async function releaseFreeUse(app: FastifyInstance, userId: ObjectId, kind: FreeUseKind) {
+  const field = `freeUses.${kind}`
+  await app.collections.users.updateOne({ _id: userId, [field]: { $gt: 0 } }, { $inc: { [field]: -1 } })
+}
+
+// A preset tried on (makeup, a hair preset): Pro spends a credit; without
+// Pro, her free one, or the offer. Returns what it took, so a failure gives
+// it back (refundCredits / releaseFreeUse).
+export async function usePresetTryOn(app: FastifyInstance, userId: ObjectId, kind: FreeUseKind, feature: string) {
+  if (await hasPro(app, userId)) {
+    return { creditSpent: await spendCredits(app, userId, 1), freeUse: false }
+  }
+
+  if (await useFreeUse(app, userId, kind)) {
+    return { creditSpent: false, freeUse: true }
+  }
+
+  throw new PaywallError('needs_pro', `${feature} comes with Avarobe Pro.`)
 }
 
 export async function releaseFreeTryOn(app: FastifyInstance, userId: ObjectId) {

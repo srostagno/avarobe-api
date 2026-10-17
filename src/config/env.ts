@@ -222,6 +222,30 @@ const envSchema = z.object({
   // Collection looks (an Edit's or an icon look) tried on without Pro, so
   // they see themselves in one before the offer (Halloween flow, Oct 2026).
   FREE_TRY_ONS: z.coerce.number().int().min(0).default(1),
+  // Face · Looks · Hair (Oct 17, 2026; Silvio: the three studios work alike,
+  // each with a score and a try-on). Each part can be turned off ('off':
+  // its routes answer 404 and the web hides it).
+  SCORES_ENABLED: z.enum(['on', 'off']).default('on'),
+  MAKEUP_ENABLED: z.enum(['on', 'off']).default('on'),
+  HAIR_PRESETS_ENABLED: z.enum(['on', 'off']).default('on'),
+  // Free without Pro, per studio, ever: Look Score and Hair Score photos
+  // (each), makeup presets tried on, hair presets tried on.
+  SCORE_FREE_PHOTOS: z.coerce.number().int().min(0).default(3),
+  FREE_MAKEUP_TRY_ONS: z.coerce.number().int().min(0).default(1),
+  FREE_HAIR_PRESETS: z.coerce.number().int().min(0).default(1),
+  // The day's fair-use caps: score reads (looks and hair together) and
+  // makeup renders (which also count toward AI_DAILY_IMAGE_LIMIT).
+  DAILY_SCORE_LIMIT: z.coerce.number().int().min(1).max(200).default(20),
+  DAILY_MAKEUP_LIMIT: z.coerce.number().int().min(1).max(200).default(20),
+  // The score's measuring call (modules/scores): pinned to the model it was
+  // calibrated with, reasoning none and temperature 0, in English; SAMPLES
+  // measures run at once and are averaged. The score is computed in code
+  // from them: OFFSET moves every score, FLOOR is the lowest shown (honest,
+  // never cruel). Recalibrate with evals/scores before changing any.
+  SCORE_MEASURE_MODEL: z.string().default('gpt-5.4-mini'),
+  SCORE_SAMPLES: z.coerce.number().int().min(1).max(3).default(2),
+  SCORE_OFFSET: z.coerce.number().min(-30).max(30).default(0),
+  SCORE_FLOOR: z.coerce.number().int().min(1).max(60).default(35),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
   // Who gets the operations alerts (OpenAI out of credits, color reads

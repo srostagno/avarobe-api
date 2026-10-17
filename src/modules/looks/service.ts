@@ -41,7 +41,7 @@ type LookPlanResponse = {
   looks: LookPlan[]
 }
 
-function cleanItem(item: LookItem): LookItem {
+export function cleanItem(item: LookItem): LookItem {
   return {
     ...item,
     name: item.name.trim(),

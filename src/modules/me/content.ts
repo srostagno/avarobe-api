@@ -4,6 +4,8 @@ import type { ObjectId } from 'mongodb'
 import { storage } from '../../utils/storage.js'
 import { checkStorageKeys } from '../check/service.js'
 import { deleteHairstyles } from '../hair/service.js'
+import { deleteMakeupTryOns } from '../makeup/service.js'
+import { deleteScoreData } from '../scores/service.js'
 import { deleteLookData } from '../look/service.js'
 import { lookStorageKeys } from '../looks/service.js'
 import { boardKeys } from '../report/boards.js'
@@ -45,6 +47,8 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
 
   await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
   await deleteHairstyles(app, userId)
+  await deleteMakeupTryOns(app, userId)
+  const scores = await deleteScoreData(app, userId, { profile: true })
   const look = await deleteLookData(app, userId, { profile: true })
   await Promise.all([
     app.collections.looks.deleteMany({ userId }),
@@ -60,7 +64,7 @@ export async function deleteUserContent(app: FastifyInstance, userId: ObjectId) 
     app.collections.users.updateOne({ _id: userId }, { $unset: { xsellAssets: '', lookPhotosAdded: '' } }),
   ])
 
-  return { files: keys.length + look.photos }
+  return { files: keys.length + look.photos + scores.photos }
 }
 
 // A deleted account's purchases stay as they were, for the books, the

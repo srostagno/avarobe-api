@@ -126,6 +126,24 @@ export type UserDocument = {
   // so deleting one (or everything) doesn't give it back. A photo that
   // couldn't be read gives its place back.
   lookPhotosAdded?: number
+  // Free uses of the studios' features without Pro (Oct 17, 2026), by kind:
+  // Look Score and Hair Score photos, makeup and hair presets tried on.
+  // Claimed atomically (billing/entitlements useFreeUse); a failure gives
+  // its use back.
+  freeUses?: Partial<Record<FreeUseKind, number>>
+  // Look Score and Hair Score (modules/scores): the release she agreed to
+  // for her photos (one for both).
+  scoreProfile?: ScoreProfile | null
+}
+
+export type FreeUseKind = 'look_score' | 'hair_score' | 'makeup' | 'hair_preset'
+
+export type ScoreProfile = {
+  consentAt: Date
+  consentVersion: string
+  // 'tap': her tap on "Agree and continue"; 'checkbox': the box (Illinois).
+  consentMethod: 'tap' | 'checkbox'
+  createdAt: Date
 }
 
 export type LookReminder = 'off' | 'daily' | 'few' | 'weekly'
@@ -940,8 +958,12 @@ export type HairstyleDocument = {
   _id: ObjectId
   userId: ObjectId
   avatarId: ObjectId
-  source: 'recommended' | 'described' | 'photo'
+  source: 'recommended' | 'described' | 'photo' | 'preset'
   recommendationId: string | null
+  // A cut or color from the presets (hair/presets.ts), and whether it was
+  // her free one (FREE_HAIR_PRESETS), given back if it fails.
+  presetId?: string | null
+  freePreset?: boolean
   name: string
   why: string | null
   stylistBrief: string | null
@@ -1357,8 +1379,9 @@ export type CollectionDocument = {
 }
 
 // 'image': every new AI picture of the day across looks, hairstyles, avatar
-// renders and color checks (AI_DAILY_IMAGE_LIMIT, utils/usage.ts).
-export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report' | 'hair' | 'image'
+// renders, makeup and color checks (AI_DAILY_IMAGE_LIMIT, utils/usage.ts).
+// 'score': Look Score and Hair Score reads (text); 'makeup': makeup renders.
+export type UsageKind = 'avatar' | 'look' | 'pieces' | 'shop' | 'report' | 'hair' | 'image' | 'score' | 'makeup'
 
 export type UsageCounterDocument = {
   _id: string
@@ -1530,6 +1553,81 @@ export type FaceReading = {
   tips: { area: FaceTipArea; text: string }[]
   // The conditions, which move the estimate by a few years.
   photo: { light: 'good' | 'dim' | 'harsh'; glasses: boolean; makeup: 'none' | 'light' | 'full'; expression: 'neutral' | 'smile' | 'other'; angle: 'front' | 'tilted' }
+}
+
+// A makeup preset tried on her (modules/makeup): a close portrait of her
+// from her selfie (and avatar, when she has one), only the makeup changed.
+export type MakeupTryOnDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  // The avatar it was drawn from, or null (selfie only, before an avatar).
+  avatarId: ObjectId | null
+  // The selfie it was drawn from: a new selfie makes these stale.
+  selfieKey: string
+  presetId: string
+  name: string
+  render: string
+  status: GenerationStatus
+  error: string | null
+  imageKey: string | null
+  previewKey: string | null
+  // What it took, given back if it fails: a look credit (Pro) or her free
+  // makeup try-on (FREE_MAKEUP_TRY_ONS).
+  creditSpent: boolean
+  freeUse: boolean
+  createdAt: Date
+  updatedAt: Date
+  readyAt: Date | null
+  photosDeletedAt?: Date | null
+}
+
+export type ScoreKind = 'look' | 'hair'
+
+// Look Score / Hair Score (modules/scores): one photo she added (a full-body
+// photo of her outfit, or of her hair) and the score read in it. Like Face
+// Age's photos: never matched against each other (no face recognition),
+// gone when she deletes them, the scores or her account.
+export type ScoreCheckDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  kind: ScoreKind
+  status: GenerationStatus
+  error: string | null
+  photoKey: string
+  // The normalized photo's sha256 and a 64-bit difference hash, so the
+  // same photo again returns its read instead of a new one.
+  photoHash: string
+  photoDHash: string
+  takenAt: Date
+  source: 'camera' | 'upload'
+  dateSource: 'now' | 'exif'
+  // Whether it was one of her free photos (SCORE_FREE_PHOTOS), given back
+  // if it can't be read.
+  freeUse: boolean
+  reading: ScoreReading | null
+  // "See it fixed" (looks): the look drawn from it with the tips applied.
+  fixLookId?: ObjectId | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export type ScoreProblem = 'no_person' | 'several_people' | 'minor' | 'too_dark' | 'too_blurry' | 'not_full_body' | 'hair_not_visible'
+
+export type ScoreReading = {
+  usable: boolean
+  problem: ScoreProblem | null
+  // Each criterion 0–4 (scores/rubrics.ts), averaged over the samples.
+  criteria: Record<string, number>
+  samples: number
+  // 1–100, computed in code from the criteria (scores/score.ts).
+  score: number
+  headline: string
+  strengths: string[]
+  holdingBack: string[]
+  tips: { area: string; criterion: string; text: string }[]
+  photo: { light: 'good' | 'dim' | 'harsh'; framing: 'good' | 'partial' }
+  rubricVersion: string
+  model: string
 }
 
 // Operations alerts to the founder (modules/ops/alerts.ts), one document per

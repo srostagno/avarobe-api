@@ -36,6 +36,7 @@ import { releaseAvatarRun } from '../billing/entitlements.js'
 import { noteReadFailed, noteReadSucceeded } from '../ops/alerts.js'
 import { startDrapePreview } from '../report/service.js'
 import { deleteHairstyles } from '../hair/service.js'
+import { deleteMakeupTryOns } from '../makeup/service.js'
 import { buildApplyHairPrompt } from '../hair/prompts.js'
 import { analysisHasForeignScript, cleanColorAnalysis } from './analysis.js'
 import { bodyOf } from './body.js'
@@ -606,10 +607,10 @@ function removeKeys(keys: string[]) {
   return Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
 }
 
-// Haircuts were read from, and drawn with, the selfie it replaced.
+// Haircuts and makeup were read from, and drawn with, the selfie it replaced.
 function dropHairstyles(app: FastifyInstance, userId: ObjectId) {
-  return deleteHairstyles(app, userId).catch((error: unknown) => {
-    app.log.error({ err: error, userId: userId.toString() }, 'Could not delete the old haircuts')
+  return Promise.all([deleteHairstyles(app, userId), deleteMakeupTryOns(app, userId)]).catch((error: unknown) => {
+    app.log.error({ err: error, userId: userId.toString() }, 'Could not delete the old haircuts and makeup')
   })
 }
 

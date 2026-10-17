@@ -5,6 +5,7 @@ import { deletedEmail, emailHash, isPlaceholderEmail } from '../../utils/deleted
 import { isValidStorageKey, storage } from '../../utils/storage.js'
 import { forgetRefundRequests } from '../billing/refund-requests.js'
 import { deleteLookData } from '../look/service.js'
+import { deleteScoreData } from '../scores/service.js'
 
 import { forgetPurchases } from './content.js'
 
@@ -88,11 +89,12 @@ const stopped = (doc: { status?: unknown }, withError: boolean) =>
 // marked `photosDeletedAt`; then her storage folder is swept for anything
 // no document pointed to. Returns how many files went.
 export async function deletePhotos(app: FastifyInstance, userId: ObjectId, now = new Date()) {
-  const [user, avatars, looks, hairstyles, magazines, checks] = await Promise.all([
+  const [user, avatars, looks, hairstyles, makeup, magazines, checks] = await Promise.all([
     app.collections.users.findOne({ _id: userId }, { projection: { xsellAssets: 1 } }),
     app.collections.avatars.find({ userId }).toArray(),
     app.collections.looks.find({ userId }).toArray(),
     app.collections.hairstyles.find({ userId }).toArray(),
+    app.collections.makeupTryOns.find({ userId }).toArray(),
     app.collections.magazines.find({ userId }).toArray(),
     app.collections.colorChecks.find({ userId }).toArray(),
   ])
@@ -117,6 +119,9 @@ export async function deletePhotos(app: FastifyInstance, userId: ObjectId, now =
     ),
     ...hairstyles.map((hairstyle) =>
       app.collections.hairstyles.updateOne({ _id: hairstyle._id }, { $set: { ...blank(hairstyle), ...stopped(hairstyle, false), photosDeletedAt: now, updatedAt: now } }),
+    ),
+    ...makeup.map((tryOn) =>
+      app.collections.makeupTryOns.updateOne({ _id: tryOn._id }, { $set: { ...blank(tryOn), ...stopped(tryOn, false), photosDeletedAt: now, updatedAt: now } }),
     ),
     ...magazines.map((magazine) =>
       app.collections.magazines.updateOne({ _id: magazine._id }, { $set: { ...blank(magazine), ...stopped(magazine, false), photosDeletedAt: now, updatedAt: now } }),
@@ -171,6 +176,8 @@ export async function deleteAccount(app: FastifyInstance, userId: ObjectId, now 
   // Face Age is the exception to keeping records: her face photos, their
   // readings, her birth date and release all go (what the release promises).
   const look = await deleteLookData(app, userId, { profile: true })
+  // So do her Look Score and Hair Score photos, their readings and release.
+  const scores = await deleteScoreData(app, userId, { profile: true })
   // Refund requests stay for the books: screenshots go, decided ones are
   // scrubbed, open ones can still be decided (money back only).
   await forgetRefundRequests(app, userId)
@@ -219,5 +226,5 @@ export async function deleteAccount(app: FastifyInstance, userId: ObjectId, now 
     },
   )
 
-  return { files: files + look.photos, swept }
+  return { files: files + look.photos + scores.photos, swept }
 }

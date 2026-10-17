@@ -16,7 +16,8 @@ import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { currentHair } from '../avatar/hair.js'
-import { PaywallError, refundCredits, releaseHairRun, useHairRun } from '../billing/entitlements.js'
+import { PaywallError, refundCredits, releaseFreeUse, releaseHairRun, useHairRun } from '../billing/entitlements.js'
+import { isColorPreset } from './presets.js'
 import {
   HAIR_PROFILE_INSTRUCTIONS,
   HAIR_REQUEST_INSTRUCTIONS,
@@ -306,6 +307,14 @@ export async function markHairstyleFailed(app: FastifyInstance, hairstyleId: Obj
       await releaseHairRun(app, hairstyle.userId)
     }
   }
+
+  if (hairstyle.freePreset) {
+    const claimed = await app.collections.hairstyles.updateOne({ _id: hairstyleId, freePreset: true }, { $set: { freePreset: false } })
+
+    if (claimed.modifiedCount) {
+      await releaseFreeUse(app, hairstyle.userId, 'hair_preset')
+    }
+  }
 }
 
 // Renders one haircut on the person as a chest-up portrait (~25 s), saving
@@ -339,7 +348,12 @@ export async function runHairstyleRender(app: FastifyInstance, hairstyleId: Obje
     ]
     const png = await generateImageFromReferences({
       images,
-      prompt: buildHairstylePrompt({ name: hairstyle.name, render: hairstyle.render, hasReference: Boolean(reference) }),
+      prompt: buildHairstylePrompt({
+        name: hairstyle.name,
+        render: hairstyle.render,
+        hasReference: Boolean(reference),
+        colorOnly: hairstyle.source === 'preset' && isColorPreset(hairstyle.presetId),
+      }),
       size: '1024x1536',
       onPartial: async (partial) => {
         await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')
@@ -396,6 +410,7 @@ export async function serializeHairstyle(hairstyle: HairstyleDocument, currentHa
     id: hairstyle._id.toString(),
     source: hairstyle.source,
     recommendationId: hairstyle.recommendationId,
+    presetId: hairstyle.presetId ?? null,
     name: hairstyle.name,
     why: hairstyle.why,
     stylistBrief: hairstyle.stylistBrief,

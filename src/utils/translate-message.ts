@@ -25,6 +25,8 @@ export const TEMPLATES = [
   'You can have up to {count} collections.',
   'You can have up to {count} passkeys. Remove one first.',
   'You can try {count} hairstyles a day. Come back tomorrow.',
+  'You can add {count} photos a day. More tomorrow.',
+  'You can try {count} makeup looks a day. Come back tomorrow.',
   'You’ve broken down today’s {count} looks. Come back tomorrow.',
   'Your card was declined: {reason}',
   'You have {count} looks left. Ask for fewer, or add more looks.',

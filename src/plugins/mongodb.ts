@@ -11,6 +11,8 @@ import type {
   CollectionDocument,
   ColorCheckDocument,
   FaceCheckDocument,
+  MakeupTryOnDocument,
+  ScoreCheckDocument,
   EmailSendDocument,
   HairstyleDocument,
   LookDocument,
@@ -41,6 +43,8 @@ export type MongoCollections = {
   feedback: Collection<FeedbackDocument>
   colorChecks: Collection<ColorCheckDocument>
   faceChecks: Collection<FaceCheckDocument>
+  makeupTryOns: Collection<MakeupTryOnDocument>
+  scoreChecks: Collection<ScoreCheckDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
@@ -73,6 +77,8 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     feedback: mongoDb.collection<FeedbackDocument>('feedback'),
     colorChecks: mongoDb.collection<ColorCheckDocument>('color_checks'),
     faceChecks: mongoDb.collection<FaceCheckDocument>('face_checks'),
+    makeupTryOns: mongoDb.collection<MakeupTryOnDocument>('makeup_tryons'),
+    scoreChecks: mongoDb.collection<ScoreCheckDocument>('score_checks'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
@@ -137,6 +143,14 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     // Face Age: her timeline by the photo's date, and the day's count.
     collections.faceChecks.createIndex({ userId: 1, takenAt: -1 }),
     collections.faceChecks.createIndex({ userId: 1, createdAt: -1 }),
+    // Makeup try-ons: hers, newest first, and the interrupted-render sweep.
+    collections.makeupTryOns.createIndex({ userId: 1, createdAt: -1 }),
+    collections.makeupTryOns.createIndex({ status: 1, updatedAt: 1 }),
+    // Look Score / Hair Score: her timeline per kind, the same photo again,
+    // and the interrupted-read sweep.
+    collections.scoreChecks.createIndex({ userId: 1, kind: 1, takenAt: -1 }),
+    collections.scoreChecks.createIndex({ userId: 1, kind: 1, photoHash: 1 }),
+    collections.scoreChecks.createIndex({ status: 1, updatedAt: 1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
       { expireAfterSeconds: 0 },

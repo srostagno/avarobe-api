@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 
 import { settleFailure } from '../modules/avatar/service.js'
 import { refundCredits, releaseAvatarRun } from '../modules/billing/entitlements.js'
+import { markMakeupFailed } from '../modules/makeup/service.js'
 import { markHairstyleFailed } from '../modules/hair/service.js'
 import { BOARD_KINDS } from '../modules/report/boards.js'
 import { releaseGenerations } from './usage.js'
@@ -148,6 +149,19 @@ export async function failStaleJobs(app: FastifyInstance) {
 
   for (const hairstyle of stuckHairstyles) {
     await markHairstyleFailed(app, hairstyle._id)
+  }
+
+  // Makeup try-ons: an interrupted one gives back what it took.
+  const stuckMakeup = await app.collections.makeupTryOns
+    .find({ status: 'processing', updatedAt: { $lt: cutoff } }, { projection: { _id: 1 } })
+    .toArray()
+
+  for (const tryOn of stuckMakeup) {
+    await markMakeupFailed(app, tryOn._id)
+  }
+
+  if (stuckMakeup.length) {
+    app.log.warn({ makeup: stuckMakeup.length }, 'Marked interrupted makeup try-ons as failed')
   }
 
   if (hairProfiles.modifiedCount || stuckHairstyles.length) {

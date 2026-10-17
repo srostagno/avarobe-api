@@ -18,6 +18,8 @@ const LIMITS: Record<UsageKind, () => number> = {
   report: () => env.DAILY_REPORT_LIMIT,
   hair: () => env.DAILY_HAIR_LIMIT,
   image: () => env.AI_DAILY_IMAGE_LIMIT,
+  score: () => env.DAILY_SCORE_LIMIT,
+  makeup: () => env.DAILY_MAKEUP_LIMIT,
 }
 
 // The kinds whose generations are new pictures: each one also counts toward
@@ -25,7 +27,7 @@ const LIMITS: Record<UsageKind, () => number> = {
 // hair read, a color read: { image: false }). Color checks reserve 'image'
 // on their own. Reserving and releasing take the same option, so every path
 // that gives a generation back gives its picture back too.
-export const IMAGE_KINDS: ReadonlySet<UsageKind> = new Set<UsageKind>(['look', 'hair', 'avatar'])
+export const IMAGE_KINDS: ReadonlySet<UsageKind> = new Set<UsageKind>(['look', 'hair', 'avatar', 'makeup'])
 
 type ImageOption = { image?: boolean }
 
