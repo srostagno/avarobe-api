@@ -99,13 +99,13 @@ describe('the score', () => {
 describe('Score routes', () => {
   let files: ReturnType<typeof memoryStorage>
   let ai: ReturnType<typeof stubOpenAi>
-  const saved = { free: env.SCORE_FREE_PHOTOS, comp: env.COMP_EMAILS, samples: env.SCORE_SAMPLES, on: env.SCORES_ENABLED, daily: env.DAILY_SCORE_LIMIT }
+  const saved = { free: env.SCORE_FREE_PHOTOS, comp: env.COMP_EMAILS, samples: env.SCORE_SAMPLES, offset: env.SCORE_OFFSET, on: env.SCORES_ENABLED, daily: env.DAILY_SCORE_LIMIT }
 
   beforeEach(() => {
     files = memoryStorage()
     ai = stubOpenAi()
     ai.state.reply = (call) => (call.schema.endsWith('_measure') ? measured(LOOK_RATINGS) : words(call.schema.startsWith('hair') ? 'hair' : 'look'))
-    Object.assign(env, { SCORE_FREE_PHOTOS: 3, COMP_EMAILS: 'owner@avarobe.test', SCORE_SAMPLES: 1, SCORES_ENABLED: 'on', DAILY_SCORE_LIMIT: 20 })
+    Object.assign(env, { SCORE_FREE_PHOTOS: 3, COMP_EMAILS: 'owner@avarobe.test', SCORE_SAMPLES: 1, SCORE_OFFSET: 0, SCORES_ENABLED: 'on', DAILY_SCORE_LIMIT: 20 })
   })
 
   afterEach(() => {
@@ -115,6 +115,7 @@ describe('Score routes', () => {
       SCORE_FREE_PHOTOS: saved.free,
       COMP_EMAILS: saved.comp,
       SCORE_SAMPLES: saved.samples,
+      SCORE_OFFSET: saved.offset,
       SCORES_ENABLED: saved.on,
       DAILY_SCORE_LIMIT: saved.daily,
     })

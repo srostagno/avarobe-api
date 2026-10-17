@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
+import sharp from 'sharp'
 
 import { env } from '../../config/env.js'
 import type { ScoreCheckDocument, ScoreKind, ScoreProblem, ScoreReading, UserDocument } from '../../types/mongo.js'
@@ -107,11 +108,40 @@ async function measure(kind: ScoreKind, photo: Buffer) {
 
 const problemOf = (kind: ScoreKind, value: string) => (PROBLEMS[kind] as string[]).includes(value) ? (value as ScoreProblem) : 'too_blurry'
 
-// SCORE_SAMPLES measurements at once. Any that sees a minor stops it; the
-// photo is usable when most of them can rate it, and the usable ones are
-// averaged.
+// A slightly different copy of the photo (a 95% center crop, re-saved): at
+// temperature 0 the same bytes give the same answer, so a second sample of
+// the very same file adds nothing, while a re-saved photo can move a read
+// (evals/scores, Oct 17). Measuring a copy too averages that out.
+async function variantOf(photo: Buffer, index: number) {
+  if (index === 0) {
+    return photo
+  }
+
+  const meta = await sharp(photo).metadata()
+  const width = meta.width ?? 0
+  const height = meta.height ?? 0
+  const keep = 1 - 0.05 * index
+
+  if (!width || !height) {
+    return photo
+  }
+
+  const cropW = Math.round(width * keep)
+  const cropH = Math.round(height * keep)
+
+  return sharp(photo)
+    .extract({ left: Math.round((width - cropW) / 2), top: Math.round((height - cropH) / 2), width: cropW, height: cropH })
+    .jpeg({ quality: 85 })
+    .toBuffer()
+}
+
+// SCORE_SAMPLES measurements at once (the photo, then slightly cropped
+// copies). Any that sees a minor stops it; the photo is usable when most of
+// them can rate it, and the usable ones are averaged.
 export async function measureScore(kind: ScoreKind, photo: Buffer) {
-  const samples = await Promise.all(Array.from({ length: env.SCORE_SAMPLES }, () => measure(kind, photo)))
+  const samples = await Promise.all(
+    Array.from({ length: env.SCORE_SAMPLES }, async (_, index) => measure(kind, await variantOf(photo, index))),
+  )
   const minor = samples.find((sample) => sample.problem === 'minor')
   const usable = samples.filter((sample) => sample.usable && sample.problem === 'none')
 

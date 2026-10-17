@@ -61,6 +61,7 @@ export const enEmails = {
       `Up to ${limits.avatarRuns} avatar changes a month.`,
       'Try on the seasonal Edits.',
       'Face Age: a photo of your face whenever you like, the age it reads and all your tips each time, and your timeline.',
+      'Look Score and Hair Score, and every makeup look, cut and color tried on you.',
     ],
     fairUse: (images: number) => `Fair use: up to ${images} new pictures a day.`,
     firstWeek: (first: number, credits: number, days: number) =>

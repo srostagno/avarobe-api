@@ -48,6 +48,7 @@ export const esEmails: EmailCopy = {
       `Hasta ${limits.avatarRuns} cambios de avatar al mes.`,
       'Pruébate los Edits de cada temporada.',
       'Edad del rostro: una foto de tu rostro cuando quieras, la edad que refleja y todos tus consejos cada vez, y tu línea de tiempo.',
+      'Puntaje del look, puntaje del cabello, y todos los maquillajes, cortes y colores probados en ti.',
     ],
     fairUse: (images: number) => `Uso justo: hasta ${images} imágenes nuevas al día.`,
     firstWeek: (first: number, credits: number, days: number) =>

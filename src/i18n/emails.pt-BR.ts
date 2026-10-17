@@ -47,6 +47,7 @@ export const ptBrEmails: EmailCopy = {
       `Até ${limits.avatarRuns} mudanças no avatar por mês.`,
       'Prove os Edits de cada estação.',
       'Idade do rosto: uma foto do seu rosto quando quiser, a idade que ele aparenta e todas as suas dicas a cada vez, e sua linha do tempo.',
+      'Nota do look, nota do cabelo, e todas as maquiagens, cortes e cores provados em você.',
     ],
     fairUse: (images: number) => `Uso justo: até ${images} imagens novas por dia.`,
     firstWeek: (first: number, credits: number, days: number) =>

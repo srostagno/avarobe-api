@@ -243,8 +243,12 @@ const envSchema = z.object({
   // from them: OFFSET moves every score, FLOOR is the lowest shown (honest,
   // never cruel). Recalibrate with evals/scores before changing any.
   SCORE_MEASURE_MODEL: z.string().default('gpt-5.4-mini'),
-  SCORE_SAMPLES: z.coerce.number().int().min(1).max(3).default(2),
-  SCORE_OFFSET: z.coerce.number().min(-30).max(30).default(0),
+  // Calibrated Oct 17 (evals/scores, rubric scores-2026-10-17b): one sample
+  // held as steady as two, and -7 puts everyday photos at about 60–75
+  // (poor ~40, excellent ~85). The same photo again never moves: it returns
+  // its read.
+  SCORE_SAMPLES: z.coerce.number().int().min(1).max(3).default(1),
+  SCORE_OFFSET: z.coerce.number().min(-30).max(30).default(-7),
   SCORE_FLOOR: z.coerce.number().int().min(1).max(60).default(35),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),

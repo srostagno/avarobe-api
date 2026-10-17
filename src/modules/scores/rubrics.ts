@@ -6,7 +6,7 @@ import type { ScoreKind, ScoreProblem } from '../../types/mongo.js'
 // is a new RUBRIC_VERSION (stored on each reading); recalibrate with
 // evals/scores before shipping one.
 
-export const RUBRIC_VERSION = 'scores-2026-10-17'
+export const RUBRIC_VERSION = 'scores-2026-10-17b'
 
 export type Criterion = { id: string; name: string; measures: string; anchors: [string, string, string, string, string] }
 
@@ -14,58 +14,60 @@ const LOOK_CRITERIA: Criterion[] = [
   {
     id: 'color',
     name: 'Color',
-    measures: 'how the colors work together and how the colors nearest the face flatter her coloring',
+    measures:
+      'how the colors work together and how the colors nearest the face flatter her coloring. When colors in the outfit clash, rate the clash even if the color by the face flatters',
     anchors: [
-      'colors clash, or the color by the face clearly drains or washes her out',
-      'mostly flat or draining near the face, or colors that fight each other',
+      'two or more colors clash, or the color by the face clearly drains her',
+      'one color fights the rest, or the color by the face is draining',
       'fine and safe, nothing wrong but nothing that lights her up',
-      'harmonious and flattering near the face',
+      'every color works with the others and the color by the face flatters',
       'a deliberate, striking palette that clearly lights up her face',
     ],
   },
   {
     id: 'fit',
     name: 'Fit',
-    measures: 'how the garments fit her: shoulders, sleeve and hem lengths, ease (not tight, not swamping)',
+    measures:
+      "how each garment's size and cut suit her: pulling or gaping at buttons, riding up, too tight, too loose, sleeves or hems too short or long. These are faults of the garment's size, never of her body",
     anchors: [
-      'several pieces clearly do not fit (pulling, gaping, swamping, wrong lengths)',
-      'one clear fit problem that stands out',
+      'two or more pieces are visibly the wrong size or length',
+      'one piece is visibly the wrong size or length (pulling, gaping, riding up, too short, swamping)',
       'acceptable fit with small issues',
-      'fits well everywhere',
-      'impeccable, tailored-looking fit',
+      'every piece fits; nothing pulls, gapes or bunches',
+      'fits as if tailored: clean shoulders, exact hems',
     ],
   },
   {
     id: 'proportion',
     name: 'Proportion',
-    measures: 'the silhouette: balance of volumes and lengths, where the waist and hems fall, the overall line',
+    measures: 'the line, separate from fit: where the waist is marked or suggested, where hems fall (knee, mid-calf, ankle), top versus bottom volume',
     anchors: [
-      'the proportions cut or overwhelm her figure badly',
-      'unbalanced: too much volume or lengths that shorten her',
-      'neutral, neither helps nor hurts',
-      'balanced and flattering',
-      'a perfectly balanced, elongating silhouette',
+      'volume and lengths fight each other (a long shapeless top over wide or cropped bottoms, a hem at the widest point)',
+      'one length or volume choice shortens or widens the line',
+      'neutral: no defined line, nothing wrong',
+      'a clear, balanced line (waist marked, or a clean column; hems at a flattering point)',
+      'a deliberately elongating line, every length chosen',
     ],
   },
   {
     id: 'cohesion',
     name: 'Style',
-    measures: 'whether the pieces belong together with a clear point of view, current and polished rather than dated or frumpy, and suited to the occasion the outfit suggests',
+    measures: 'whether the pieces belong together and look current, suited to the occasion the outfit suggests',
     anchors: [
-      'pieces fight each other, or the look is clearly dated',
-      'some pieces don\'t belong, or it reads frumpy',
-      'coherent but generic',
-      'polished and current, with a clear style',
+      'pieces clash in style or era (for example sporty socks with dressy shoes)',
+      "reads frumpy or dated, or a piece doesn't belong",
+      'coherent but generic, or neat but dated',
+      'coherent and current: the shapes and pieces look like this decade',
       'a strong, modern personal style, effortless and intentional',
     ],
   },
   {
     id: 'finish',
     name: 'Finishing',
-    measures: 'shoes, bag, jewelry, belt, layers, and how cared-for the clothes look (pressed, lint-free)',
+    measures: 'shoes, bag, jewelry, belt, layers, and how cared-for the clothes look (pressed, lint-free, shoes in good shape)',
     anchors: [
-      'sloppy or unfinished (creased, worn, mismatched shoes)',
-      'little finishing, or one piece lets it down',
+      'visible wear or neglect: stains, pilling, heavy creases, scuffed or dirty shoes',
+      "one thing lets it down (creases, worn shoes, a bag that doesn't go)",
       'adequate finishing',
       'well finished with fitting shoes and accessories',
       'thoughtfully finished, every detail chosen',
@@ -89,10 +91,11 @@ const HAIR_CRITERIA: Criterion[] = [
   {
     id: 'color',
     name: 'Color',
-    measures: 'how the color suits her skin and eyes and how fresh it looks (regrowth, brassiness, dullness, flatness). Natural gray or silver is judged on its tone and shine, never for being gray',
+    measures:
+      'how the color suits her skin and eyes and how fresh it looks (regrowth, brassiness, dullness, flatness). Natural gray or silver is judged on its tone and shine, never for being gray',
     anchors: [
-      'the color clearly clashes with her skin, or obvious regrowth or brassiness',
-      'flat, dull or somewhat unflattering',
+      'regrowth wider than a finger, strong brassy or orange tones, or a color that clearly clashes with her skin',
+      'some visible regrowth or brassiness, or a flat, dull color',
       'fine, neither helps nor hurts',
       'flattering and fresh',
       'a beautiful, dimensional color that lights up her face',
@@ -103,8 +106,8 @@ const HAIR_CRITERIA: Criterion[] = [
     name: 'Condition',
     measures: 'how healthy the hair looks: shine, smoothness, ends, frizz',
     anchors: [
-      'very dry, frizzy or damaged-looking',
-      'dull with visible frizz or rough ends',
+      'dry, frizzy or broken ends along most of the hair',
+      'frizz or rough ends visible in places',
       'average condition',
       'healthy and shiny',
       'glossy and in excellent condition',
@@ -125,10 +128,10 @@ const HAIR_CRITERIA: Criterion[] = [
   {
     id: 'modern',
     name: 'Modern',
-    measures: 'how current the overall hair looks: a cut, color and styling that feel of today rather than dated',
+    measures: 'how current the cut and styling look (shape, length, layers, parting), not the color',
     anchors: [
-      'clearly dated',
-      'a little dated',
+      'a clearly dated shape (a grown-out perm, a helmet set)',
+      'a little dated: heavy one-length, or an old-fashioned parting',
       'timeless but unremarkable',
       'current and fresh',
       'modern and effortlessly chic',

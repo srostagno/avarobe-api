@@ -68,7 +68,7 @@ export function buildMeasureInstructions(kind: ScoreKind) {
     'If any applies, set usable false, that problem, every criterion 0, and still describe the photo.',
     'Otherwise set usable true, problem "none", and rate each criterion with the whole number whose description fits best:',
     ...criteria,
-    'Use the descriptions literally. Most everyday photos are a 2 on most criteria; give 4 only for genuinely excellent, 0 only for a clear problem. Judge what is visible; the light of the photo is not the outfit\'s or the hair\'s fault.',
+    "Rate each criterion on its own, from what you see for that criterion only; criteria often differ. When a 0 or 1 description names something visible in the photo, give that rating even if the rest is fine. Give 4 only when its description truly fits. Judge what is visible; the light of the photo is not the outfit's or the hair's fault.",
     `photo: the light (good: soft and even; dim; harsh: hard shadows or flash) and the framing (good: ${kind === 'look' ? 'head to toe' : 'the whole hair clearly visible'}; partial).`,
     ...GUARDRAILS,
   ].join('\n')
