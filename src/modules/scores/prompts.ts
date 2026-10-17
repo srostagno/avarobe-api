@@ -17,7 +17,8 @@ const PROBLEM_RULES: Record<string, string> = {
   minor: '"minor": the person looks under 18. Do not rate them.',
   too_dark: '"too_dark": too dark to judge.',
   too_blurry: '"too_blurry": too blurry to judge.',
-  not_full_body: '"not_full_body": the outfit is not visible at least from the shoulders to below the hips (a mirror selfie is fine; shoes may be out of frame).',
+  not_full_body:
+    '"not_full_body": no outfit can be judged: only the face or head is visible, or the clothes are cut off above the chest. A photo from the waist or chest down to the hips is NOT this problem: rate it with framing "partial".',
   hair_not_visible: '"hair_not_visible": the hair is not clearly visible (covered, out of frame or too far away).',
 }
 
@@ -70,6 +71,9 @@ export function buildMeasureInstructions(kind: ScoreKind) {
     ...criteria,
     "Rate each criterion on its own, from what you see for that criterion only; criteria often differ. When a 0 or 1 description names something visible in the photo, give that rating even if the rest is fine. Give 4 only when its description truly fits. Judge what is visible; the light of the photo is not the outfit's or the hair's fault.",
     `photo: the light (good: soft and even; dim; harsh: hard shadows or flash) and the framing (good: ${kind === 'look' ? 'head to toe' : 'the whole hair clearly visible'}; partial).`,
+    ...(kind === 'look'
+      ? ['With framing "partial", rate every criterion on what is visible; never lower a rating for what is out of frame (shoes, hems).']
+      : []),
     ...GUARDRAILS,
   ].join('\n')
 }

@@ -6,7 +6,7 @@ import type { ScoreKind, ScoreProblem } from '../../types/mongo.js'
 // is a new RUBRIC_VERSION (stored on each reading); recalibrate with
 // evals/scores before shipping one.
 
-export const RUBRIC_VERSION = 'scores-2026-10-17b'
+export const RUBRIC_VERSION = 'scores-2026-10-17c'
 
 export type Criterion = { id: string; name: string; measures: string; anchors: [string, string, string, string, string] }
 
