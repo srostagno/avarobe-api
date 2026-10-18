@@ -40,6 +40,10 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
       name: 'Os três consultores',
       description: 'Cores com o espelho ao vivo, seu perfil de estilo e cada corte em você.',
     },
+    teaser_unlock: {
+      name: 'Seu resultado perfeito, desbloqueado',
+      description: 'Uma imagem desenhada para você, para sempre sua: seu corte perfeito, seu look ou seu melhor rosto.',
+    },
     outfit_guide: {
       name: 'O Livro de Fórmulas de Looks',
       description: '120 fórmulas de looks que sempre funcionam, com o método Cor, Forma e Acabamento. Um guia em PDF, em inglês, para sempre seu.',
@@ -101,6 +105,10 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     advisors_bundle: {
       name: 'Los tres asesores',
       description: 'Tus colores con el espejo en vivo, tu perfil de estilo y cada corte en ti.',
+    },
+    teaser_unlock: {
+      name: 'Tu resultado perfecto, desbloqueado',
+      description: 'Una imagen dibujada para ti, tuya para siempre: tu corte perfecto, tu look o tu mejor rostro.',
     },
     outfit_guide: {
       name: 'El Libro de Fórmulas de Outfits',

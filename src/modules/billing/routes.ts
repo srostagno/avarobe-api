@@ -80,7 +80,10 @@ const checkoutSchema = z.object({
     'advisors_bundle',
     'event_pass',
     'magazine',
+    'teaser_unlock',
   ]),
+  // The teaser a teaser_unlock pays for.
+  teaserId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   // Browser analytics ids for server-side purchase events; absent when the
   // visitor opted out.
   attribution: z
@@ -360,6 +363,26 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ code: 'owned', message: reason })
       }
 
+      // One teaser on its own: hers, drawn, and still locked; without an id
+      // (a pay link, the jump to Safari), her latest locked one.
+      let teaserId: string | undefined
+
+      if (parsed.data.product === 'teaser_unlock') {
+        const teaser = parsed.data.teaserId
+          ? await app.collections.teasers.findOne({ _id: new ObjectId(parsed.data.teaserId), userId })
+          : await app.collections.teasers.findOne({ userId, status: 'ready', unlockedAt: null }, { sort: { createdAt: -1 } })
+
+        if (!teaser || teaser.status !== 'ready') {
+          return reply.code(404).send({ message: 'That picture isn’t ready to unlock.' })
+        }
+
+        if (teaser.unlockedAt) {
+          return reply.code(409).send({ code: 'owned', message: 'It’s already yours.' })
+        }
+
+        teaserId = teaser._id.toString()
+      }
+
       try {
         const location = await app.collections.users.findOne({ _id: userId }, { projection: { location: 1, acquisition: 1, createdAt: 1 } })
         const region = pricingRegion(request, location)
@@ -379,6 +402,7 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           embedded: parsed.data.embedded,
           region,
           placement: parsed.data.placement,
+          teaserId,
           // An admin's own test purchase never reaches Meta or Google as a
           // conversion: signed in, without the browser ids or the tracking
           // flag there's nothing to report; as a guest, reportPurchase knows

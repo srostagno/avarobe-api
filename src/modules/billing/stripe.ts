@@ -11,7 +11,7 @@ import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
-import { maybeStartTeaser } from '../teasers/service.js'
+import { maybeStartTeaser, unlockTeaser } from '../teasers/service.js'
 import { reportPurchase } from './conversions.js'
 import {
   annualFirstWeek,
@@ -121,6 +121,13 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     name: 'The Outfit Formula Book',
     description: '120 outfit formulas that always work, with the Color, Shape and Finish method. A PDF guide, yours to keep.',
     amount: () => env.PRICE_OUTFIT_GUIDE_CENTS,
+    credits: () => 0,
+  },
+  teaser_unlock: {
+    lookupKey: 'avarobe_teaser_unlock_v1',
+    name: 'Your perfect result, unlocked',
+    description: 'One picture drawn for you, yours to keep: your perfect haircut, look or best face.',
+    amount: () => env.PRICE_TEASER_UNLOCK_CENTS,
     credits: () => 0,
   },
   event_pass: {
@@ -600,6 +607,8 @@ export async function createCheckout(input: {
   // to the purchase, so a checkout opened from an email (no click in the
   // app to count) is attributed too.
   placement?: string
+  // The teaser a teaser_unlock pays for: unlocked when the payment lands.
+  teaserId?: string
 }): Promise<{ url: string | null; clientSecret: string | null }> {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
@@ -614,6 +623,7 @@ export async function createCheckout(input: {
     locale,
     ...(input.placement ? { placement: input.placement } : {}),
     ...(input.halfOffCents ? { offer: 'pro_half' } : {}),
+    ...(input.teaserId ? { teaserId: input.teaserId } : {}),
   }
   const discount =
     input.halfOffCents && input.halfOffCents > 0
@@ -913,6 +923,8 @@ type Grant = {
   rollover?: boolean
   // The terms accepted at checkout (session.consent), when known.
   terms?: 'accepted' | null
+  // The teaser a teaser_unlock pays for (createCheckout's teaserId).
+  teaserId?: string | null
 }
 
 // Records one payment and applies it to the user in a transaction: credits,
@@ -1016,6 +1028,15 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
   // drawn ahead, blurred until Pro, for the purchase page and her studio.
   if (TEASER_AFTER.has(grant.product)) {
     void maybeStartTeaser(app, grant.userId, 'perfect_haircut', purchaseId, { tips: [] })
+  }
+
+  // One teaser bought on its own: hers now, as with Pro.
+  if (grant.product === 'teaser_unlock' && grant.teaserId && ObjectId.isValid(grant.teaserId)) {
+    const teaser = await app.collections.teasers.findOne({ _id: new ObjectId(grant.teaserId), userId: grant.userId })
+
+    if (teaser && teaser.status !== 'failed') {
+      await unlockTeaser(app, teaser).catch((error: unknown) => app.log.error({ err: error, teaserId: grant.teaserId }, 'Paid teaser unlock failed'))
+    }
   }
 
   return true
@@ -1128,6 +1149,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
     currency: session.currency ?? 'usd',
     placement: session.metadata?.placement ?? null,
     terms: termsOf(session),
+    teaserId: session.metadata?.teaserId ?? null,
   })
 
   if (applied) {

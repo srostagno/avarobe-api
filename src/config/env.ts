@@ -140,6 +140,8 @@ const envSchema = z.object({
   MAGAZINE_IMAGE_QUALITY: z.enum(['low', 'medium', 'high']).default('high'),
   // The Outfit Formula Book (PDF), and where the server finds the file.
   PRICE_OUTFIT_GUIDE_CENTS: z.coerce.number().int().min(100).default(1490),
+  // One teaser unlocked without Pro (teasers): the downsell under Pro.
+  PRICE_TEASER_UNLOCK_CENTS: z.coerce.number().int().min(100).default(199),
   OUTFIT_GUIDE_PDF: z.string().default('assets/products/outfit-formula-book.pdf'),
   LOOK_PACK_CREDITS: z.coerce.number().int().min(1).default(10),
   PRICE_PRO_MONTHLY_CENTS: z.coerce.number().int().min(100).default(799),

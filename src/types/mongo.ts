@@ -335,6 +335,9 @@ export type PurchaseProduct =
   | 'magazine'
   // The Outfit Formula Book, a PDF guide (also sold to guests, see GuideOrderDocument).
   | 'outfit_guide'
+  // One teaser unlocked without Pro (Oct 18, 2026): her perfect haircut,
+  // look or best face, the teaser in the purchase's metadata.teaserId.
+  | 'teaser_unlock'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'
