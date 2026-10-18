@@ -1308,6 +1308,173 @@ const zodiac: EditLook[] = [
   },
 ]
 
+const LAST_MINUTE = 'social/2026-10-halloween-lastminute/gen'
+const LAST_MINUTE_ERA = 'Halloween 2026 · last minute'
+// The Last-Minute Costume Edit (Oct 20, design/social/2026-10-halloween-lastminute):
+// Greta's white tee and jeans plus two or three things from a closet or a
+// drugstore, each costume made in ten minutes.
+const TEE: EditLook['items'] = [
+  { slot: 'top', name: 'Crew-neck tee', color: 'White', colorHex: '#F5F4F0', material: 'Cotton', fit: 'Classic, loosely tucked in' },
+  { slot: 'bottom', name: 'Straight-leg jeans', color: 'Mid blue', colorHex: '#5B7FA6', material: 'Denim', fit: 'High rise, straight leg' },
+]
+const SNEAKERS: EditLook['items'][number] = { slot: 'shoes', name: 'Leather sneakers', color: 'White', colorHex: '#F2F1ED', material: 'Leather', fit: 'Low top' }
+const party = (light: string) => `a living room at a home Halloween party, lit by ${light}`
+
+const lastMinute: EditLook[] = [
+  {
+    id: 'hl-cowgirl', presentation: 'womenswear', name: 'Cowgirl', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/cowgirl.png`,
+    scene: party('a warm amber light'),
+    description: 'A cowboy hat, a bandana and your boots: yeehaw in five minutes.',
+    items: [
+      { slot: 'accessory', name: 'Cowboy hat', color: 'Tan', colorHex: '#C8A27A', material: 'Felt', fit: 'Classic brim' },
+      { slot: 'accessory', name: 'Paisley bandana', color: 'Red', colorHex: '#B3242C', material: 'Cotton', fit: 'Tied around the neck' },
+      { slot: 'accessory', name: 'Leather belt', color: 'Brown', colorHex: '#6B4226', material: 'Leather', fit: 'Simple buckle' },
+      ...TEE,
+      { slot: 'shoes', name: 'Cowboy boots', color: 'Brown', colorHex: '#6E4429', material: 'Leather', fit: 'Pointed toe, block heel' },
+    ],
+  },
+  {
+    id: 'hl-flower-child', presentation: 'womenswear', name: 'Flower Child', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/flower-child.png`,
+    scene: party('a soft orange and pink light'),
+    makeup: 'soft bronzed seventies makeup',
+    description: 'A fringe vest, tinted round glasses and a daisy band: pure seventies.',
+    items: [
+      { slot: 'outerwear', name: 'Fringe vest', color: 'Tan', colorHex: '#B58457', material: 'Suede', fit: 'Open, over the tee' },
+      { slot: 'accessory', name: 'Round sunglasses', color: 'Orange tint', colorHex: '#E08A3C', material: 'Metal frame', fit: 'Small round' },
+      { slot: 'accessory', name: 'Daisy headband', color: 'White', colorHex: '#F4F2EA', material: 'Faux flowers', fit: 'Across the forehead' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-pirate', presentation: 'womenswear', name: 'Pirate', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/pirate.png`,
+    scene: party('a deep teal light like an old lantern at sea'),
+    makeup: 'smudged black eyeliner',
+    description: 'A head scarf, a sash, big hoops and smudged liner: the easiest pirate on the seven seas.',
+    items: [
+      { slot: 'accessory', name: 'Head scarf', color: 'Red', colorHex: '#9E2A2B', material: 'Cotton', fit: 'Tied over the head' },
+      { slot: 'accessory', name: 'Hoop earrings', color: 'Gold', colorHex: '#C9A44C', material: 'Metal', fit: 'Large' },
+      { slot: 'accessory', name: 'Waist sash', color: 'Black', colorHex: '#141414', material: 'Satin', fit: 'Tied at the hip' },
+      ...TEE,
+      { slot: 'shoes', name: 'Ankle boots', color: 'Black', colorHex: '#141414', material: 'Leather', fit: 'Block heel' },
+    ],
+  },
+  {
+    id: 'hl-bumblebee', presentation: 'womenswear', name: 'Bumblebee', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/bumblebee.png`,
+    scene: party('a warm golden yellow light'),
+    makeup: 'a little black dot drawn on the tip of her nose',
+    description: 'A yellow cardigan, pom-pom antennae and tiny wings: sweet as honey.',
+    items: [
+      { slot: 'outerwear', name: 'Cardigan', color: 'Bright yellow', colorHex: '#F2C230', material: 'Knit', fit: 'Open, over the tee' },
+      { slot: 'accessory', name: 'Antennae headband', color: 'Black', colorHex: '#111111', material: 'Pom-poms', fit: 'Two small antennae' },
+      { slot: 'accessory', name: 'Bee wings', color: 'Black sheer', colorHex: '#2A2A2A', material: 'Mesh', fit: 'Small, on the back' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-tourist', presentation: 'womenswear', name: 'Tourist', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/tourist.png`,
+    scene: party('a cheerful pink and turquoise light'),
+    description: 'A tropical shirt, a bucket hat, a camera and a fanny pack: lost, and loving it.',
+    items: [
+      { slot: 'outerwear', name: 'Tropical shirt', color: 'Multicolor', colorHex: '#3E9C8F', material: 'Rayon', fit: 'Short sleeves, unbuttoned over the tee' },
+      { slot: 'accessory', name: 'Bucket hat', color: 'Natural', colorHex: '#D9C49A', material: 'Straw', fit: 'Small brim' },
+      { slot: 'accessory', name: 'Camera', color: 'Black', colorHex: '#1A1A1A', material: 'Plastic', fit: 'On a strap around the neck' },
+      { slot: 'bag', name: 'Fanny pack', color: 'Beige', colorHex: '#CDB89A', material: 'Nylon', fit: 'Worn across the body' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-chef', presentation: 'womenswear', name: 'Chef', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/chef.png`,
+    scene: party('a warm bright white light'),
+    description: "An apron, a paper chef's hat and a wooden spoon: chef's kiss.",
+    items: [
+      { slot: 'accessory', name: "Chef's hat", color: 'White', colorHex: '#F7F7F5', material: 'Paper', fit: 'Tall' },
+      { slot: 'accessory', name: 'Striped apron', color: 'Navy and white', colorHex: '#2B3A55', material: 'Cotton', fit: 'Full length, tied at the waist' },
+      { slot: 'accessory', name: 'Neckerchief', color: 'Red', colorHex: '#B3242C', material: 'Cotton', fit: 'Small, tied at the neck' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-mad-scientist', presentation: 'womenswear', name: 'Mad Scientist', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/mad-scientist.png`,
+    scene: party('an eerie acid green light'),
+    makeup: 'her hair teased wild and messy',
+    description: 'A white coat, safety goggles and a glowing test tube: it’s alive!',
+    items: [
+      { slot: 'outerwear', name: 'Lab coat', color: 'White', colorHex: '#F4F4F2', material: 'Cotton', fit: 'Knee length, open' },
+      { slot: 'accessory', name: 'Safety goggles', color: 'Clear', colorHex: '#DCE3E6', material: 'Plastic', fit: 'Pushed up on the forehead' },
+      { slot: 'accessory', name: 'Glow test tube', color: 'Neon green', colorHex: '#7CFC3A', material: 'Plastic', fit: 'Held in one hand' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-cat-burglar', presentation: 'womenswear', name: 'Cat Burglar', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/cat-burglar.png`,
+    scene: party('a cool blue moonlight'),
+    description: 'A black hoodie, a beanie, an eye mask and a loot bag: here for the candy.',
+    items: [
+      { slot: 'outerwear', name: 'Zip hoodie', color: 'Black', colorHex: '#151515', material: 'Cotton fleece', fit: 'Zipped over the tee' },
+      { slot: 'accessory', name: 'Beanie', color: 'Black', colorHex: '#141414', material: 'Knit', fit: 'Fitted' },
+      { slot: 'accessory', name: 'Eye mask', color: 'Black', colorHex: '#111111', material: 'Fabric', fit: 'Simple' },
+      { slot: 'bag', name: 'Loot sack', color: 'Black', colorHex: '#1C1C1C', material: 'Cotton', fit: 'Over the shoulder' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-deviled-egg', presentation: 'womenswear', name: 'Deviled Egg', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/deviled-egg.png`,
+    scene: party('a red party light'),
+    makeup: 'a red lip',
+    description: 'Your white tee, a felt yolk and devil horns: the pun everyone gets.',
+    items: [
+      { slot: 'accessory', name: 'Felt yolk', color: 'Yellow', colorHex: '#F2B705', material: 'Felt', fit: 'A round circle pinned on the tee' },
+      { slot: 'accessory', name: 'Devil horns headband', color: 'Red', colorHex: '#C1121F', material: 'Sparkly plastic', fit: 'Small horns' },
+      { slot: 'accessory', name: 'Toy pitchfork', color: 'Red', colorHex: '#C1121F', material: 'Plastic', fit: 'Small, held in one hand' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-garden-gnome', presentation: 'womenswear', name: 'Garden Gnome', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/garden-gnome.png`,
+    scene: party('a soft moss green and warm light'),
+    makeup: 'rosy round cheeks drawn with blush',
+    description: 'A pointed red hat, suspenders and a fluffy beard: the cutest gnome in the yard.',
+    items: [
+      { slot: 'accessory', name: 'Pointed hat', color: 'Red', colorHex: '#B11E2B', material: 'Felt', fit: 'Tall, pointed' },
+      { slot: 'accessory', name: 'Costume beard', color: 'White', colorHex: '#F1EFEA', material: 'Faux fur', fit: 'Short, hooked over the ears' },
+      { slot: 'accessory', name: 'Suspenders', color: 'Red', colorHex: '#B11E2B', material: 'Elastic', fit: 'Over the tee' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-rock-star', presentation: 'womenswear', name: '80s Rock Star', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/rock-star.png`,
+    scene: party('a hot magenta and purple light'),
+    makeup: 'smoky black eye makeup, her hair teased big with lots of volume',
+    description: 'A leather jacket, big hair and smoky eyes: rock and roll all night.',
+    items: [
+      { slot: 'outerwear', name: 'Biker jacket', color: 'Black', colorHex: '#121212', material: 'Leather', fit: 'Cropped, open' },
+      { slot: 'accessory', name: 'Studded wristbands', color: 'Black', colorHex: '#151515', material: 'Leather', fit: 'One on each wrist' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+  {
+    id: 'hl-static-cling', presentation: 'womenswear', name: 'Static Cling', era: LAST_MINUTE_ERA, mood: 'Costume party', person: 'greta', source: `${LAST_MINUTE}/static-cling.png`,
+    scene: party('a soft electric blue light'),
+    makeup: 'her hair a little frizzy and standing up like static',
+    description: 'Odd socks and dryer sheets pinned all over: the laundry-day pun.',
+    items: [
+      { slot: 'accessory', name: 'Odd socks', color: 'Multicolor', colorHex: '#D9564A', material: 'Cotton', fit: 'Five or six, pinned on' },
+      { slot: 'accessory', name: 'Dryer sheets', color: 'White', colorHex: '#F6F6F4', material: 'Fabric', fit: 'A few, pinned on' },
+      ...TEE,
+      SNEAKERS,
+    ],
+  },
+]
+
 export const EDITS: Edit[] = [
   {
     id: 'halloween-2026',
@@ -1342,6 +1509,15 @@ export const EDITS: Edit[] = [
     droppedAt: '2026-10-14',
     costumes: true,
     looks: zodiac,
+  },
+  {
+    id: 'last-minute-2026',
+    name: 'The Last-Minute Costume Edit',
+    emoji: '🦇',
+    tagline: 'Your white tee, your jeans and two or three things from your closet: costumes you can make tonight.',
+    droppedAt: '2026-10-20',
+    costumes: true,
+    looks: lastMinute,
   },
 ]
 
