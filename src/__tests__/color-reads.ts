@@ -156,6 +156,12 @@ export function stubOpenAi() {
 
     if (target.endsWith('/images/edits') && state.images > 0 && state.image) {
       state.images -= 1
+
+      // Without previews it's one JSON answer, not a stream.
+      if (init?.body instanceof FormData && !init.body.get('stream')) {
+        return json(200, { data: [{ b64_json: state.image.toString('base64') }] })
+      }
+
       const event = JSON.stringify({ type: 'image_edit.completed', b64_json: state.image.toString('base64') })
 
       return new Response(`data: ${event}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })

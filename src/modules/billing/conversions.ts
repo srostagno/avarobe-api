@@ -263,6 +263,8 @@ type PurchaseReport = {
   checkout?: CheckoutBuyer
 }
 
+const SUBSCRIPTIONS = new Set(['pro_monthly', 'pro_annual'])
+
 function metaConfigured() {
   return Boolean(env.META_CAPI_TOKEN && env.META_PIXEL_ID)
 }
@@ -296,6 +298,28 @@ export function sendMetaPurchase(input: Omit<PurchaseReport, 'checkout'> & { cus
           content_type: 'product',
         },
       },
+      // A Pro subscription is also a Subscribe (Oct 18, 2026), from the
+      // server too so Meta sees every one (the browser's copy, same id, is
+      // deduplicated), valued at what it's likely worth: a monthly plan
+      // counts about 3.7 months (an estimate until there's real retention);
+      // an annual one, its first year.
+      ...(SUBSCRIPTIONS.has(input.product)
+        ? [
+            {
+              event_name: 'Subscribe',
+              event_time: Math.floor((input.eventTime?.getTime() ?? Date.now()) / 1000),
+              event_id: `${input.transactionId}-sub`,
+              action_source: 'website',
+              event_source_url: `${env.APP_URL}/studio/billing/success`,
+              user_data: userData,
+              custom_data: {
+                value: input.amount / 100,
+                currency: input.currency.toUpperCase(),
+                predicted_ltv: input.product === 'pro_monthly' ? Math.round((input.amount / 100) * 3.7 * 100) / 100 : input.amount / 100,
+              },
+            },
+          ]
+        : []),
     ],
   })
 }

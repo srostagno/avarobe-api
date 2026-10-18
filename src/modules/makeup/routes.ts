@@ -9,6 +9,7 @@ import { storage } from '../../utils/storage.js'
 import { dailyLimitReply, releaseGenerations, remainingGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { PaywallError, requirePro, sendPaywall, spendCredits } from '../billing/entitlements.js'
+import { unlockTeaser } from '../teasers/service.js'
 import {
   BEST_FACE_PREFIX,
   MakeupLockedError,
@@ -118,6 +119,26 @@ const makeupRoutes: FastifyPluginAsync = async (app) => {
 
     if (!avatar?.selfieKey) {
       return reply.code(409).send({ code: 'needs_selfie', message: 'Add your selfie first.' })
+    }
+
+    // Drawn ahead for her (teasers): with Pro it's hers at once, no credit.
+    const teaser = await app.collections.teasers.findOne({ userId, sourceId: checkId, kind: 'best_face', status: { $ne: 'failed' } })
+
+    if (teaser) {
+      try {
+        await requirePro(app, userId, 'Your best face')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      const resultId = await unlockTeaser(app, teaser)
+      const made = resultId ? await app.collections.makeupTryOns.findOne({ _id: resultId, userId }) : null
+
+      return reply.code(made ? 200 : 202).send({ tryOn: made ? await serializeMakeupTryOn(made) : null })
     }
 
     const existing = await app.collections.makeupTryOns.findOne({ userId, presetId: `${BEST_FACE_PREFIX}${checkId.toString()}`, selfieKey: avatar.selfieKey })

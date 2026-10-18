@@ -1464,8 +1464,9 @@ export type FeedbackDocument = {
 }
 
 export type ProHalfOffer = {
-  // The advisor whose rating brought it.
-  from: FeedbackProduct
+  // The advisor whose rating brought it, or (Oct 18, 2026) her first read
+  // of a studio (Face Age, Look Score, Hair Score), the moment she sees it.
+  from: FeedbackProduct | 'face_age' | 'look_score' | 'hair_score'
   at: Date
   until: Date
   // Paid with it (the first month at half price).
@@ -1579,6 +1580,42 @@ export type MakeupTryOnDocument = {
   updatedAt: Date
   readyAt: Date | null
   photosDeletedAt?: Date | null
+}
+
+// A result drawn ahead of time and shown blurred to someone without Pro
+// (modules/teasers; Oct 18, 2026): her perfect haircut after a Hair Score
+// or a Color Advisor, her perfect look after a Look Score, her best face
+// after a Face Age read. With Pro it's unlocked at once (no credit) and
+// becomes her own haircut, look or makeup try-on.
+export type TeaserKind = 'perfect_haircut' | 'perfect_look' | 'best_face'
+
+export type TeaserDocument = {
+  _id: ObjectId
+  userId: ObjectId
+  kind: TeaserKind
+  // What it was made from: a score check, a Face Age check or a purchase.
+  sourceId: ObjectId
+  status: GenerationStatus
+  error: string | null
+  // The picture (never sent while locked) and its blurred copy.
+  key: string | null
+  lockedKey: string | null
+  plan: {
+    name: string
+    render: string
+    stylistBrief?: string | null
+    fit?: HairFit | null
+    look?: LookPlan | null
+    dressCode?: string | null
+  } | null
+  avatarId: ObjectId | null
+  selfieKey: string | null
+  // Pro unlocked it (while it drew, it's handed over when it's done), and
+  // the haircut, look or makeup try-on it became.
+  unlockedAt: Date | null
+  resultId: ObjectId | null
+  createdAt: Date
+  updatedAt: Date
 }
 
 export type ScoreKind = 'look' | 'hair'

@@ -13,6 +13,7 @@ import type {
   FaceCheckDocument,
   MakeupTryOnDocument,
   ScoreCheckDocument,
+  TeaserDocument,
   EmailSendDocument,
   HairstyleDocument,
   LookDocument,
@@ -45,6 +46,7 @@ export type MongoCollections = {
   faceChecks: Collection<FaceCheckDocument>
   makeupTryOns: Collection<MakeupTryOnDocument>
   scoreChecks: Collection<ScoreCheckDocument>
+  teasers: Collection<TeaserDocument>
   tastes: Collection<TasteDocument>
   usageCounters: Collection<UsageCounterDocument>
   passkeys: Collection<PasskeyDocument>
@@ -79,6 +81,7 @@ export function buildCollections(mongoDb: Db): MongoCollections {
     faceChecks: mongoDb.collection<FaceCheckDocument>('face_checks'),
     makeupTryOns: mongoDb.collection<MakeupTryOnDocument>('makeup_tryons'),
     scoreChecks: mongoDb.collection<ScoreCheckDocument>('score_checks'),
+    teasers: mongoDb.collection<TeaserDocument>('teasers'),
     tastes: mongoDb.collection<TasteDocument>('tastes'),
     usageCounters: mongoDb.collection<UsageCounterDocument>('usage_counters'),
     passkeys: mongoDb.collection<PasskeyDocument>('passkeys'),
@@ -151,6 +154,10 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.scoreChecks.createIndex({ userId: 1, kind: 1, takenAt: -1 }),
     collections.scoreChecks.createIndex({ userId: 1, kind: 1, photoHash: 1 }),
     collections.scoreChecks.createIndex({ status: 1, updatedAt: 1 }),
+    // Teasers: hers by kind and by what they were made from, and the sweep.
+    collections.teasers.createIndex({ userId: 1, kind: 1 }),
+    collections.teasers.createIndex({ userId: 1, sourceId: 1 }),
+    collections.teasers.createIndex({ status: 1, updatedAt: 1 }),
     collections.usageCounters.createIndex(
       { expireAt: 1 },
       { expireAfterSeconds: 0 },

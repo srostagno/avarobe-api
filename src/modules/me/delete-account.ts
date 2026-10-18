@@ -6,6 +6,7 @@ import { isValidStorageKey, storage } from '../../utils/storage.js'
 import { forgetRefundRequests } from '../billing/refund-requests.js'
 import { deleteLookData } from '../look/service.js'
 import { deleteScoreData } from '../scores/service.js'
+import { deleteTeasers } from '../teasers/service.js'
 
 import { forgetPurchases } from './content.js'
 
@@ -178,6 +179,7 @@ export async function deleteAccount(app: FastifyInstance, userId: ObjectId, now 
   const look = await deleteLookData(app, userId, { profile: true })
   // So do her Look Score and Hair Score photos, their readings and release.
   const scores = await deleteScoreData(app, userId, { profile: true })
+  await deleteTeasers(app, userId)
   // Refund requests stay for the books: screenshots go, decided ones are
   // scrubbed, open ones can still be decided (money back only).
   await forgetRefundRequests(app, userId)

@@ -16,6 +16,7 @@ import { trackServerEvent } from '../analytics/service.js'
 import { paletteAccess } from '../billing/entitlements.js'
 import { deleteHairstyles } from '../hair/service.js'
 import { deleteMakeupTryOns } from '../makeup/service.js'
+import { deleteTeasers } from '../teasers/service.js'
 import { BOARD_KINDS, COLOR_BOARDS, STYLE_BOARDS, boardKeys, unsetBoards } from '../report/boards.js'
 import { ensureLockedPreview, startDrapePreview } from '../report/service.js'
 import { orphanHairKeys } from './hair.js'
@@ -272,6 +273,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
       if (selfieKey) {
         await deleteHairstyles(app, userId)
         await deleteMakeupTryOns(app, userId)
+        await deleteTeasers(app, userId)
       }
 
       startAvatarJob(app, avatarId, {
@@ -582,6 +584,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
         if (moveSelfie) {
           await deleteHairstyles(app, userId)
           await deleteMakeupTryOns(app, userId)
+          await deleteTeasers(app, userId)
         }
 
         await startDrapePreview(app, existing._id).catch((error: unknown) => {
@@ -822,6 +825,7 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     // The haircuts and makeup on them were drawn from these photos.
     await deleteHairstyles(app, userId)
     await deleteMakeupTryOns(app, userId)
+    await deleteTeasers(app, userId)
 
     return { ok: true }
   })

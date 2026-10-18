@@ -19,7 +19,11 @@ import { PaywallError, billingState, isAdmin, refundCredits, requirePro, sendPay
 import { reserveLookQuota } from '../looks/quota.js'
 import { dailyLimitReply, releaseGenerations, reserveUsage } from '../../utils/usage.js'
 import { NothingToFixError, planFix, startFixLook } from './fix.js'
+import { unlockTeaser } from '../teasers/service.js'
 import { NoPerfectCutError, serializePerfect, startPerfectHaircut } from './perfect.js'
+
+// A perfect haircut unlocked while it's still drawing.
+const pendingPerfect = (name: string) => ({ id: '', name, status: 'processing' as const, error: null, stylistBrief: null, imageUrl: null, previewUrl: null })
 import {
   SCORE_CONSENT_VERSION,
   SCORE_KINDS,
@@ -251,6 +255,24 @@ const scoreRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    const teaser = await app.collections.teasers.findOne({ userId, sourceId: check._id, kind: 'perfect_look', status: { $ne: 'failed' } })
+
+    if (teaser) {
+      try {
+        await requirePro(app, userId, 'Your perfect look')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      const resultId = await unlockTeaser(app, teaser)
+
+      return reply.code(resultId ? 200 : 202).send({ lookId: resultId?.toString() ?? null })
+    }
+
     const avatar = await app.collections.avatars.findOne({ userId })
 
     if (!avatar?.avatarKey || !avatar.body || avatar.status === 'failed') {
@@ -316,6 +338,26 @@ const scoreRoutes: FastifyPluginAsync = async (app) => {
       if (existing && existing.status !== 'failed') {
         return reply.code(200).send({ perfect: await serializePerfect(existing) })
       }
+    }
+
+    // Drawn ahead for her (teasers): with Pro it's hers at once, no credit.
+    const teaser = await app.collections.teasers.findOne({ userId, sourceId: check._id, kind: 'perfect_haircut', status: { $ne: 'failed' } })
+
+    if (teaser) {
+      try {
+        await requirePro(app, userId, 'Your perfect haircut')
+      } catch (error) {
+        if (error instanceof PaywallError) {
+          return sendPaywall(reply, error)
+        }
+
+        throw error
+      }
+
+      const resultId = await unlockTeaser(app, teaser)
+      const hairstyle = resultId ? await app.collections.hairstyles.findOne({ _id: resultId, userId }) : null
+
+      return reply.code(hairstyle ? 200 : 202).send({ perfect: hairstyle ? await serializePerfect(hairstyle) : pendingPerfect(teaser.plan?.name ?? '') })
     }
 
     const avatar = await app.collections.avatars.findOne({ userId })

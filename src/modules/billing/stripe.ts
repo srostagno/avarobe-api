@@ -11,6 +11,7 @@ import { isDuplicateKeyError } from '../../utils/mongo-errors.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { fulfillGuide, isGuideSession } from '../guide/service.js'
 import { sendTrialStartedEmail } from '../lifecycle/service.js'
+import { maybeStartTeaser } from '../teasers/service.js'
 import { reportPurchase } from './conversions.js'
 import {
   annualFirstWeek,
@@ -24,6 +25,9 @@ import {
   styleAddonCents,
 } from './entitlements.js'
 import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
+
+// The purchases after which her perfect haircut is drawn ahead (teasers).
+const TEASER_AFTER = new Set<string>(['color_report', 'reports_bundle', 'advisors_bundle'])
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
@@ -929,6 +933,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
       : null
   const colorRead = avatar?.colorAnalysis ? { season: avatar.colorAnalysis.season, readId: avatar.colorsSource?.readId ?? null } : null
   const mongoSession = app.mongoClient.startSession()
+  const purchaseId = new ObjectId()
 
   try {
     await mongoSession.withTransaction(async () => {
@@ -945,7 +950,7 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
       // index, which aborts this transaction (handled below).
       await app.collections.purchases.insertOne(
         {
-          _id: new ObjectId(),
+          _id: purchaseId,
           userId: grant.userId,
           product: grant.product,
           stripeSessionId: grant.paymentKey,
@@ -1006,6 +1011,12 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
       ...(grant.placement ? { placement: grant.placement } : {}),
     },
   })
+
+  // Right after her Color Advisor (Pro plan, phase 1): her perfect haircut
+  // drawn ahead, blurred until Pro, for the purchase page and her studio.
+  if (TEASER_AFTER.has(grant.product)) {
+    void maybeStartTeaser(app, grant.userId, 'perfect_haircut', purchaseId, { tips: [] })
+  }
 
   return true
 }

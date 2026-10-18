@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 import sharp from 'sharp'
 
 import { env } from '../../config/env.js'
-import type { HairstyleDocument, ScoreCheckDocument, ScoreKind, ScoreProblem, ScoreReading, UserDocument } from '../../types/mongo.js'
+import type { HairstyleDocument, ScoreCheckDocument, ScoreKind, ScoreProblem, ScoreReading, TeaserDocument, UserDocument } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { createStructuredResponse, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
@@ -13,6 +13,8 @@ import { refusedSetting } from '../avatar/measure.js'
 import { PaywallError, billingState, freeUsesLeft, hasPro, releaseFreeUse, useFreeUse } from '../billing/entitlements.js'
 import { type Shows, buildMeasureInstructions, buildWordsInstructions, measureSchema, wordsSchema } from './prompts.js'
 import { CRITERIA, PROBLEMS, RUBRIC_VERSION, TIP_AREAS, criterionIds } from './rubrics.js'
+import { grantWowOffer } from '../feedback/wow-offer.js'
+import { deleteTeasers, failStaleTeasers, maybeStartTeaser, serializeTeaser } from '../teasers/service.js'
 import { serializePerfect } from './perfect.js'
 import { averageCriteria, currentScore, scoreFrom, weakestFirst } from './score.js'
 
@@ -266,6 +268,15 @@ export async function runScoreRead(app: FastifyInstance, checkId: ObjectId) {
       model: env.SCORE_MEASURE_MODEL,
     }
 
+    // The wow moment (Pro plan, phase 1): Pro's first month at half price,
+    // and her best version drawn ahead, blurred until Pro; both started
+    // before the read shows, so they're there with it.
+    await grantWowOffer(app, check.userId, check.kind === 'look' ? 'look_score' : 'hair_score').catch(() => false)
+    await maybeStartTeaser(app, check.userId, check.kind === 'hair' ? 'perfect_haircut' : 'perfect_look', check._id, {
+      tips: words.tips.map((tip) => tip.text),
+      photoKey: check.photoKey,
+    })
+
     await app.collections.scoreChecks.updateOne(
       { _id: checkId, status: 'processing' },
       { $set: { status: 'ready', reading, error: null, updatedAt: new Date() } },
@@ -312,7 +323,7 @@ export function suggestFor(kind: ScoreKind, problem: ScoreProblem, shows: Shows 
 
 // Without Pro: the score, every criterion's name, the weakest one's rating
 // and the first tip. The other ratings and tips never leave the server.
-export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolean, perfect: HairstyleDocument | null = null) {
+export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolean, perfect: HairstyleDocument | null = null, teaser: TeaserDocument | null = null) {
   const reading = check.status === 'ready' && check.reading?.usable ? check.reading : null
   const ids = criterionIds(check.kind)
   const weakest = reading ? weakestFirst(reading.criteria, ids)[0]! : null
@@ -348,6 +359,8 @@ export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolea
     fixLookId: check.fixLookId?.toString() ?? null,
     // "Unlock your perfect haircut" (hair, Pro): the haircut drawn from it.
     perfect: await serializePerfect(perfect),
+    // Her perfect result drawn ahead, blurred until Pro (teasers).
+    teaser: await serializeTeaser(teaser),
     createdAt: check.createdAt.toISOString(),
   }
 }
@@ -371,8 +384,17 @@ export async function scoreState(app: FastifyInstance, user: UserDocument, kind:
   const perfectIds = checks.map((check) => check.perfectHairstyleId).filter((id): id is ObjectId => Boolean(id))
   const perfects = perfectIds.length ? await app.collections.hairstyles.find({ _id: { $in: perfectIds }, userId: user._id }).toArray() : []
   const perfectOf = new Map(perfects.map((hairstyle) => [hairstyle._id.toString(), hairstyle]))
+  const teasers = await app.collections.teasers.find({ userId: user._id, sourceId: { $in: checks.map((check) => check._id) }, status: { $ne: 'failed' } }).toArray()
+  const teaserOf = new Map(teasers.map((teaser) => [teaser.sourceId.toString(), teaser]))
   const serialized = await Promise.all(
-    checks.map((check) => serializeScoreCheck(check, pro, check.perfectHairstyleId ? (perfectOf.get(check.perfectHairstyleId.toString()) ?? null) : null)),
+    checks.map((check) =>
+      serializeScoreCheck(
+        check,
+        pro,
+        check.perfectHairstyleId ? (perfectOf.get(check.perfectHairstyleId.toString()) ?? null) : null,
+        teaserOf.get(check._id.toString()) ?? null,
+      ),
+    ),
   )
   const ready = checks.filter((check) => check.status === 'ready' && check.reading?.usable)
   const points = ready.map((check) => ({ takenAt: check.takenAt, score: check.reading!.score }))
@@ -406,6 +428,7 @@ export async function deleteScoreCheck(app: FastifyInstance, userId: ObjectId, k
   }
 
   await app.collections.scoreChecks.deleteOne({ _id: checkId, userId })
+  await deleteTeasers(app, userId, [checkId])
 
   if (check.photoKey) {
     await storage.remove(check.photoKey).catch(() => undefined)
@@ -421,6 +444,7 @@ export async function deleteScoreData(app: FastifyInstance, userId: ObjectId, op
 
   await Promise.all(checks.filter((check) => check.photoKey).map((check) => storage.remove(check.photoKey).catch(() => undefined)))
   await app.collections.scoreChecks.deleteMany(filter)
+  await deleteTeasers(app, userId, checks.map((check) => check._id))
 
   if (options.profile) {
     await app.collections.users.updateOne({ _id: userId }, { $unset: { scoreProfile: '' } })
@@ -445,6 +469,7 @@ export async function failStaleScoreReads(app: FastifyInstance, now = new Date()
 export function startScoreJobs(app: FastifyInstance) {
   const run = () => {
     void failStaleScoreReads(app).catch((error: unknown) => app.log.error({ err: error }, 'Score stale reads crashed'))
+    void failStaleTeasers(app).catch((error: unknown) => app.log.error({ err: error }, 'Stale teasers crashed'))
   }
 
   setTimeout(run, 60 * 1000).unref()

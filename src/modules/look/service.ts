@@ -8,6 +8,8 @@ import { createStructuredResponse, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { type Geo, requestGeo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { grantWowOffer } from '../feedback/wow-offer.js'
+import { deleteTeasers, maybeStartTeaser } from '../teasers/service.js'
 import { PaywallError, billingState, loadBillingUser } from '../billing/entitlements.js'
 
 import { ageOn, currentAge, recentOf, shownAge } from './age.js'
@@ -119,6 +121,11 @@ export async function runFaceRead(app: FastifyInstance, checkId: ObjectId) {
     if (!reading.usable) {
       await fail(`unreadable:${reading.problem ?? 'no_face'}`, { reading })
     } else {
+      // The wow moment (Pro plan, phase 1, Oct 18): Pro's first month at
+      // half price, and her best face drawn ahead from her selfie (when she
+      // has one), blurred until Pro; both started before the read shows.
+      await grantWowOffer(app, check.userId, 'face_age').catch(() => false)
+      await maybeStartTeaser(app, check.userId, 'best_face', checkId, { tips: reading.tips.map((tip) => tip.text), faceTips: reading.tips })
       await app.collections.faceChecks.updateOne({ _id: checkId }, { $set: { status: 'ready', reading, updatedAt: new Date() } })
     }
 
@@ -298,6 +305,10 @@ function allowanceOf(pro: boolean, used: number) {
 export async function deleteFaceCheck(app: FastifyInstance, userId: ObjectId, checkId: ObjectId) {
   const check = await app.collections.faceChecks.findOneAndDelete({ _id: checkId, userId })
 
+  if (check) {
+    await deleteTeasers(app, userId, [checkId])
+  }
+
   if (check?.photoKey) {
     await storage.remove(check.photoKey).catch(() => undefined)
   }
@@ -313,6 +324,7 @@ export async function deleteLookData(app: FastifyInstance, userId: ObjectId, opt
 
   await Promise.all(checks.filter((check) => check.photoKey).map((check) => storage.remove(check.photoKey).catch(() => undefined)))
   await app.collections.faceChecks.deleteMany({ userId })
+  await deleteTeasers(app, userId, checks.map((check) => check._id))
 
   if (options.profile) {
     await app.collections.users.updateOne({ _id: userId }, { $unset: { lookGreat: '' } })

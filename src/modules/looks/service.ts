@@ -200,7 +200,7 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
 
 // What drawing a look on their avatar takes: the avatar, their face, the
 // outfit photo for try-ons, the haircut they picked, and the prompt.
-async function lookImageRequest(look: LookDocument, avatar: AvatarDocument & { avatarKey: string }) {
+export async function lookImageRequest(look: LookDocument, avatar: AvatarDocument & { avatarKey: string }) {
   const [avatarImage, selfie, reference] = await Promise.all([
     storage.read(avatar.avatarKey),
     storage.read(avatar.selfieKey),

@@ -227,6 +227,23 @@ describe('server events to Meta', () => {
     assert.ok(!JSON.stringify(sent[0]!.body).includes('example.com'), 'the email itself never leaves')
   })
 
+  it('sends a Pro subscription as a Purchase and a Subscribe with its predicted value', async () => {
+    const metadata = { ...attributionMetadata({ fbp: 'fb.1.1791000000000.456' }, request), userId: USER_ID }
+
+    await reportPurchase(app({ email: 'ana.silva@example.com' }), { transactionId: 'in_1', product: 'pro_monthly', amount: 799, currency: 'usd', metadata })
+
+    const events = toMeta()[0]!.body.data
+    assert.deepEqual(
+      events.map((event) => [event.event_name, event.event_id]),
+      [
+        ['Purchase', 'in_1'],
+        ['Subscribe', 'in_1-sub'],
+      ],
+    )
+    assert.deepEqual(events[1]!.custom_data, { value: 7.99, currency: 'USD', predicted_ltv: 29.56 })
+    assert.deepEqual(events[1]!.user_data, events[0]!.user_data)
+  })
+
   it('sends a purchase without _fbp or _fbc by the email, when tracking was allowed (Safari after the jump)', async () => {
     const metadata = { ...attributionMetadata({}, request), userId: USER_ID, region: 'br' }
 
