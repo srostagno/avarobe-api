@@ -8,6 +8,7 @@ import { form, json, memoryStorage, routeApp, stubOpenAi, until } from '../../..
 import { env } from '../../../config/env.js'
 import type { ProSubscription, TeaserDocument } from '../../../types/mongo.js'
 import makeupRoutes from '../../makeup/routes.js'
+import meRoutes from '../../me/routes.js'
 import scoreRoutes from '../../scores/routes.js'
 import teaserRoutes from '../routes.js'
 import { grantWowOffer } from '../../feedback/wow-offer.js'
@@ -79,7 +80,7 @@ describe('Teasers', () => {
     files.files.set(selfieKey, await pattern(2))
     const consented = { consentAt: new Date(), consentVersion: 'scores-2026-10-17', consentMethod: 'tap', createdAt: new Date() }
     const built = await routeApp(
-      { '/scores': scoreRoutes, '/teasers': teaserRoutes, '/makeup': makeupRoutes },
+      { '/scores': scoreRoutes, '/teasers': teaserRoutes, '/makeup': makeupRoutes, '/me': meRoutes },
       {
         users: [{ _id: userId, email: 'rosa@example.com', credits: 0, createdAt: new Date(), scoreProfile: consented, ...userFields }],
         avatars: avatar
@@ -218,5 +219,21 @@ describe('Teasers', () => {
 
     await deleteTeasers(app, userId, { fromSelfie: true })
     assert.equal(teasers().length, 0)
+  })
+
+  it('shares her before/after only once the picture is hers', async () => {
+    const { app, headers, teasers, scoreHair, collection } = await setup()
+
+    await scoreHair()
+    await until(async () => teasers()[0]?.status === 'ready')
+    const image = (key: string) => app.inject({ method: 'GET', url: `/me/image?src=${encodeURIComponent(`http://localhost:4100/api/v1/media/${key}?exp=1&sig=abc`)}`, headers })
+    const photoKey = (collection('scoreChecks').docs[0] as { photoKey: string }).photoKey
+
+    assert.equal((await image(teasers()[0]!.key!)).statusCode, 404)
+    assert.equal((await image(photoKey)).headers['content-type'], 'image/jpeg')
+
+    collection('users').docs[0]!.pro = pro
+    await app.inject({ method: 'POST', url: `/teasers/${teasers()[0]!._id.toString()}/unlock`, headers })
+    assert.equal((await image(teasers()[0]!.key!)).statusCode, 200)
   })
 })

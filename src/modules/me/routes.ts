@@ -7,7 +7,7 @@ import { clearAuthCookies } from '../../utils/auth-session.js'
 import { parseBody } from '../../utils/http.js'
 import { LOCALES } from '../../utils/locale.js'
 import { serializeUser } from '../../utils/serializers.js'
-import { shareableKey } from '../../utils/shareable.js'
+import { isTeaserKey, shareableKey } from '../../utils/shareable.js'
 import { storage } from '../../utils/storage.js'
 import { cancelProNow } from '../billing/stripe.js'
 import { ONCE_PER_PERSON, REPEAT_AFTER_MS, SURVEY_QUESTIONS, type SurveyQuestion } from '../survey/questions.js'
@@ -99,14 +99,17 @@ const meRoutes: FastifyPluginAsync = async (app) => {
       const userId = requireUserId(request)
       const key = shareableKey((request.query as { src?: string }).src ?? '', userId.toString())
 
-      if (!key) {
+      // A teaser's picture only once it's hers.
+      const locked = key && isTeaserKey(key) && !(await app.collections.teasers.findOne({ userId, key, resultId: { $ne: null } }, { projection: { _id: 1 } }))
+
+      if (!key || locked) {
         return reply.code(404).send({ message: 'That image can’t be shared.' })
       }
 
       try {
         const file = await storage.read(key)
 
-        return reply.header('Content-Type', 'image/webp').header('Cache-Control', 'private, max-age=300').send(file)
+        return reply.header('Content-Type', key.endsWith('.jpg') ? 'image/jpeg' : 'image/webp').header('Cache-Control', 'private, max-age=300').send(file)
       } catch {
         return reply.code(404).send({ message: 'That image can’t be shared.' })
       }

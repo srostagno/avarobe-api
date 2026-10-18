@@ -28,6 +28,14 @@ describe('shareableKey', () => {
     }
   })
 
+  it('shares makeup, a teaser’s picture by its key, and the photo of a read for her before/after', () => {
+    for (const name of [`makeup-${look}-1790000000000.webp`, `teaser-${look}-1790000000000.webp`, `hairscore-${look}.jpg`, `lookscore-${look}.jpg`, `face-${look}.jpg`]) {
+      assert.ok(shareableKey(local(`users/${me}/${name}`), me), name)
+    }
+    assert.equal(shareableKey(local(`users/${me}/teaser-${look}-1790000000000-locked.webp`), me), null)
+    assert.equal(shareableKey(local(`users/${me}/makeup-${look}-preview.webp`), me), null)
+  })
+
   it('shares their face in a color they checked', () => {
     const key = `users/${me}/check-${look}-1790000000000.webp`
     assert.equal(shareableKey(local(key), me), key)
