@@ -3,7 +3,7 @@ import { ObjectId } from 'mongodb'
 
 import { env } from '../../config/env.js'
 import { emailCopy } from '../../i18n/emails.js'
-import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, LookDocument, PurchaseProduct, UserDocument } from '../../types/mongo.js'
+import type { AvatarDocument, ColorSwatch, EmailAsset, LifecycleEmailKind, LookDocument, PurchaseProduct, TeaserDocument, UserDocument } from '../../types/mongo.js'
 import { deliverEmail, deliverLinkEmail } from '../../utils/email.js'
 import { appUrl, type Locale } from '../../utils/locale.js'
 import { withLocale } from '../../utils/request-locale.js'
@@ -15,6 +15,7 @@ import { storedAdIds } from '../billing/conversions.js'
 import { billingState, isAdmin } from '../billing/entitlements.js'
 import { REGION_CURRENCY, regionalAmount, regionForCountry } from '../billing/pricing.js'
 import { sendRefundReminders } from '../billing/refund-requests.js'
+import { offerView } from '../feedback/rules.js'
 import { EDITS, UPCOMING_EDITS } from '../looks/edits.js'
 import { catalogTable, looksFor } from '../looks/icon-routes.js'
 import { assetSlot, editOfIcon, editText, hasGenerator, startAsset } from './assets.js'
@@ -38,6 +39,8 @@ import {
   colorsReadyEmail,
   costumeOfferEmail,
   faceAgeLaunchEmail,
+  halfLastCallEmail,
+  teaserReadyEmail,
   proWelcomeEmail,
   reportUnopenedEmail,
   crossSellEmail,
@@ -355,6 +358,9 @@ export function lifecycleContentFor(
     case 'costume_offer':
       // Needs the try-on it shows: sendCostumeOffers makes it.
       throw new Error('costume_offer emails are built by sendCostumeOffer')
+    case 'teaser_ready':
+    case 'half_offer_last_call':
+      throw new Error(`${kind} emails are built by sendTeaserEmails`)
     case 'colors_ready':
       return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
     case 'look_reminder':
@@ -1285,6 +1291,176 @@ async function sendCostumeOffer(
   }
 }
 
+// ---------------------------------------------------------------- teasers
+
+// Her best version drawn ahead (teasers/service.ts) and her half-price
+// month (feedback/wow-offer.ts) after her first read (Oct 18, 2026): 9 in
+// 10 sign-ups never come back the next day, so most would see neither. An
+// hour after it's drawn, if it's still locked: the blurred picture and a
+// link to it. A few hours before the half price ends, unused: a last call
+// that opens checkout. Promotional (opt-outs, the postal address), never to
+// Pro, admins or guests without an email; each once.
+const TEASER_READY_AFTER_MS = 60 * 60 * 1000
+const TEASER_READY_WITHIN_MS = 2 * 24 * 60 * 60 * 1000
+const HALF_LAST_CALL_BEFORE_MS = 6 * 60 * 60 * 1000
+
+const eligibleFor = (field: string) => ({ [field]: { $exists: false }, guest: { $ne: true }, deletedAt: null, emailTipsOptOutAt: null })
+
+export async function sendTeaserEmails(app: FastifyInstance, now = new Date()) {
+  if (!env.EMAIL_POSTAL_ADDRESS) {
+    return 0
+  }
+
+  let sent = 0
+  const teasers = await app.collections.teasers
+    .find({ status: 'ready', unlockedAt: null, updatedAt: { $gte: new Date(now.getTime() - TEASER_READY_WITHIN_MS), $lte: new Date(now.getTime() - TEASER_READY_AFTER_MS) } })
+    .sort({ updatedAt: -1 })
+    .limit(BATCH)
+    .toArray()
+  const seen = new Set<string>()
+
+  for (const teaser of teasers) {
+    if (seen.has(teaser.userId.toString())) {
+      continue
+    }
+
+    seen.add(teaser.userId.toString())
+    const user = await app.collections.users.findOne({ _id: teaser.userId, ...eligibleFor('lifecycleEmails.teaser_ready') })
+
+    if (user && !isAdmin(user) && !billingState(user, now.getTime()).proActive && (await sendTeaserReady(app, user, teaser, now))) {
+      sent += 1
+    }
+  }
+
+  const ending = await app.collections.users
+    .find({
+      'proHalfOffer.until': { $gt: now, $lte: new Date(now.getTime() + HALF_LAST_CALL_BEFORE_MS) },
+      'proHalfOffer.usedAt': null,
+      ...eligibleFor('lifecycleEmails.half_offer_last_call'),
+    })
+    .limit(BATCH)
+    .toArray()
+
+  for (const user of ending) {
+    if (!isAdmin(user) && !billingState(user, now.getTime()).proActive && (await sendHalfLastCall(app, user, now))) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+// One lifecycle email, claimed on the account first and rolled back if it
+// can't go (the next run tries again), like the costume offer.
+async function sendOnce(
+  app: FastifyInstance,
+  user: UserDocument,
+  kind: 'teaser_ready' | 'half_offer_last_call',
+  now: Date,
+  build: (sendId: ObjectId) => Promise<EmailContent | null>,
+) {
+  const field = `lifecycleEmails.${kind}`
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, [field]: { $exists: false }, emailTipsOptOutAt: null },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return false
+  }
+
+  const sendId = new ObjectId()
+  const rollback = () =>
+    Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        user.lifecycleEmailLastAt
+          ? { $unset: { [field]: '' }, $set: { lifecycleEmailLastAt: user.lifecycleEmailLastAt } }
+          : { $unset: { [field]: '', lifecycleEmailLastAt: '' } },
+      ),
+    ])
+
+  try {
+    const content = await build(sendId)
+
+    if (!content) {
+      await rollback()
+      return false
+    }
+
+    await app.collections.emailSends.insertOne({ _id: sendId, userId: user._id, kind, subject: content.subject, sentAt: now, opens: 0, clicks: 0 })
+    const delivered = await deliverEmail({ log: app.log, to: { email: user.email, name: user.firstName }, content: trackContent(content, sendId) })
+    app.log.info({ userId: user._id.toString(), kind, delivered }, 'Teaser email')
+    return delivered
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString(), kind }, 'Teaser email failed; will retry')
+    await rollback()
+    return false
+  }
+}
+
+function emailUrl(locale: Locale, path: string, campaign: string) {
+  const url = new URL(appUrl(locale, path))
+  url.searchParams.set('utm_source', 'email')
+  url.searchParams.set('utm_medium', 'lifecycle')
+  url.searchParams.set('utm_campaign', campaign)
+  return url.toString()
+}
+
+function halfFor(user: UserDocument, now: Date) {
+  const half = offerView(user.proHalfOffer, regionForCountry(user.location?.country), now.getTime())
+  return half ? { price: half.price, amount: half.amount, currency: half.currency, hours: Math.max(1, Math.floor((Date.parse(half.until) - now.getTime()) / 3_600_000)) } : null
+}
+
+async function sendTeaserReady(app: FastifyInstance, user: UserDocument, teaser: TeaserDocument, now: Date) {
+  return sendOnce(app, user, 'teaser_ready', now, async (sendId) => {
+    const locale = user.locale ?? 'en'
+    const fromPurchase = teaser.kind === 'perfect_haircut' && !(await app.collections.scoreChecks.findOne({ _id: teaser.sourceId }, { projection: { _id: 1 } }))
+
+    return teaserReadyEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      kind: teaser.kind,
+      name: teaser.kind === 'perfect_haircut' ? (teaser.plan?.name ?? null) : null,
+      fromPurchase,
+      photoUrl: teaser.lockedKey ? emailImageUrl(user._id, now, `teaser-${teaser._id.toString()}`) : null,
+      half: halfFor(user, now),
+      url: emailUrl(locale, `/studio/teasers/${teaser._id.toString()}?from=email`, 'teaser_ready'),
+    })
+  })
+}
+
+async function sendHalfLastCall(app: FastifyInstance, user: UserDocument, now: Date) {
+  return sendOnce(app, user, 'half_offer_last_call', now, async (sendId) => {
+    const half = halfFor(user, now)
+
+    if (!half) {
+      return null
+    }
+
+    const locale = user.locale ?? 'en'
+    const teaser = await app.collections.teasers.findOne({ userId: user._id, status: 'ready', unlockedAt: null, lockedKey: { $ne: null } }, { sort: { createdAt: -1 } })
+
+    return halfLastCallEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      price: half.price,
+      amount: half.amount,
+      currency: half.currency,
+      photoUrl: teaser ? emailImageUrl(user._id, now, `teaser-${teaser._id.toString()}`) : null,
+      // Checkout right away (components/upgrade ?buy=); the price is applied there.
+      url: emailUrl(locale, '/studio?buy=pro_monthly&from=email_half_last_call', 'half_offer_last_call'),
+    })
+  })
+}
+
 // ---------------------------------------------------------------- colors ready
 
 const COLORS_READY_SEND_TRIES = 3
@@ -1402,7 +1578,7 @@ export async function sendColorsReady(
 const imageSignature = (subject: string, expires: number) =>
   hmacSign(env.JWT_ACCESS_SECRET, `email-image:${subject}:${expires}`)
 
-const SLOT_PATTERN = /^(?:drape|xsell_[a-z_]{2,30}|edit:[a-z0-9-]{1,60}|look-[0-9a-f]{24})$/
+const SLOT_PATTERN = /^(?:drape|xsell_[a-z_]{2,30}|edit:[a-z0-9-]{1,60}|look-[0-9a-f]{24}|teaser-[0-9a-f]{24})$/
 
 export function emailImageUrl(userId: ObjectId, now = new Date(), slot = 'drape') {
   const id = userId.toString()
@@ -1445,6 +1621,15 @@ export async function emailImageKey(app: FastifyInstance, userId: ObjectId, slot
   if (slot === 'drape') {
     const avatar = await app.collections.avatars.findOne({ userId }, { projection: { drapePreview: 1 } })
     return avatar?.drapePreview?.lockedKey ?? null
+  }
+
+  // A teaser: its blurred copy while it's locked, the picture once it's hers.
+  if (slot.startsWith('teaser-')) {
+    const teaser = await app.collections.teasers.findOne(
+      { _id: new ObjectId(slot.slice('teaser-'.length)), userId, status: 'ready' },
+      { projection: { key: 1, lockedKey: 1, resultId: 1 } },
+    )
+    return teaser?.lockedKey ?? (teaser?.resultId ? teaser.key : null)
   }
 
   if (slot.startsWith('look-')) {
@@ -2055,6 +2240,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendCostumeOffers(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Costume offer run crashed')
+    })
+    void sendTeaserEmails(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Teaser emails run crashed')
     })
     void sendProWelcomes(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Pro welcome run crashed')

@@ -1177,6 +1177,74 @@ export function costumeOfferEmail(
   })
 }
 
+// Her best version drawn ahead after her first read (teasers), still locked
+// an hour on: the blurred picture on top, what it is, the half-price month
+// while it's open (`half`: cents in its currency, hours left), and a link
+// to it. Promotional, no AI, no "free".
+export function teaserReadyEmail(
+  input: Recipient & {
+    kind: 'perfect_haircut' | 'perfect_look' | 'best_face'
+    name: string | null
+    fromPurchase: boolean
+    photoUrl: string | null
+    half: { price: number; amount: number; currency: string; hours: number } | null
+    url: string
+  },
+): EmailContent {
+  const x = reader(input)
+  const copy = x.c.teaserReady
+
+  return layout({
+    subject: copy.subject(input.kind),
+    preheader: copy.preheader,
+    hero: input.photoUrl ? { src: input.photoUrl, alt: copy.alt } : HERO.drape(x.c),
+    recipient: input,
+    promotional: true,
+    tagline: false,
+    blocks: [
+      eyebrow(copy.eyebrow),
+      heading(copy.heading(input.kind)),
+      greeting(x.c, input.firstName),
+      paragraph(copy.intro(input.kind, input.name, input.fromPurchase)),
+      paragraph(input.half ? copy.half(x.money(input.half.price, input.half.currency), x.money(input.half.amount, input.half.currency), input.half.hours) : copy.pro),
+      button(copy.button(input.kind), input.url),
+      small(copy.expiry),
+      signature(x.c),
+    ],
+  })
+}
+
+// Her half-price first month, unused, a few hours before it ends: the price,
+// what Pro is, what was drawn for her (blurred) if anything, and a link that
+// opens checkout (where the price is applied). Promotional, no AI.
+export function halfLastCallEmail(
+  input: Recipient & { price: number; amount: number; currency: string; photoUrl: string | null; url: string },
+): EmailContent {
+  const x = reader(input)
+  const copy = x.c.halfLastCall
+  const price = x.money(input.price, input.currency)
+  const amount = x.money(input.amount, input.currency)
+
+  return layout({
+    subject: copy.subject(price),
+    preheader: copy.preheader,
+    hero: input.photoUrl ? { src: input.photoUrl, alt: copy.alt } : HERO.drape(x.c),
+    recipient: input,
+    promotional: true,
+    tagline: false,
+    blocks: [
+      eyebrow(copy.eyebrow),
+      heading(copy.heading(price)),
+      greeting(x.c, input.firstName),
+      paragraph(copy.intro(price, amount)),
+      ...(input.photoUrl ? [paragraph(copy.teaser)] : []),
+      button(copy.button(price), input.url),
+      small(copy.expiry),
+      signature(x.c),
+    ],
+  })
+}
+
 // Face Age: the reminder she asked for, as often as she picked. Her own
 // numbers and last tip; a link to change how often. Asked for, so not
 // promotional.

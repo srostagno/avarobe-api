@@ -273,6 +273,10 @@ export type LifecycleEmailKind =
   // The Halloween flow: tried their free costume on and didn't get Pro.
   // Once, an hour after the try-on, with it and the costumes they picked.
   | 'costume_offer'
+  // Her best version drawn ahead, still locked an hour on (once), and her
+  // half-price month a few hours before it ends, unused (once). Oct 18, 2026.
+  | 'teaser_ready'
+  | 'half_offer_last_call'
   // A color read that failed for the AI provider, done later (they asked to
   // be told): a sign-in link to their colors.
   | 'colors_ready'

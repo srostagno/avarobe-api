@@ -392,6 +392,44 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace inicia tu sesión. Funciona una sola vez y caduca en 3 días.',
   },
 
+  // Su mejor versión dibujada tras su primera lectura (18 oct 2026), aún
+  // bloqueada una hora después. Sin IA, sin "gratis".
+  teaserReady: {
+    subject: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'Tu corte perfecto está listo ✂️', perfect_look: 'Tu look perfecto está listo', best_face: 'Tu mejor rostro está listo' })[kind],
+    preheader: 'Lo dibujamos en ti. Te espera en tu estudio.',
+    eyebrow: 'Dibujado para ti',
+    heading: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'Tu corte perfecto está listo', perfect_look: 'Tu look perfecto está listo', best_face: 'Tu mejor rostro está listo' })[kind],
+    alt: 'Borroso hasta que lo desbloquees',
+    intro: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face', name: string | null, fromPurchase: boolean) =>
+      kind === 'perfect_look'
+        ? 'A partir de tu Look Score, dibujamos tu outfit con todos los consejos aplicados, en tu avatar.'
+        : kind === 'best_face'
+          ? 'A partir de tu lectura de Face Age, dibujamos tu mejor rostro desde tu selfie: cada cambio, en ti. Sigues siendo tú, en tu mejor versión.'
+          : `${fromPurchase ? 'A partir de tus colores y tu selfie' : 'A partir de tu Hair Score'}, dibujamos en ti el corte que más te favorece${name ? ` (${name})` : ''}, con lo que debes pedirle a tu estilista.`,
+    half: (price: string, amount: string, hours: number) =>
+      `Se desbloquea con Avarobe Pro, y tu primer mes cuesta ${price} en vez de ${amount} durante las próximas ${hours} horas.`,
+    pro: 'Se desbloquea con Avarobe Pro, junto con todos los consejos y todas las pruebas.',
+    button: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'Ver mi corte perfecto', perfect_look: 'Ver mi look perfecto', best_face: 'Ver mi mejor rostro' })[kind],
+    expiry: 'El enlace inicia tu sesión durante 14 días.',
+  },
+
+  // Su primer mes a mitad de precio, sin usar, unas horas antes de que termine.
+  halfLastCall: {
+    subject: (price: string) => `Tu mes de Pro a ${price} termina pronto`,
+    preheader: 'Quedan pocas horas de tu primer mes a mitad de precio.',
+    eyebrow: 'Quedan pocas horas',
+    heading: (price: string) => `Avarobe Pro a ${price}, por unas horas más`,
+    alt: 'Tu resultado perfecto, borroso hasta que lo desbloquees',
+    intro: (price: string, amount: string) =>
+      `Tu primer mes de Avarobe Pro cuesta ${price} en vez de ${amount}. Todos los consejos, todas las pruebas, tu corte y tu look perfectos, y looks nuevos en ti cada mes. Después, ${amount} al mes; cancela cuando quieras.`,
+    teaser: 'Lo que dibujamos para ti también te espera: se desbloquea con Pro.',
+    button: (price: string) => `Obtener Pro por ${price}`,
+    expiry: 'El enlace inicia tu sesión y abre el pago. El precio se aplica ahí.',
+  },
+
   costumeOffer: {
     subject: (costume: string) => `Así te ves de ${costume} 🎃`,
     preheader: 'Tus próximos disfraces están listos para que te los pruebes.',

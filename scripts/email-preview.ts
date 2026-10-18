@@ -16,11 +16,14 @@ import { REGION_CURRENCY, regionalAmount, toUsdCents, type PricingRegion } from 
 import { decisionEmailFor, founderEmail, receivedEmailFor, reminderDigest } from '../src/modules/billing/refund-notify.js'
 import type { PurchaseProduct, RefundRejectCode, RefundRequestDocument } from '../src/types/mongo.js'
 import { editText } from '../src/modules/lifecycle/assets.js'
+import { halfPrice } from '../src/modules/feedback/rules.js'
 import { shortProductName } from '../src/modules/lifecycle/checkout-link.js'
 import { EDITS } from '../src/modules/looks/edits.js'
 import {
   avatarNudgeEmail,
   colorsReadyEmail,
+  halfLastCallEmail,
+  teaserReadyEmail,
   crossSellEmail,
   lookReminderEmail,
   looksNudgeEmail,
@@ -112,6 +115,25 @@ function emailsFor(locale: Locale, region: PricingRegion): Record<string, EmailC
     // later: a sign-in link to their colors (avatar/retry.ts). Also the
     // email for the people the 11-Oct-2026 outage left without theirs.
     'colors-ready': colorsReadyEmail({ ...recipient, season: 'Warm Autumn', url: link }),
+    // Her best version drawn ahead, still locked an hour on, and her
+    // half-price month a few hours before it ends (lifecycle sendTeaserEmails).
+    // The picture: the haircut page's fictional example, blurred.
+    'teaser-ready': teaserReadyEmail({
+      ...recipient,
+      kind: 'perfect_haircut',
+      name: 'Soft collarbone layers',
+      fromPurchase: false,
+      photoUrl: SAMPLE.teaser,
+      half: { ...halfPrice(region), hours: 46 },
+      url: link,
+    }),
+    'teaser-ready-best-face': teaserReadyEmail({ ...recipient, kind: 'best_face', name: null, fromPurchase: false, photoUrl: SAMPLE.teaser, half: null, url: link }),
+    'half-last-call': halfLastCallEmail({
+      ...recipient,
+      ...halfPrice(region),
+      photoUrl: SAMPLE.teaser,
+      url: link,
+    }),
     'look-reminder': lookReminderEmail({
       ...recipient,
       reminder: 'few',
@@ -382,6 +404,7 @@ const SAMPLE = {
   edit: 'https://www.avarobe.com/icon-looks/wed-velvet-column.webp',
   event: 'https://www.avarobe.com/demo/people/julie-look.webp',
   cover: 'https://www.avarobe.com/demo/magazine/nora-cover.jpg',
+  teaser: 'https://www.avarobe.com/demo/haircut/teaser-blurred.webp',
 }
 
 function crossSellPreviews(

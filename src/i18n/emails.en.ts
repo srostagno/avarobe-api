@@ -432,6 +432,44 @@ export const enEmails = {
   // The Halloween flow: their costume try-on, the costumes they picked to
   // try next, and what Pro adds. Costume and Edit names come in the reader's
   // language. No prices, no "free", no AI: the button opens the app.
+  // Her best version drawn ahead after her first read (Oct 18, 2026), still
+  // locked an hour on: the blurred picture and the way to it. No AI, no "free".
+  teaserReady: {
+    subject: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'Your perfect haircut is ready ✂️', perfect_look: 'Your perfect look is ready', best_face: 'Your best face is ready' })[kind],
+    preheader: 'We drew it on you. It’s waiting in your studio.',
+    eyebrow: 'Drawn for you',
+    heading: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'Your perfect haircut is ready', perfect_look: 'Your perfect look is ready', best_face: 'Your best face is ready' })[kind],
+    alt: 'It, blurred until you unlock it',
+    intro: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face', name: string | null, fromPurchase: boolean) =>
+      kind === 'perfect_look'
+        ? 'From your Look Score, we drew your outfit with every tip applied, on your avatar.'
+        : kind === 'best_face'
+          ? 'From your Face Age read, we drew your best face from your selfie: every change, on you. Still you, at your best.'
+          : `${fromPurchase ? 'From your colors and your selfie' : 'From your Hair Score'}, we drew the cut that flatters you most${name ? ` (${name})` : ''} on you, with what to ask your stylist for.`,
+    half: (price: string, amount: string, hours: number) =>
+      `It unlocks with Avarobe Pro, and your first month is ${price} instead of ${amount} for the next ${hours} hours.`,
+    pro: 'It unlocks with Avarobe Pro, along with every tip and every try-on.',
+    button: (kind: 'perfect_haircut' | 'perfect_look' | 'best_face') =>
+      ({ perfect_haircut: 'See my perfect haircut', perfect_look: 'See my perfect look', best_face: 'See my best face' })[kind],
+    expiry: 'The link signs you in for 14 days.',
+  },
+
+  // Her half-price first month, unused, a few hours before it ends.
+  halfLastCall: {
+    subject: (price: string) => `Your Pro month at ${price} ends soon`,
+    preheader: 'A few hours left on your half-price first month.',
+    eyebrow: 'A few hours left',
+    heading: (price: string) => `Avarobe Pro at ${price}, for a few more hours`,
+    alt: 'Your perfect result, blurred until you unlock it',
+    intro: (price: string, amount: string) =>
+      `Your first month of Avarobe Pro is ${price} instead of ${amount}. Every tip, every try-on, your perfect haircut and look, and new looks on you every month. After that, ${amount} a month; cancel anytime.`,
+    teaser: 'What we drew for you is waiting too: it unlocks with Pro.',
+    button: (price: string) => `Get Pro for ${price}`,
+    expiry: 'The link signs you in and opens checkout. The price is applied there.',
+  },
+
   costumeOffer: {
     subject: (costume: string) => `You as ${costume} 🎃`,
     preheader: 'Your next costumes are ready to try on.',
