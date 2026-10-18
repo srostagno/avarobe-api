@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
 import { parseBody } from '../../utils/http.js'
 import { presentationOf } from '../avatar/body.js'
+import { BILLING_PROJECTION, billingState } from '../billing/entitlements.js'
 import { EDITS, UPCOMING_EDITS, type Edit } from './edits.js'
 import { catalogTable, looksFor, serializeIconLook } from './icon-routes.js'
 import { ICON_LOOKS } from './icons.js'
@@ -30,7 +31,12 @@ const ICONS: Edit = {
 
 // The Edits for a wardrobe, newest first, then the icons; and the next drop.
 // Names and taglines come in the request's language (i18n/catalog.*.ts).
-export function editsFor(presentation: Parameters<typeof looksFor>[1], now = new Date()) {
+// `free`: whose free try-on is still there (one per Edit, a few icon looks).
+export function editsFor(
+  presentation: Parameters<typeof looksFor>[1],
+  now = new Date(),
+  free: { pro: boolean; usedEdits: string[]; iconsLeft: number } | null = null,
+) {
   const table = catalogTable()
   const dropped = EDITS.filter((edit) => new Date(`${edit.droppedAt}T00:00:00Z`).getTime() <= now.getTime()).sort((a, b) =>
     b.droppedAt.localeCompare(a.droppedAt),
@@ -52,6 +58,8 @@ export function editsFor(presentation: Parameters<typeof looksFor>[1], now = new
           tagline: text?.tagline ?? edit.tagline,
           droppedAt: edit.droppedAt,
           isNew: edit.id !== 'icons' && age < NEW_FOR,
+          // One of its looks on her without Pro (API from Oct 18, 2026).
+          freeTryOn: free ? !free.pro && (edit.id === 'icons' ? free.iconsLeft > 0 : !free.usedEdits.includes(edit.id)) : false,
           looks,
         }
       })
@@ -69,11 +77,13 @@ const editRoutes: FastifyPluginAsync = async (app) => {
     const userId = requireUserId(request)
     const [avatar, user] = await Promise.all([
       app.collections.avatars.findOne({ userId }, { projection: { body: 1, presentation: 1 } }),
-      app.collections.users.findOne({ _id: userId }, { projection: { lookPicks: 1 } }),
+      app.collections.users.findOne({ _id: userId }, { projection: { ...BILLING_PROJECTION, lookPicks: 1 } }),
     ])
+    const state = user ? billingState(user) : null
+    const free = state ? { pro: state.proActive, usedEdits: user?.freeEditTryOns ?? [], iconsLeft: state.freeTryOnsLeft ?? 0 } : null
 
     // Someone who came for their colors told us how they shop before the body.
-    return { ...editsFor(avatar ? presentationOf(avatar) : null), picks: user?.lookPicks?.ids ?? [] }
+    return { ...editsFor(avatar ? presentationOf(avatar) : null, new Date(), free), picks: user?.lookPicks?.ids ?? [] }
   })
 
   // The looks they picked to try on next (the Halloween flow). Kept, not

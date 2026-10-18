@@ -10,7 +10,7 @@ import { isAdmin } from '../billing/entitlements.js'
 // Pro, a trial or the offer. Never to an admin's free access.
 export const WOW_OFFER_HOURS = 48
 
-export async function grantWowOffer(app: FastifyInstance, userId: ObjectId, from: 'face_age' | 'look_score' | 'hair_score') {
+export async function grantWowOffer(app: FastifyInstance, userId: ObjectId, from: 'face_age' | 'look_score' | 'hair_score' | 'edit_try_on') {
   const user = await app.collections.users.findOne({ _id: userId }, { projection: { email: 1, compPaused: 1, pro: 1, proTrialAt: 1, proHalfOffer: 1 } })
 
   if (!user || user.pro || user.proTrialAt || user.proHalfOffer || (isAdmin(user) && !user.compPaused)) {

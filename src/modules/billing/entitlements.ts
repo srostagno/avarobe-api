@@ -21,8 +21,9 @@ import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, reg
 // annual plan keeps the reports for good. Looks, remixes and try-ons spend
 // one credit each; look packs add credits that never expire.
 //
-// Try-ons are Pro, except FREE_TRY_ONS collection looks (an Edit's or an
-// icon look) on anyone's avatar, so they see one on themselves first.
+// Try-ons are Pro, except one look of each Edit (Oct 18, 2026: every new
+// Edit is a reason to come back) and FREE_TRY_ONS icon looks, on anyone's
+// avatar, so they see them on themselves first.
 //
 // Hair studio: the read of their hair and the ideal cut on them are free
 // (FREE_HAIR_RUNS renders). Every recommended cut on them comes with the
@@ -76,6 +77,7 @@ type BillingFields = Pick<
   | 'freeAvatarRuns'
   | 'freeHairRuns'
   | 'freeTryOns'
+  | 'freeEditTryOns'
   | 'freeUses'
   | 'compPaused'
   | 'proTrialAt'
@@ -392,6 +394,7 @@ export const BILLING_PROJECTION = {
   freeAvatarRuns: 1,
   freeHairRuns: 1,
   freeTryOns: 1,
+  freeEditTryOns: 1,
   freeUses: 1,
   compPaused: 1,
   proTrialAt: 1,
@@ -710,11 +713,25 @@ export async function refundMagazineAccess(app: FastifyInstance, userId: ObjectI
   }
 }
 
-// A collection look on their avatar: Pro (a credit), or one of their free
-// try-ons. Returns whether a free one was used, so a failure gives it back.
-export async function useTryOn(app: FastifyInstance, userId: ObjectId, feature: string) {
+// A collection look on their avatar: Pro (a credit), or a free try-on: the
+// Edit's one (`editId`), else one of FREE_TRY_ONS for icon looks. Returns
+// what was used, so a failure gives it back (releaseFreeTryOn).
+export async function useTryOn(app: FastifyInstance, userId: ObjectId, feature: string, editId: string | null = null) {
   if (await hasPro(app, userId)) {
-    return { free: false, creditSpent: await spendCredits(app, userId, 1) }
+    return { free: false, creditSpent: await spendCredits(app, userId, 1), freeEditId: null }
+  }
+
+  if (editId) {
+    const claimed = await app.collections.users.updateOne(
+      { _id: userId, freeEditTryOns: { $ne: editId } },
+      { $addToSet: { freeEditTryOns: editId }, $set: { updatedAt: new Date() } },
+    )
+
+    if (claimed.modifiedCount === 0) {
+      throw new PaywallError('needs_pro', `${feature} comes with Avarobe Pro.`)
+    }
+
+    return { free: true, creditSpent: false, freeEditId: editId }
   }
 
   const result = await app.collections.users.updateOne(
@@ -729,7 +746,7 @@ export async function useTryOn(app: FastifyInstance, userId: ObjectId, feature: 
     throw new PaywallError('needs_pro', `${feature} comes with Avarobe Pro.`)
   }
 
-  return { free: true, creditSpent: false }
+  return { free: true, creditSpent: false, freeEditId: null }
 }
 
 // One of her free uses of a studio feature, claimed atomically (so two
@@ -764,7 +781,12 @@ export async function usePresetTryOn(app: FastifyInstance, userId: ObjectId, kin
   throw new PaywallError('needs_pro', `${feature} comes with Avarobe Pro.`)
 }
 
-export async function releaseFreeTryOn(app: FastifyInstance, userId: ObjectId) {
+export async function releaseFreeTryOn(app: FastifyInstance, userId: ObjectId, editId: string | null = null) {
+  if (editId) {
+    await app.collections.users.updateOne({ _id: userId }, { $pull: { freeEditTryOns: editId } })
+    return
+  }
+
   await app.collections.users.updateOne({ _id: userId, freeTryOns: { $gt: 0 } }, { $inc: { freeTryOns: -1 } })
 }
 

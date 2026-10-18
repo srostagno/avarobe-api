@@ -4,7 +4,7 @@
 // with dotted paths (through arrays of documents, and an array field
 // matching any of its items, as in MongoDB), null matching a missing field,
 // $exists, $ne, $in, $nin, $lt/$lte/$gt/$gte, $or, $nor and $and; updates
-// with $set, $unset, $inc, $push and $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
+// with $set, $unset, $inc, $push, $addToSet, $pull (plain values) and $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
 // from the document as it was before the stage, as in MongoDB), upserts (and their duplicate-key
 // error, on _id and on the unique fields of UNIQUE: avatars.userId,
 // refundRequests.openKey and .ref, as in plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
@@ -299,6 +299,15 @@ function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
       } else if (operator === '$push') {
         const items = read(doc, path)
         write(doc, path, [...(Array.isArray(items) ? (items as unknown[]) : []), clone(value)])
+      } else if (operator === '$addToSet') {
+        // Plain values only (strings, numbers), as the app uses it.
+        const items = Array.isArray(read(doc, path)) ? (read(doc, path) as unknown[]) : []
+        write(doc, path, items.includes(value) ? items : [...items, clone(value)])
+      } else if (operator === '$pull') {
+        const items = read(doc, path)
+        if (Array.isArray(items)) {
+          write(doc, path, items.filter((item) => item !== value))
+        }
       } else if (operator !== '$setOnInsert') {
         throw new Error(`fake-app: update operator ${operator} is not supported`)
       }

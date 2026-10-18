@@ -22,7 +22,7 @@ const pro: ProSubscription = {
 function account(fields: Record<string, unknown> = {}) {
   const userId = new ObjectId()
   const { app, collection } = fakeApp({ users: [{ _id: userId, email: 'customer@example.com', ...fields }] })
-  const user = () => collection('users').docs[0] as Record<string, unknown> & { freeTryOns?: number; credits?: number }
+  const user = () => collection('users').docs[0] as Record<string, unknown> & { freeTryOns?: number; freeEditTryOns?: string[]; credits?: number }
 
   return { app, userId, user }
 }
@@ -43,7 +43,7 @@ describe('A free try-on of a collection look', () => {
   it('lets anyone without Pro try one on, then shows the Pro offer', async () => {
     const { app, userId, user } = account({ credits: 1 })
 
-    assert.deepEqual(await useTryOn(app, userId, 'Trying on outfits'), { free: true, creditSpent: false })
+    assert.deepEqual(await useTryOn(app, userId, 'Trying on outfits'), { free: true, creditSpent: false, freeEditId: null })
     assert.equal(user().freeTryOns, 1)
     assert.equal(user().credits, 1)
     assert.equal(billingState(user() as never).freeTryOnsLeft, 0)
@@ -63,10 +63,24 @@ describe('A free try-on of a collection look', () => {
     assert.equal(serializeBilling(user() as never).freeTryOnsLeft, 1)
   })
 
+  it('gives one free look of each Edit, apart from the icon looks', async () => {
+    const { app, userId, user } = account({ freeTryOns: 1 })
+
+    assert.deepEqual(await useTryOn(app, userId, 'Trying on outfits', 'halloween-2026'), { free: true, creditSpent: false, freeEditId: 'halloween-2026' })
+    assert.equal((await useTryOn(app, userId, 'Trying on outfits', 'zodiac-2026')).free, true)
+    await assert.rejects(useTryOn(app, userId, 'Trying on outfits', 'halloween-2026'), PaywallError)
+    assert.deepEqual(user().freeEditTryOns, ['halloween-2026', 'zodiac-2026'])
+
+    // A failed render gives that Edit's back.
+    await releaseFreeTryOn(app, userId, 'halloween-2026')
+    assert.deepEqual(user().freeEditTryOns, ['zodiac-2026'])
+    assert.equal((await useTryOn(app, userId, 'Trying on outfits', 'halloween-2026')).free, true)
+  })
+
   it('spends a look on Pro and leaves the free one alone', async () => {
     const { app, userId, user } = account({ pro, credits: 30 })
 
-    assert.deepEqual(await useTryOn(app, userId, 'Trying on outfits'), { free: false, creditSpent: true })
+    assert.deepEqual(await useTryOn(app, userId, 'Trying on outfits'), { free: false, creditSpent: true, freeEditId: null })
     assert.equal(user().credits, 29)
     assert.equal(user().freeTryOns, undefined)
     assert.equal(billingState(user() as never).freeTryOnsLeft, null)

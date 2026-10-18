@@ -15,6 +15,7 @@ import {
   spendCredits,
   useTryOn,
 } from '../billing/entitlements.js'
+import { editIdOf } from './edits.js'
 import type { IconLook } from './icons.js'
 import { reserveLookQuota } from './quota.js'
 import { NoOutfitError, analyzeOutfit, startLookRender } from './service.js'
@@ -38,11 +39,13 @@ export async function startTryOn(
 
   let creditSpent: boolean
   let freeTryOn = false
+  let freeEditId: string | null = null
 
   try {
     if (icon) {
-      const access = await useTryOn(app, userId, 'Trying on outfits')
+      const access = await useTryOn(app, userId, 'Trying on outfits', editIdOf(icon.id))
       freeTryOn = access.free
+      freeEditId = access.freeEditId
       creditSpent = access.creditSpent
     } else {
       await requirePro(app, userId, 'Trying on outfits')
@@ -63,7 +66,7 @@ export async function startTryOn(
     await refundCredits(app, userId, creditSpent ? 1 : 0)
 
     if (freeTryOn) {
-      await releaseFreeTryOn(app, userId)
+      await releaseFreeTryOn(app, userId, freeEditId)
     }
   }
   // A catalog look (icon or Edit) is drawn from the catalog's own pieces, so
@@ -125,7 +128,7 @@ export async function startTryOn(
     error: null,
     imageKey: null,
     creditSpent,
-    ...(freeTryOn ? { freeTryOn: true } : {}),
+    ...(freeTryOn ? { freeTryOn: true, ...(freeEditId ? { freeEditId } : {}) } : {}),
     collectionIds: [],
     favorite: false,
     createdAt: now,

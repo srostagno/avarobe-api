@@ -15,6 +15,7 @@ import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { hairReference } from '../avatar/hair.js'
 import { refundCredits, releaseFreeTryOn } from '../billing/entitlements.js'
+import { grantWowOffer } from '../feedback/wow-offer.js'
 import {
   LOOK_PLAN_INSTRUCTIONS,
   type RemixHistoryEntry,
@@ -192,7 +193,7 @@ async function markLookFailed(app: FastifyInstance, lookId: ObjectId) {
     }
 
     if (look.freeTryOn) {
-      await releaseFreeTryOn(app, look.userId)
+      await releaseFreeTryOn(app, look.userId, look.freeEditId ?? null)
       await app.collections.looks.updateOne({ _id: lookId }, { $set: { freeTryOn: false } })
     }
   }
@@ -279,6 +280,9 @@ export async function runLookRender(app: FastifyInstance, lookId: ObjectId) {
     // The look was deleted while rendering.
     if (result.matchedCount === 0) {
       await storage.remove(key).catch(() => undefined)
+    } else if (look.freeTryOn) {
+      // Her free try-on on her: the wow moment, with Pro's half-price month.
+      void grantWowOffer(app, look.userId, 'edit_try_on').catch(() => false)
     }
   } catch (error) {
     app.log.error({ lookId: lookId.toString(), err: errorMessage(error) }, 'Look render failed')

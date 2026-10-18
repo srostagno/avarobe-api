@@ -80,8 +80,10 @@ export type UserDocument = {
   freeAvatarRuns?: number
   // Hairstyle renders used without the Style Advisor or Pro (FREE_HAIR_RUNS).
   freeHairRuns?: number
-  // Collection looks tried on without Pro (FREE_TRY_ONS).
+  // Icon looks tried on without Pro (FREE_TRY_ONS, for good).
   freeTryOns?: number
+  // The Edits whose one free try-on she used (Oct 18, 2026: one per Edit).
+  freeEditTryOns?: string[]
   // The looks they picked to try on next (the Halloween flow, while their
   // avatar was drawing): offered after they buy, never drawn on their own.
   lookPicks?: { ids: string[]; at: Date } | null
@@ -1266,6 +1268,8 @@ export type LookDocument = {
   creditSpent?: boolean
   // A collection look tried on free, without Pro (given back if it fails).
   freeTryOn?: boolean
+  // The Edit whose free try-on it was (given back if it fails).
+  freeEditId?: string
   // Free fixes (looks/fixes.ts): when this look's free fix was taken, how
   // many free fixes in a row led to it, and whether it is one (its retry
   // is free too).
@@ -1479,8 +1483,9 @@ export type FeedbackDocument = {
 
 export type ProHalfOffer = {
   // The advisor whose rating brought it, or (Oct 18, 2026) her first read
-  // of a studio (Face Age, Look Score, Hair Score), the moment she sees it.
-  from: FeedbackProduct | 'face_age' | 'look_score' | 'hair_score'
+  // of a studio (Face Age, Look Score, Hair Score), the moment she sees it,
+  // or her first free try-on of an Edit.
+  from: FeedbackProduct | 'face_age' | 'look_score' | 'hair_score' | 'edit_try_on'
   at: Date
   until: Date
   // Paid with it (the first month at half price).

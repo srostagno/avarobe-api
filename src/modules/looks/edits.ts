@@ -1345,6 +1345,11 @@ export const EDITS: Edit[] = [
   },
 ]
 
+// The Edit a look is in (its free try-on is that Edit's), or null for an icon look.
+export function editIdOf(id: string) {
+  return EDITS.find((edit) => edit.looks.some((look) => look.id === id))?.id ?? null
+}
+
 // A costume try-on's night: the look's scene and face paint, when its Edit is
 // a costume one; null for everything else (drawn in the studio).
 export function costumeFor(id: string | null | undefined) {
