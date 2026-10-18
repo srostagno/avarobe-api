@@ -22,8 +22,10 @@ import { planFix } from '../scores/fix.js'
 // pays"). After her first Hair Score (or her Color Advisor) her perfect
 // haircut, after her first Look Score her perfect look, after her first
 // Face Age read her best face: once each, only without Pro, only when her
-// avatar (or selfie) can draw it. With Pro, unlocking it shows it at once
-// and makes it hers (a haircut, a look, a makeup try-on), at no credit.
+// avatar (or selfie) can draw it; the perfect haircut also from her Hair
+// Score photo or selfie alone, before any avatar (a visitor from the haircut
+// page or ad). With Pro, unlocking it shows it at once and makes it hers (a
+// haircut, a look, a makeup try-on), at no credit.
 
 const say = (text: { en: string; es: string; 'pt-BR': string }) => text[currentLocale() ?? 'en'] ?? text.en
 
@@ -54,11 +56,17 @@ export async function maybeStartTeaser(app: FastifyInstance, userId: ObjectId, k
     }
 
     const avatar = await app.collections.avatars.findOne({ userId })
-    const drawable = kind === 'best_face' ? Boolean(avatar?.selfieKey) : Boolean(avatar?.avatarKey && avatar.status !== 'failed' && (kind !== 'perfect_look' || avatar.body))
+    const withAvatar = Boolean(avatar?.avatarKey && avatar.status !== 'failed')
+    // Without an avatar, the perfect haircut from her Hair Score photo, else her selfie.
+    const photoKey = kind === 'perfect_haircut' && !withAvatar ? (context.photoKey ?? avatar?.selfieKey ?? null) : null
+    const drawable = kind === 'best_face' ? Boolean(avatar?.selfieKey) : kind === 'perfect_look' ? withAvatar && Boolean(avatar?.body) : withAvatar || Boolean(photoKey)
 
-    if (!avatar || !drawable) {
+    if (!drawable) {
       return null
     }
+
+    // Drawn from her avatar or selfie (a new selfie takes it away), or from another photo of hers.
+    const fromSelfie = avatar && (kind !== 'perfect_haircut' || withAvatar || photoKey === avatar.selfieKey) ? avatar : null
 
     // One of the day's pictures, like any other.
     if (!(await reserveGenerations(app, userId, 'image', 1))) {
@@ -76,8 +84,8 @@ export async function maybeStartTeaser(app: FastifyInstance, userId: ObjectId, k
       key: null,
       lockedKey: null,
       plan: null,
-      avatarId: avatar._id,
-      selfieKey: avatar.selfieKey,
+      avatarId: fromSelfie?._id ?? null,
+      selfieKey: fromSelfie?.selfieKey ?? null,
       unlockedAt: null,
       resultId: null,
       createdAt: now,
@@ -91,7 +99,7 @@ export async function maybeStartTeaser(app: FastifyInstance, userId: ObjectId, k
       return null
     }
 
-    void runTeaser(app, teaser, avatar, context).catch((error: unknown) => {
+    void runTeaser(app, teaser, avatar, context, photoKey).catch((error: unknown) => {
       app.log.error({ err: errorMessage(error), teaserId: teaser._id.toString() }, 'Teaser crashed')
     })
     void trackServerEvent(app, { name: 'teaser_started', userId, props: { kind } })
@@ -103,8 +111,16 @@ export async function maybeStartTeaser(app: FastifyInstance, userId: ObjectId, k
   }
 }
 
-async function drawHaircut(avatar: AvatarDocument & { avatarKey: string }, context: Context) {
-  const ideal = avatar.hairProfile?.data?.recommendations[0] ?? null
+// Like OpenAI wants it named: a stored photo is a JPEG, PNG or WebP.
+function photoInput(data: Buffer): ImageInput {
+  const type = data.subarray(0, 4).toString('latin1') === 'RIFF' ? 'webp' : data[0] === 0x89 ? 'png' : 'jpeg'
+  return { data, filename: `photo.${type === 'jpeg' ? 'jpg' : type}`, contentType: `image/${type}` }
+}
+
+// On her avatar (full body and selfie), or (`photoKey`, no avatar yet) on
+// one photo of her.
+async function drawHaircut(avatar: AvatarDocument | null, context: Context, photoKey: string | null) {
+  const ideal = avatar?.hairProfile?.data?.recommendations[0] ?? null
   const description = [
     'The haircut that would flatter this person most.',
     ideal ? `Their stylist's ideal cut for them: ${ideal.name}: ${ideal.render}.` : null,
@@ -113,10 +129,11 @@ async function drawHaircut(avatar: AvatarDocument & { avatarKey: string }, conte
     .filter(Boolean)
     .join(' ')
     .slice(0, 900)
+  const photo = avatar?.avatarKey ? null : await storage.read(photoKey!)
   let plan: Awaited<ReturnType<typeof planHairRequest>>
 
   try {
-    plan = await planHairRequest({ avatar, description, photo: null })
+    plan = await planHairRequest({ avatar, face: photo ?? undefined, description, photo: null })
   } catch (error) {
     if (error instanceof NotAHaircutError && ideal) {
       plan = { name: ideal.name, render: ideal.render, stylistBrief: ideal.stylistBrief, fit: { verdict: 'great', note: ideal.why } }
@@ -125,13 +142,16 @@ async function drawHaircut(avatar: AvatarDocument & { avatarKey: string }, conte
     }
   }
 
-  const [avatarImage, selfie] = await Promise.all([storage.read(avatar.avatarKey), storage.read(avatar.selfieKey)])
+  const images: ImageInput[] =
+    avatar?.avatarKey && !photo
+      ? [
+          { data: await storage.read(avatar.avatarKey), filename: 'avatar.webp', contentType: 'image/webp' },
+          { data: await storage.read(avatar.selfieKey), filename: 'face.jpg', contentType: 'image/jpeg' },
+        ]
+      : [photoInput(photo!)]
   const png = await generateImageFromReferences({
-    images: [
-      { data: avatarImage, filename: 'avatar.webp', contentType: 'image/webp' },
-      { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
-    ],
-    prompt: buildHairstylePrompt({ name: plan.name, render: plan.render, hasReference: false }),
+    images,
+    prompt: buildHairstylePrompt({ name: plan.name, render: plan.render, hasReference: false, photoOnly: Boolean(photo) }),
     size: '1024x1536',
   })
 
@@ -181,14 +201,14 @@ async function drawBestFace(avatar: AvatarDocument, context: Context) {
   return { png, plan: { name, render } }
 }
 
-async function runTeaser(app: FastifyInstance, teaser: TeaserDocument, avatar: AvatarDocument, context: Context) {
+async function runTeaser(app: FastifyInstance, teaser: TeaserDocument, avatar: AvatarDocument | null, context: Context, photoKey: string | null) {
   try {
     const drawn =
       teaser.kind === 'perfect_haircut'
-        ? await drawHaircut({ ...avatar, avatarKey: avatar.avatarKey! }, context)
+        ? await drawHaircut(avatar, context, photoKey)
         : teaser.kind === 'perfect_look'
-          ? await drawLook(app, teaser, { ...avatar, avatarKey: avatar.avatarKey! }, context)
-          : await drawBestFace(avatar, context)
+          ? await drawLook(app, teaser, { ...avatar!, avatarKey: avatar!.avatarKey! }, context)
+          : await drawBestFace(avatar!, context)
     const stamp = Date.now()
     const key = `users/${teaser.userId.toString()}/teaser-${teaser._id.toString()}-${stamp}.webp`
     const lockedKey = `users/${teaser.userId.toString()}/teaser-${teaser._id.toString()}-${stamp}-locked.webp`
@@ -241,7 +261,7 @@ async function materialize(app: FastifyInstance, teaser: TeaserDocument) {
     const hairstyle: HairstyleDocument = {
       _id: new ObjectId(),
       userId: teaser.userId,
-      avatarId: teaser.avatarId!,
+      avatarId: teaser.avatarId,
       source: 'described',
       recommendationId: null,
       name: plan.name,
@@ -351,10 +371,15 @@ export type SerializedTeaser = NonNullable<Awaited<ReturnType<typeof serializeTe
 
 // Her teasers' files and rows (her account or her content deleted). A
 // teaser already unlocked hands its picture to what it became.
-// All of hers, or (`sourceIds`) the ones drawn from those reads. One she
-// unlocked keeps its picture: it's her haircut, look or makeup now.
-export async function deleteTeasers(app: FastifyInstance, userId: ObjectId, sourceIds?: ObjectId[]) {
-  const filter = { userId, ...(sourceIds ? { sourceId: { $in: sourceIds } } : {}) }
+// All of hers, or (`sourceIds`) the ones drawn from those reads, or
+// (`fromSelfie`, for a new selfie) the ones drawn from her avatar and selfie.
+// One she unlocked keeps its picture: it's her haircut, look or makeup now.
+export async function deleteTeasers(app: FastifyInstance, userId: ObjectId, scope: { sourceIds?: ObjectId[]; fromSelfie?: boolean } = {}) {
+  const filter = {
+    userId,
+    ...(scope.sourceIds ? { sourceId: { $in: scope.sourceIds } } : {}),
+    ...(scope.fromSelfie ? { selfieKey: { $ne: null } } : {}),
+  }
   const teasers = await app.collections.teasers.find(filter).toArray()
   const keys = teasers.flatMap((teaser) => [teaser.resultId ? null : teaser.key, teaser.lockedKey]).filter((key): key is string => Boolean(key))
 

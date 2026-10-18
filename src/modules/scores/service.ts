@@ -428,7 +428,7 @@ export async function deleteScoreCheck(app: FastifyInstance, userId: ObjectId, k
   }
 
   await app.collections.scoreChecks.deleteOne({ _id: checkId, userId })
-  await deleteTeasers(app, userId, [checkId])
+  await deleteTeasers(app, userId, { sourceIds: [checkId] })
 
   if (check.photoKey) {
     await storage.remove(check.photoKey).catch(() => undefined)
@@ -444,7 +444,7 @@ export async function deleteScoreData(app: FastifyInstance, userId: ObjectId, op
 
   await Promise.all(checks.filter((check) => check.photoKey).map((check) => storage.remove(check.photoKey).catch(() => undefined)))
   await app.collections.scoreChecks.deleteMany(filter)
-  await deleteTeasers(app, userId, checks.map((check) => check._id))
+  await deleteTeasers(app, userId, { sourceIds: checks.map((check) => check._id) })
 
   if (options.profile) {
     await app.collections.users.updateOne({ _id: userId }, { $unset: { scoreProfile: '' } })

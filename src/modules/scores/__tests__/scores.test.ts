@@ -400,9 +400,11 @@ describe('Score routes', () => {
   })
 
   it('unlocks the perfect haircut with Pro, for one credit, once', async () => {
-    const hairPlan = json(200, { output_text: JSON.stringify({ isHaircut: true, name: 'Soft layered lob', render: 'A soft layered lob at the collarbone.', stylistBrief: 'Collarbone lob with soft layers.', fit: { verdict: 'great', note: 'Frames your face.' } }) })
-    ai.state.reply = (call) => (call.schema === 'hair_request' ? hairPlan : call.schema.endsWith('_measure') ? measured({ shape: 2, color: 3, condition: 2, styling: 2, modern: 2 }) : words('hair'))
-    ai.state.images = 1
+    const hairPlan = () =>
+      json(200, { output_text: JSON.stringify({ isHaircut: true, name: 'Soft layered lob', render: 'A soft layered lob at the collarbone.', stylistBrief: 'Collarbone lob with soft layers.', fit: { verdict: 'great', note: 'Frames your face.' } }) })
+    ai.state.reply = (call) => (call.schema === 'hair_request' ? hairPlan() : call.schema.endsWith('_measure') ? measured({ shape: 2, color: 3, condition: 2, styling: 2, modern: 2 }) : words('hair'))
+    // The free one's perfect haircut is drawn ahead from her photo (teasers), then the Pro one's.
+    ai.state.images = 2
     ai.state.image = await pattern(12)
 
     const free = await setup()

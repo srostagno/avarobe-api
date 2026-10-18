@@ -172,7 +172,7 @@ export const HAIR_REQUEST_INSTRUCTIONS = [
 
 export function buildHairRequest(input: {
   profile: HairProfile | null
-  body: AvatarBody
+  body: AvatarBody | null
   description: string | null
   hasPhoto: boolean
 }) {
@@ -186,7 +186,7 @@ export function buildHairRequest(input: {
       : 'The image is your client’s selfie.',
     input.description ? `They ask for: "${input.description}".` : null,
     profile,
-    `They shop ${input.body.presentation === 'unisex' ? 'both menswear and womenswear' : input.body.presentation}.`,
+    input.body ? `They shop ${input.body.presentation === 'unisex' ? 'both menswear and womenswear' : input.body.presentation}.` : null,
   ]
     .filter((line): line is string => line !== null)
     .join(' ')
@@ -201,7 +201,19 @@ const PORTRAIT_FINISH = [
 // One haircut on the person. Images: the full-body avatar, the selfie as a
 // close-up of the face, and (from a photo) the haircut they brought.
 // `colorOnly`: a new hair color on the cut they have (a color preset).
-export function buildHairstylePrompt(input: { name: string; render: string; hasReference: boolean; colorOnly?: boolean }) {
+// `photoOnly`: from one photo of her (no avatar yet), image 1.
+export function buildHairstylePrompt(input: { name: string; render: string; hasReference: boolean; colorOnly?: boolean; photoOnly?: boolean }) {
+  if (input.photoOnly) {
+    return [
+      'Image 1 is a photo of this person.',
+      'Create a portrait photo of this SAME person with a new haircut: identical face, facial features, skin tone, eye color, facial hair and expression, instantly recognisable, at the same age.',
+      `The new haircut: ${input.name}. ${input.render}`,
+      'Keep their natural hair color from image 1 unless the haircut above names a color.',
+      'The hair looks freshly cut and styled by a professional: realistic strands and texture, a natural hairline, and it suits their real hair density.',
+      ...PORTRAIT_FINISH,
+    ].join(' ')
+  }
+
   if (input.colorOnly) {
     return [
       'Image 1 is this person in full body. Image 2 is a close-up of the same face.',

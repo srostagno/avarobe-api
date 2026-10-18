@@ -42,13 +42,14 @@ export function hairstyleKeys(hairstyle: Pick<HairstyleDocument, 'imageKey' | 'p
 
 // Every haircut rendered on this person, with its files (a new selfie, a
 // deleted avatar or account).
-export async function deleteHairstyles(app: FastifyInstance, userId: ObjectId) {
-  const hairstyles = await app.collections.hairstyles
-    .find({ userId }, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1 } })
-    .toArray()
+// All of hers, or (`fromSelfie`, for a new selfie) the ones drawn from her
+// avatar and selfie: one drawn from another photo of hers stays.
+export async function deleteHairstyles(app: FastifyInstance, userId: ObjectId, options: { fromSelfie?: boolean } = {}) {
+  const filter = { userId, ...(options.fromSelfie ? { avatarId: { $ne: null } } : {}) }
+  const hairstyles = await app.collections.hairstyles.find(filter, { projection: { imageKey: 1, previewKey: 1, referenceKey: 1 } }).toArray()
 
   await Promise.all(hairstyles.flatMap(hairstyleKeys).map((key) => storage.remove(key).catch(() => undefined)))
-  await app.collections.hairstyles.deleteMany({ userId })
+  await app.collections.hairstyles.deleteMany(filter)
 }
 
 type ProfileResult = Omit<HairProfile, 'recommendations'> & {
@@ -233,12 +234,15 @@ export async function startRecommendedHairstyle(
 
 // A haircut they described or showed in a photo, read by the stylist for
 // their face and hair (a few seconds).
+// `face`: her photo instead of her avatar's selfie (a perfect haircut drawn
+// ahead from her Hair Score photo, teasers/service.ts).
 export async function planHairRequest(input: {
-  avatar: AvatarDocument
+  avatar: AvatarDocument | null
+  face?: Buffer
   description: string | null
   photo: Buffer | null
 }): Promise<{ name: string; render: string; stylistBrief: string; fit: HairFit }> {
-  const selfie = await storage.read(input.avatar.selfieKey)
+  const selfie = input.face ?? (await storage.read(input.avatar!.selfieKey))
   const result = await createStructuredResponse<{
     isHaircut: boolean
     name: string
@@ -251,8 +255,8 @@ export async function planHairRequest(input: {
       {
         type: 'input_text',
         text: buildHairRequest({
-          profile: input.avatar.hairProfile?.data ?? null,
-          body: bodyOf(input.avatar),
+          profile: input.avatar?.hairProfile?.data ?? null,
+          body: input.avatar?.body ? bodyOf(input.avatar) : null,
           description: input.description,
           hasPhoto: Boolean(input.photo),
         }),
@@ -326,7 +330,7 @@ export async function runHairstyleRender(app: FastifyInstance, hairstyleId: Obje
     return
   }
 
-  const avatar = await app.collections.avatars.findOne({ _id: hairstyle.avatarId })
+  const avatar = hairstyle.avatarId ? await app.collections.avatars.findOne({ _id: hairstyle.avatarId }) : null
 
   if (!avatar?.avatarKey) {
     await markHairstyleFailed(app, hairstyleId)

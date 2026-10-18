@@ -306,7 +306,7 @@ export async function deleteFaceCheck(app: FastifyInstance, userId: ObjectId, ch
   const check = await app.collections.faceChecks.findOneAndDelete({ _id: checkId, userId })
 
   if (check) {
-    await deleteTeasers(app, userId, [checkId])
+    await deleteTeasers(app, userId, { sourceIds: [checkId] })
   }
 
   if (check?.photoKey) {
@@ -324,7 +324,7 @@ export async function deleteLookData(app: FastifyInstance, userId: ObjectId, opt
 
   await Promise.all(checks.filter((check) => check.photoKey).map((check) => storage.remove(check.photoKey).catch(() => undefined)))
   await app.collections.faceChecks.deleteMany({ userId })
-  await deleteTeasers(app, userId, checks.map((check) => check._id))
+  await deleteTeasers(app, userId, { sourceIds: checks.map((check) => check._id) })
 
   if (options.profile) {
     await app.collections.users.updateOne({ _id: userId }, { $unset: { lookGreat: '' } })

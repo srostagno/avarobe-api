@@ -11,7 +11,8 @@ import makeupRoutes from '../../makeup/routes.js'
 import scoreRoutes from '../../scores/routes.js'
 import teaserRoutes from '../routes.js'
 import { grantWowOffer } from '../../feedback/wow-offer.js'
-import { maybeStartTeaser } from '../service.js'
+import { deleteHairstyles } from '../../hair/service.js'
+import { deleteTeasers, maybeStartTeaser } from '../service.js'
 
 // Her best version drawn ahead and blurred (Pro plan phase 1, Oct 18, 2026):
 // after her first read, once, only without Pro; the half-price first month
@@ -70,7 +71,7 @@ describe('Teasers', () => {
     Object.assign(env, { COMP_EMAILS: saved.comp, SCORE_SAMPLES: saved.samples, SCORES_ENABLED: saved.on, MAKEUP_ENABLED: saved.makeup })
   })
 
-  async function setup(userFields: Record<string, unknown> = {}) {
+  async function setup(userFields: Record<string, unknown> = {}, avatar: Record<string, unknown> | null = {}) {
     const userId = new ObjectId()
     const avatarKey = `users/${userId.toString()}/avatar.webp`
     const selfieKey = `users/${userId.toString()}/selfie.jpg`
@@ -81,7 +82,9 @@ describe('Teasers', () => {
       { '/scores': scoreRoutes, '/teasers': teaserRoutes, '/makeup': makeupRoutes },
       {
         users: [{ _id: userId, email: 'rosa@example.com', credits: 0, createdAt: new Date(), scoreProfile: consented, ...userFields }],
-        avatars: [{ _id: new ObjectId(), userId, status: 'ready', avatarKey, selfieKey, versions: [], body: { heightCm: 165, weightKg: 62, build: 'average', presentation: 'womenswear' } }],
+        avatars: avatar
+          ? [{ _id: new ObjectId(), userId, status: 'ready', avatarKey, selfieKey, versions: [], body: { heightCm: 165, weightKg: 62, build: 'average', presentation: 'womenswear' }, ...avatar }]
+          : [],
       },
     )
     const headers = built.auth(userId)
@@ -93,7 +96,7 @@ describe('Teasers', () => {
       await until(async () => built.collection('scoreChecks').docs.every((check) => (check as { status: string }).status !== 'processing'))
     }
 
-    return { ...built, headers, teasers, user, scoreHair, userId }
+    return { ...built, headers, teasers, user, scoreHair, userId, selfieKey }
   }
 
   it('draws her perfect haircut after her first Hair Score, blurred, with the half-price month', async () => {
@@ -184,5 +187,36 @@ describe('Teasers', () => {
 
     const trialed = await setup({ proTrialAt: new Date() })
     assert.equal(await grantWowOffer(trialed.app, trialed.userId, 'face_age'), false)
+  })
+
+  it('draws her perfect haircut from her Hair Score photo before any avatar, and a new selfie leaves it', async () => {
+    const { app, headers, teasers, scoreHair, userId, collection } = await setup({}, null)
+
+    await scoreHair()
+    await until(async () => teasers()[0]?.status === 'ready')
+
+    assert.equal(teasers()[0]?.avatarId, null)
+    assert.equal(teasers()[0]?.selfieKey, null)
+    const plan = ai.calls.find((call) => call.schema === 'hair_request')!
+    assert.doesNotMatch(JSON.stringify(plan.body.input), /They shop/)
+
+    // Unlocked with Pro, it's a haircut of hers, and a new selfie keeps both.
+    collection('users').docs[0]!.pro = pro
+    assert.equal((await app.inject({ method: 'POST', url: `/teasers/${teasers()[0]!._id.toString()}/unlock`, headers })).statusCode, 200)
+    await deleteHairstyles(app, userId, { fromSelfie: true })
+    await deleteTeasers(app, userId, { fromSelfie: true })
+    assert.equal(collection('hairstyles').docs.length, 1)
+    assert.equal(teasers().length, 1)
+  })
+
+  it('draws it from her selfie for a colors-first buyer, and a new selfie takes it', async () => {
+    const { app, teasers, userId, selfieKey } = await setup({}, { avatarKey: null, status: 'processing', body: null })
+
+    await maybeStartTeaser(app, userId, 'perfect_haircut', new ObjectId(), { tips: [] })
+    await until(async () => teasers()[0]?.status === 'ready')
+    assert.equal(teasers()[0]?.selfieKey, selfieKey)
+
+    await deleteTeasers(app, userId, { fromSelfie: true })
+    assert.equal(teasers().length, 0)
   })
 })

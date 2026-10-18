@@ -957,7 +957,9 @@ export type HairFit = { verdict: 'great' | 'good' | 'tricky'; note: string }
 export type HairstyleDocument = {
   _id: ObjectId
   userId: ObjectId
-  avatarId: ObjectId
+  // Null for a perfect haircut drawn from another photo of hers before any
+  // avatar (teasers): a new selfie leaves it.
+  avatarId: ObjectId | null
   source: 'recommended' | 'described' | 'photo' | 'preset'
   recommendationId: string | null
   // A cut or color from the presets (hair/presets.ts), and whether it was

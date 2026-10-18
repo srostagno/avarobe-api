@@ -610,7 +610,7 @@ function removeKeys(keys: string[]) {
 
 // Haircuts and makeup were read from, and drawn with, the selfie it replaced.
 function dropHairstyles(app: FastifyInstance, userId: ObjectId) {
-  return Promise.all([deleteHairstyles(app, userId), deleteMakeupTryOns(app, userId), deleteTeasers(app, userId)]).catch((error: unknown) => {
+  return Promise.all([deleteHairstyles(app, userId, { fromSelfie: true }), deleteMakeupTryOns(app, userId), deleteTeasers(app, userId, { fromSelfie: true })]).catch((error: unknown) => {
     app.log.error({ err: error, userId: userId.toString() }, 'Could not delete the old haircuts and makeup')
   })
 }

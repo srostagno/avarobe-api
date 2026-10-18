@@ -271,9 +271,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       // Haircuts and makeup were read from, and drawn with, the old selfie.
       if (selfieKey) {
-        await deleteHairstyles(app, userId)
+        await deleteHairstyles(app, userId, { fromSelfie: true })
         await deleteMakeupTryOns(app, userId)
-        await deleteTeasers(app, userId)
+        await deleteTeasers(app, userId, { fromSelfie: true })
       }
 
       startAvatarJob(app, avatarId, {
@@ -582,9 +582,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
 
       if (keepNew) {
         if (moveSelfie) {
-          await deleteHairstyles(app, userId)
+          await deleteHairstyles(app, userId, { fromSelfie: true })
           await deleteMakeupTryOns(app, userId)
-          await deleteTeasers(app, userId)
+          await deleteTeasers(app, userId, { fromSelfie: true })
         }
 
         await startDrapePreview(app, existing._id).catch((error: unknown) => {
@@ -823,9 +823,9 @@ const avatarRoutes: FastifyPluginAsync = async (app) => {
     await app.collections.avatars.deleteOne({ _id: existing._id })
     await Promise.all(keys.map((key) => storage.remove(key).catch(() => undefined)))
     // The haircuts and makeup on them were drawn from these photos.
-    await deleteHairstyles(app, userId)
+    await deleteHairstyles(app, userId, { fromSelfie: true })
     await deleteMakeupTryOns(app, userId)
-    await deleteTeasers(app, userId)
+    await deleteTeasers(app, userId, { fromSelfie: true })
 
     return { ok: true }
   })
