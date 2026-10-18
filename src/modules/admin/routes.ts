@@ -14,6 +14,7 @@ import { isColorsLocked } from '../avatar/reads.js'
 import { BILLING_PROJECTION, adminUserIds } from '../billing/entitlements.js'
 import { whyReport } from '../survey/report.js'
 import { feedbackReport } from '../feedback/report.js'
+import { proPlanReport } from './pro-plan.js'
 import { refundsReport } from '../billing/refunds.js'
 import { requestStats } from '../billing/refund-requests.js'
 import { recentCheckouts } from '../billing/stripe.js'
@@ -560,6 +561,21 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return feedbackReport(app, parsed.data.days)
+  })
+
+  // Everything built to turn reads into Pro, in one place (pro-plan.ts).
+  app.get('/pro-plan', { preHandler: authenticate }, async (request, reply) => {
+    if (!(await viewerIfAdmin(app, request, reply))) {
+      return reply
+    }
+
+    const parsed = parseBody(feedbackSchema, request.query)
+
+    if (!parsed.ok) {
+      return reply.code(400).send({ message: parsed.message })
+    }
+
+    return proPlanReport(app, parsed.data.days)
   })
 
   // The Hair studio: its funnel and the accounts using it (hair-report.ts).
