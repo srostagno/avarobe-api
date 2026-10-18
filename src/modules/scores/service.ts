@@ -14,6 +14,7 @@ import { PaywallError, billingState, freeUsesLeft, hasPro, releaseFreeUse, useFr
 import { type Shows, buildMeasureInstructions, buildWordsInstructions, measureSchema, wordsSchema } from './prompts.js'
 import { CRITERIA, PROBLEMS, RUBRIC_VERSION, TIP_AREAS, criterionIds } from './rubrics.js'
 import { grantWowOffer } from '../feedback/wow-offer.js'
+import { rewardInviter } from '../invites/service.js'
 import { deleteTeasers, failStaleTeasers, maybeStartTeaser, serializeTeaser } from '../teasers/service.js'
 import { serializePerfect } from './perfect.js'
 import { averageCriteria, currentScore, scoreFrom, weakestFirst } from './score.js'
@@ -282,6 +283,8 @@ export async function runScoreRead(app: FastifyInstance, checkId: ObjectId) {
       { $set: { status: 'ready', reading, error: null, updatedAt: new Date() } },
     )
     void trackServerEvent(app, { name: 'score_photo_read', userId: check.userId, props: { kind: check.kind, usable: true, score } })
+    // Her first read: the friend who invited her gets a teaser (modules/invites).
+    void rewardInviter(app, check.userId)
   } catch (error) {
     app.log.error({ err: errorMessage(error), checkId: checkId.toString() }, 'Score read failed')
     await failCheck(app, check, 'We could not read that photo. Try again in a moment.')

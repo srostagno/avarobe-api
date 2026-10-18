@@ -48,6 +48,12 @@ async function eligible(app: FastifyInstance, userId: ObjectId, kind: TeaserKind
   return !(await app.collections.teasers.findOne({ userId, kind }, { projection: { _id: 1 } }))
 }
 
+// One invite reward earned before any teaser was drawn (modules/invites), taken.
+async function takePendingInvite(app: FastifyInstance, userId: ObjectId) {
+  const taken = await app.collections.users.updateOne({ _id: userId, 'invite.pending': { $gt: 0 } }, { $inc: { 'invite.pending': -1 } })
+  return taken.modifiedCount > 0
+}
+
 // Starts one when it can (never throws: it's a gift, not a step).
 export async function maybeStartTeaser(app: FastifyInstance, userId: ObjectId, kind: TeaserKind, sourceId: ObjectId, context: Context) {
   try {
@@ -229,9 +235,12 @@ async function runTeaser(app: FastifyInstance, teaser: TeaserDocument, avatar: A
 
     void trackServerEvent(app, { name: 'teaser_ready', userId: teaser.userId, props: { kind: teaser.kind } })
 
-    // Unlocked while it drew: hers now.
+    // Unlocked while it drew: hers now. Or a friend she invited already did
+    // her first read (modules/invites): this one is hers too.
     if (saved.unlockedAt && !saved.resultId) {
       await materialize(app, saved)
+    } else if (!saved.unlockedAt && (await takePendingInvite(app, teaser.userId))) {
+      await unlockTeaser(app, saved)
     }
   } catch (error) {
     app.log.error({ err: errorMessage(error), teaserId: teaser._id.toString() }, 'Teaser failed')

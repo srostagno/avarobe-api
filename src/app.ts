@@ -26,6 +26,7 @@ import hairRoutes from './modules/hair/routes.js'
 import makeupRoutes from './modules/makeup/routes.js'
 import scoreRoutes from './modules/scores/routes.js'
 import teaserRoutes from './modules/teasers/routes.js'
+import inviteRoutes from './modules/invites/routes.js'
 import checkRoutes from './modules/check/routes.js'
 import lookGreatRoutes from './modules/look/routes.js'
 import healthRoutes from './modules/health/routes.js'
@@ -118,6 +119,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(makeupRoutes, { prefix: '/makeup' })
     await v1.register(scoreRoutes, { prefix: '/scores' })
     await v1.register(teaserRoutes, { prefix: '/teasers' })
+    await v1.register(inviteRoutes, { prefix: '/invites' })
     await v1.register(checkRoutes, { prefix: '/check' })
     await v1.register(lookGreatRoutes, { prefix: '/look' })
     await v1.register(styleEventRoutes, { prefix: '/style-events' })

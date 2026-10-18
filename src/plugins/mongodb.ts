@@ -106,6 +106,7 @@ async function ensureMongoIndexes(collections: MongoCollections) {
     collections.users.createIndex({ createdAt: -1 }),
     // The half-price month's last call (lifecycle sendTeaserEmails).
     collections.users.createIndex({ 'proHalfOffer.until': 1 }, { sparse: true }),
+    collections.users.createIndex({ 'invite.code': 1 }, { unique: true, sparse: true }),
     collections.refreshTokens.createIndex({ tokenHash: 1 }, { unique: true }),
     collections.refreshTokens.createIndex({ userId: 1 }),
     collections.refreshTokens.createIndex(

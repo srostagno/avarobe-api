@@ -71,6 +71,11 @@ export type UserDocument = {
   // Pro's first month at half price, offered once after rating a paid
   // advisor 7 or more (modules/feedback): until when, and when it was used.
   proHalfOffer?: ProHalfOffer | null
+  // Her invite link (modules/invites, Oct 18, 2026): a friend's first read
+  // unlocks one of her teasers (`pending`: earned before one was drawn).
+  invite?: { code: string; createdAt: Date; rewards: number; pending: number }
+  // The friend who invited her, and when her first read rewarded them.
+  invitedBy?: { userId: ObjectId; code: string; at: Date; rewardedAt: Date | null }
   // Avatar renders used without Pro (create, redo, adjust, a new haircut).
   freeAvatarRuns?: number
   // Hairstyle renders used without the Style Advisor or Pro (FREE_HAIR_RUNS).

@@ -9,6 +9,7 @@ import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { type Geo, requestGeo } from '../analytics/geo.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { grantWowOffer } from '../feedback/wow-offer.js'
+import { rewardInviter } from '../invites/service.js'
 import { deleteTeasers, maybeStartTeaser } from '../teasers/service.js'
 import { PaywallError, billingState, loadBillingUser } from '../billing/entitlements.js'
 
@@ -127,6 +128,8 @@ export async function runFaceRead(app: FastifyInstance, checkId: ObjectId) {
       await grantWowOffer(app, check.userId, 'face_age').catch(() => false)
       await maybeStartTeaser(app, check.userId, 'best_face', checkId, { tips: reading.tips.map((tip) => tip.text), faceTips: reading.tips })
       await app.collections.faceChecks.updateOne({ _id: checkId }, { $set: { status: 'ready', reading, updatedAt: new Date() } })
+      // Her first read: the friend who invited her gets a teaser (modules/invites).
+      void rewardInviter(app, check.userId)
     }
 
     void trackServerEvent(app, {
