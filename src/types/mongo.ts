@@ -1607,6 +1607,8 @@ export type ScoreCheckDocument = {
   reading: ScoreReading | null
   // "See it fixed" (looks): the look drawn from it with the tips applied.
   fixLookId?: ObjectId | null
+  // "Unlock your perfect haircut" (hair, Pro): the haircut drawn from it.
+  perfectHairstyleId?: ObjectId | null
   createdAt: Date
   updatedAt: Date
 }

@@ -184,6 +184,41 @@ describe('Makeup try-ons', () => {
     assert.ok(key && files.removed.includes(key))
   })
 
+  it('unlocks her best face from a Face Age read, with Pro only', async () => {
+    await rendered()
+    const reading = {
+      usable: true,
+      problem: null,
+      apparentAge: 52,
+      potentialYears: 3,
+      headline: 'x',
+      strengths: [],
+      agingFactors: [],
+      tips: [
+        { area: 'makeup', text: 'A rosy cream blush high on the cheeks.' },
+        { area: 'light', text: 'Face a window.' },
+      ],
+      photo: { light: 'good', glasses: false, makeup: 'none', expression: 'neutral', angle: 'front' },
+    }
+    const face = (userId: ObjectId) => ({ _id: new ObjectId(), userId, status: 'ready', error: null, photoKey: 'x', takenAt: new Date(), source: 'camera', dateSource: 'now', reading, createdAt: new Date(), updatedAt: new Date() })
+
+    const free = await setup()
+    const freeCheck = face(free.userId)
+    free.collection('faceChecks').docs.push(freeCheck)
+    assert.equal((await free.app.inject({ method: 'POST', url: '/makeup/best-face', headers: free.headers, payload: { checkId: freeCheck._id.toString() } })).statusCode, 402)
+
+    const paid = await setup({ pro, credits: 30 })
+    const check = face(paid.userId)
+    paid.collection('faceChecks').docs.push(check)
+    const started = await paid.app.inject({ method: 'POST', url: '/makeup/best-face', headers: paid.headers, payload: { checkId: check._id.toString() } })
+    assert.equal(started.statusCode, 202)
+    assert.match(paid.tryOns()[0]?.render ?? '', /rosy cream blush/)
+    assert.equal(paid.tryOns()[0]?.presetId, `best-face-${check._id.toString()}`)
+    await until(async () => paid.tryOns()[0]?.status === 'ready')
+    assert.equal(paid.user().credits, 29)
+    assert.equal((await paid.app.inject({ method: 'POST', url: '/makeup/best-face', headers: paid.headers, payload: { checkId: check._id.toString() } })).statusCode, 200)
+  })
+
   it('is off with MAKEUP_ENABLED=off', async () => {
     env.MAKEUP_ENABLED = 'off'
     const { app, headers } = await setup()

@@ -399,6 +399,43 @@ describe('Score routes', () => {
     assert.equal(collection('looks').docs.length, 1)
   })
 
+  it('unlocks the perfect haircut with Pro, for one credit, once', async () => {
+    const hairPlan = json(200, { output_text: JSON.stringify({ isHaircut: true, name: 'Soft layered lob', render: 'A soft layered lob at the collarbone.', stylistBrief: 'Collarbone lob with soft layers.', fit: { verdict: 'great', note: 'Frames your face.' } }) })
+    ai.state.reply = (call) => (call.schema === 'hair_request' ? hairPlan : call.schema.endsWith('_measure') ? measured({ shape: 2, color: 3, condition: 2, styling: 2, modern: 2 }) : words('hair'))
+    ai.state.images = 1
+    ai.state.image = await pattern(12)
+
+    const free = await setup()
+    await free.send('hair', 1)
+    await free.settled(1)
+    const freeUserId = free.userId
+    files.files.set(`users/${freeUserId.toString()}/avatar.webp`, await pattern(13))
+    files.files.set(`users/${freeUserId.toString()}/selfie.jpg`, await pattern(14))
+    free.collection('avatars').docs.push({ _id: new ObjectId(), userId: freeUserId, status: 'ready', avatarKey: `users/${freeUserId.toString()}/avatar.webp`, selfieKey: `users/${freeUserId.toString()}/selfie.jpg`, versions: [], body: { heightCm: 165, weightKg: 62, build: 'average', presentation: 'womenswear' } })
+    const blocked = await free.app.inject({ method: 'POST', url: `/scores/hair/photos/${free.checks()[0]!._id.toString()}/perfect`, headers: free.headers })
+    assert.equal(blocked.statusCode, 402)
+
+    const { app, headers, send, settled, checks, collection, userId } = await setup({ scoreProfile: consented, pro, credits: 30 })
+    files.files.set(`users/${userId.toString()}/avatar.webp`, await pattern(15))
+    files.files.set(`users/${userId.toString()}/selfie.jpg`, await pattern(16))
+    collection('avatars').docs.push({ _id: new ObjectId(), userId, status: 'ready', avatarKey: `users/${userId.toString()}/avatar.webp`, selfieKey: `users/${userId.toString()}/selfie.jpg`, versions: [], body: { heightCm: 165, weightKg: 62, build: 'average', presentation: 'womenswear' } })
+    await send('hair', 2)
+    await settled(1)
+    const url = `/scores/hair/photos/${checks()[0]!._id.toString()}/perfect`
+
+    const started = await app.inject({ method: 'POST', url, headers })
+    assert.equal(started.statusCode, 202)
+    assert.equal(started.json<{ perfect: { name: string } }>().perfect.name, 'Soft layered lob')
+    assert.equal((collection('users').docs[0] as { credits: number }).credits, 29)
+    await until(async () => (collection('hairstyles').docs[0] as { status: string }).status === 'ready')
+
+    const state = (await app.inject({ method: 'GET', url: '/scores/hair', headers })).json<{ checks: { perfect: { status: string; imageUrl: string | null } | null }[] }>()
+    assert.equal(state.checks[0]?.perfect?.status, 'ready')
+    assert.ok(state.checks[0]?.perfect?.imageUrl)
+    assert.equal((await app.inject({ method: 'POST', url, headers })).statusCode, 200)
+    assert.equal(collection('hairstyles').docs.length, 1)
+  })
+
   it('is off with SCORES_ENABLED=off', async () => {
     env.SCORES_ENABLED = 'off'
     const { app, headers } = await setup()

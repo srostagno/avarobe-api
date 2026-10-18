@@ -1,14 +1,18 @@
 import type { FastifyPluginAsync } from 'fastify'
+import { z } from 'zod'
 
 import { env } from '../../config/env.js'
 import { authenticate, requireUserId } from '../../plugins/authenticate.js'
+import { parseBody } from '../../utils/http.js'
 import { toObjectId } from '../../utils/object-id.js'
 import { storage } from '../../utils/storage.js'
 import { dailyLimitReply, releaseGenerations, remainingGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
-import { PaywallError, sendPaywall } from '../billing/entitlements.js'
+import { PaywallError, requirePro, sendPaywall, spendCredits } from '../billing/entitlements.js'
 import {
+  BEST_FACE_PREFIX,
   MakeupLockedError,
+  startBestFace,
   MakeupNotFoundError,
   makeupKeys,
   resolveMakeupPreset,
@@ -16,6 +20,8 @@ import {
   serializeMakeupTryOn,
   startMakeupTryOn,
 } from './service.js'
+
+const bestFaceSchema = z.object({ checkId: z.string().min(1).max(64) })
 
 const makeupLimitBody = () => ({ code: 'daily_limit', message: `You can try ${env.DAILY_MAKEUP_LIMIT} makeup looks a day. Come back tomorrow.` })
 
@@ -93,6 +99,58 @@ const makeupRoutes: FastifyPluginAsync = async (app) => {
 
       throw error
     }
+  })
+
+  // "Unlock your best face" (Face Age, Pro): her face read's changes applied
+  // to her; one credit, given back if it fails. The same read again: the
+  // picture she has.
+  app.post('/best-face', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const parsed = parseBody(bestFaceSchema, request.body)
+    const checkId = parsed.ok ? toObjectId(parsed.data.checkId) : null
+    const check = checkId ? await app.collections.faceChecks.findOne({ _id: checkId, userId, status: 'ready' }) : null
+
+    if (!checkId || !check?.reading?.usable || check.reading.tips.length === 0) {
+      return reply.code(404).send({ message: 'Not found.' })
+    }
+
+    const avatar = await app.collections.avatars.findOne({ userId })
+
+    if (!avatar?.selfieKey) {
+      return reply.code(409).send({ code: 'needs_selfie', message: 'Add your selfie first.' })
+    }
+
+    const existing = await app.collections.makeupTryOns.findOne({ userId, presetId: `${BEST_FACE_PREFIX}${checkId.toString()}`, selfieKey: avatar.selfieKey })
+
+    if (existing && existing.status !== 'failed') {
+      return reply.code(200).send({ tryOn: await serializeMakeupTryOn(existing) })
+    }
+
+    const reserved = await reserveUsage(app, userId, 'makeup', 1)
+
+    if (!reserved.ok) {
+      return dailyLimitReply(reply, reserved, makeupLimitBody())
+    }
+
+    let creditSpent: boolean
+
+    try {
+      await requirePro(app, userId, 'Your best face')
+      creditSpent = await spendCredits(app, userId, 1)
+    } catch (error) {
+      await releaseGenerations(app, userId, 'makeup', 1)
+
+      if (error instanceof PaywallError) {
+        return sendPaywall(reply, error)
+      }
+
+      throw error
+    }
+
+    const { tryOn } = await startBestFace(app, { avatar, faceCheckId: checkId, tips: check.reading.tips, creditSpent })
+    void trackServerEvent(app, { name: 'best_face_started', userId })
+
+    return reply.code(202).send({ tryOn: await serializeMakeupTryOn(tryOn) })
   })
 
   app.get('/tryons/:id', async (request, reply) => {

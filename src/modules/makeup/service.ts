@@ -75,6 +75,58 @@ export async function resolveMakeupPreset(app: FastifyInstance, avatar: AvatarDo
   throw new MakeupNotFoundError('No such makeup.')
 }
 
+// "Unlock your best face" (Face Age, Pro; Oct 17, 2026, Silvio: "the same
+// with look and face"): her face read's changes applied to her, drawn like a
+// makeup try-on from her selfie (and avatar). Only what a photo can show:
+// makeup, brows, the light, a flattering color by the face, the hair's
+// styling and a soft smile; never her features or her age.
+export const BEST_FACE_PREFIX = 'best-face-'
+
+export function bestFaceRender(tips: { area: string; text: string }[]) {
+  return [
+    'Her best photo today, applying these changes from her face read:',
+    ...tips.map((tip) => `- ${tip.area}: ${tip.text}`),
+    'Apply only what a photo can change: makeup, brows, soft flattering window light, a flattering color near the face, hair styling, and a natural soft smile. Same face, features, skin texture and age.',
+  ].join(' ')
+}
+
+export async function startBestFace(app: FastifyInstance, input: { avatar: AvatarDocument; faceCheckId: ObjectId; tips: { area: string; text: string }[]; creditSpent: boolean }) {
+  const locale = currentLocale() ?? 'en'
+  const presetId = `${BEST_FACE_PREFIX}${input.faceCheckId.toString()}`
+  const existing = await app.collections.makeupTryOns.findOne({ userId: input.avatar.userId, presetId, selfieKey: input.avatar.selfieKey })
+
+  if (existing && existing.status !== 'failed') {
+    return { tryOn: existing, started: false }
+  }
+
+  const names = { en: 'Your best face', es: 'Tu mejor rostro', 'pt-BR': 'Seu melhor rosto' }
+  const now = new Date()
+  const fields = { status: 'processing' as const, error: null, imageKey: null, previewKey: null, creditSpent: input.creditSpent, freeUse: false, updatedAt: now, readyAt: null }
+  let tryOn: MakeupTryOnDocument
+
+  if (existing) {
+    tryOn = { ...existing, ...fields }
+    await app.collections.makeupTryOns.updateOne({ _id: existing._id }, { $set: fields })
+  } else {
+    tryOn = {
+      _id: new ObjectId(),
+      userId: input.avatar.userId,
+      avatarId: input.avatar.avatarKey ? input.avatar._id : null,
+      selfieKey: input.avatar.selfieKey,
+      presetId,
+      name: say(names, locale),
+      render: bestFaceRender(input.tips),
+      createdAt: now,
+      ...fields,
+    }
+    await app.collections.makeupTryOns.insertOne(tryOn)
+  }
+
+  startMakeupRender(app, tryOn._id)
+
+  return { tryOn, started: true }
+}
+
 export function makeupKeys(tryOn: Pick<MakeupTryOnDocument, 'imageKey' | 'previewKey'>) {
   return [tryOn.imageKey, tryOn.previewKey].filter((key): key is string => Boolean(key))
 }

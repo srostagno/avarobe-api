@@ -17,8 +17,9 @@ import { trackServerEvent } from '../analytics/service.js'
 import { needsCheckboxConsent } from '../avatar/routes.js'
 import { PaywallError, billingState, isAdmin, refundCredits, requirePro, sendPaywall, spendCredits } from '../billing/entitlements.js'
 import { reserveLookQuota } from '../looks/quota.js'
-import { releaseGenerations } from '../../utils/usage.js'
+import { dailyLimitReply, releaseGenerations, reserveUsage } from '../../utils/usage.js'
 import { NothingToFixError, planFix, startFixLook } from './fix.js'
+import { NoPerfectCutError, serializePerfect, startPerfectHaircut } from './perfect.js'
 import {
   SCORE_CONSENT_VERSION,
   SCORE_KINDS,
@@ -294,6 +295,71 @@ const scoreRoutes: FastifyPluginAsync = async (app) => {
 
       request.log.error({ err: error }, 'Score fix failed')
       return reply.code(502).send({ message: 'Our stylist couldn’t fix that look. Try again.' })
+    }
+  })
+
+  // "Unlock your perfect haircut" (hair, Pro): the cut that suits her,
+  // planned from this read and drawn on her; one credit, given back if it
+  // fails. Again on the same photo: the haircut she has.
+  app.post('/hair/photos/:id/perfect', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = requireUserId(request)
+    const id = toObjectId((request.params as { id: string }).id)
+    const check = id ? await app.collections.scoreChecks.findOne({ _id: id, userId, kind: 'hair' }) : null
+
+    if (!check || check.status !== 'ready' || !check.reading?.usable) {
+      return reply.code(404).send({ message: 'Not found.' })
+    }
+
+    if (check.perfectHairstyleId) {
+      const existing = await app.collections.hairstyles.findOne({ _id: check.perfectHairstyleId, userId })
+
+      if (existing && existing.status !== 'failed') {
+        return reply.code(200).send({ perfect: await serializePerfect(existing) })
+      }
+    }
+
+    const avatar = await app.collections.avatars.findOne({ userId })
+
+    if (!avatar?.avatarKey || avatar.status === 'failed') {
+      return reply.code(409).send({ code: 'needs_avatar', message: 'Create your avatar first.' })
+    }
+
+    const reserved = await reserveUsage(app, userId, 'hair', 1)
+
+    if (!reserved.ok) {
+      return dailyLimitReply(reply, reserved, { message: `You can try ${env.DAILY_HAIR_LIMIT} hairstyles a day. Come back tomorrow.` })
+    }
+
+    let creditSpent: boolean
+
+    try {
+      await requirePro(app, userId, 'Your perfect haircut')
+      creditSpent = await spendCredits(app, userId, 1)
+    } catch (error) {
+      await releaseGenerations(app, userId, 'hair', 1)
+
+      if (error instanceof PaywallError) {
+        return sendPaywall(reply, error)
+      }
+
+      throw error
+    }
+
+    try {
+      const hairstyle = await startPerfectHaircut(app, { check, avatar, creditSpent })
+
+      void trackServerEvent(app, { name: 'score_perfect_started', userId, props: { kind: 'hair', score: check.reading.score } })
+      return reply.code(202).send({ perfect: await serializePerfect(hairstyle) })
+    } catch (error) {
+      await releaseGenerations(app, userId, 'hair', 1)
+      await refundCredits(app, userId, creditSpent ? 1 : 0)
+
+      if (error instanceof NoPerfectCutError) {
+        return reply.code(422).send({ message: 'Our stylist couldn’t find a haircut for this photo. Try another one.' })
+      }
+
+      request.log.error({ err: error }, 'Perfect haircut failed')
+      return reply.code(502).send({ message: 'Our stylist couldn’t plan your haircut. Try again.' })
     }
   })
 

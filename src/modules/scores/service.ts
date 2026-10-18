@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb'
 import sharp from 'sharp'
 
 import { env } from '../../config/env.js'
-import type { ScoreCheckDocument, ScoreKind, ScoreProblem, ScoreReading, UserDocument } from '../../types/mongo.js'
+import type { HairstyleDocument, ScoreCheckDocument, ScoreKind, ScoreProblem, ScoreReading, UserDocument } from '../../types/mongo.js'
 import { errorMessage } from '../../utils/http.js'
 import { createStructuredResponse, toDataUrl } from '../../utils/openai.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
@@ -13,6 +13,7 @@ import { refusedSetting } from '../avatar/measure.js'
 import { PaywallError, billingState, freeUsesLeft, hasPro, releaseFreeUse, useFreeUse } from '../billing/entitlements.js'
 import { type Shows, buildMeasureInstructions, buildWordsInstructions, measureSchema, wordsSchema } from './prompts.js'
 import { CRITERIA, PROBLEMS, RUBRIC_VERSION, TIP_AREAS, criterionIds } from './rubrics.js'
+import { serializePerfect } from './perfect.js'
 import { averageCriteria, currentScore, scoreFrom, weakestFirst } from './score.js'
 
 // Look Score and Hair Score (Oct 17, 2026; Silvio: "a look scorer 1–100 that
@@ -311,7 +312,7 @@ export function suggestFor(kind: ScoreKind, problem: ScoreProblem, shows: Shows 
 
 // Without Pro: the score, every criterion's name, the weakest one's rating
 // and the first tip. The other ratings and tips never leave the server.
-export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolean) {
+export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolean, perfect: HairstyleDocument | null = null) {
   const reading = check.status === 'ready' && check.reading?.usable ? check.reading : null
   const ids = criterionIds(check.kind)
   const weakest = reading ? weakestFirst(reading.criteria, ids)[0]! : null
@@ -345,6 +346,8 @@ export async function serializeScoreCheck(check: ScoreCheckDocument, pro: boolea
         }
       : null,
     fixLookId: check.fixLookId?.toString() ?? null,
+    // "Unlock your perfect haircut" (hair, Pro): the haircut drawn from it.
+    perfect: await serializePerfect(perfect),
     createdAt: check.createdAt.toISOString(),
   }
 }
@@ -365,7 +368,12 @@ export async function scoreState(app: FastifyInstance, user: UserDocument, kind:
   }
 
   const checks = await app.collections.scoreChecks.find({ userId: user._id, kind }).sort({ takenAt: -1, createdAt: -1 }).limit(TIMELINE_LIMIT).toArray()
-  const serialized = await Promise.all(checks.map((check) => serializeScoreCheck(check, pro)))
+  const perfectIds = checks.map((check) => check.perfectHairstyleId).filter((id): id is ObjectId => Boolean(id))
+  const perfects = perfectIds.length ? await app.collections.hairstyles.find({ _id: { $in: perfectIds }, userId: user._id }).toArray() : []
+  const perfectOf = new Map(perfects.map((hairstyle) => [hairstyle._id.toString(), hairstyle]))
+  const serialized = await Promise.all(
+    checks.map((check) => serializeScoreCheck(check, pro, check.perfectHairstyleId ? (perfectOf.get(check.perfectHairstyleId.toString()) ?? null) : null)),
+  )
   const ready = checks.filter((check) => check.status === 'ready' && check.reading?.usable)
   const points = ready.map((check) => ({ takenAt: check.takenAt, score: check.reading!.score }))
   const ids = criterionIds(kind)
