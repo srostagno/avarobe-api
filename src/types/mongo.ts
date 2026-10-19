@@ -250,6 +250,7 @@ export type LifecycleEmailKind =
   | 'trial_ending'
   // A checkout left unpaid: a link to finish it in their own browser.
   | 'checkout_rescue'
+  | 'pro_rescue'
   // Tapped Buy inside Instagram's or Facebook's browser: at once, a link
   // that pays in the phone's own browser, with Apple Pay or Google Pay.
   | 'checkout_link'

@@ -55,7 +55,7 @@ export async function proPlanReport(app: FastifyInstance, days: number, now = ne
     app.collections.users.countDocuments({ 'invite.createdAt': { $gte: since }, _id: notAdmin }),
     app.collections.users.find({ 'invitedBy.at': { $gte: since }, _id: notAdmin }, { projection: { invitedBy: 1 } }).toArray(),
     app.collections.emailSends
-      .find({ sentAt: { $gte: since }, kind: { $in: ['teaser_ready', 'half_offer_last_call'] }, userId: notAdmin }, { projection: { kind: 1, opens: 1, clicks: 1 } })
+      .find({ sentAt: { $gte: since }, kind: { $in: ['teaser_ready', 'half_offer_last_call', 'pro_rescue'] }, userId: notAdmin }, { projection: { kind: 1, opens: 1, clicks: 1 } })
       .toArray(),
     app.collections.looks.find({ createdAt: { $gte: since }, freeTryOn: true, userId: notAdmin }, { projection: { freeEditId: 1, status: 1 } }).toArray(),
   ])
@@ -111,7 +111,7 @@ export async function proPlanReport(app: FastifyInstance, days: number, now = ne
       // Teasers unlocked by a friend's first read.
       unlocks: rows.filter((row) => row.name === 'referral_reward' && row.props.unlocked === true).length,
     },
-    emails: (['teaser_ready', 'half_offer_last_call'] as const).map((kind) => {
+    emails: (['teaser_ready', 'half_offer_last_call', 'pro_rescue'] as const).map((kind) => {
       const list = sends.filter((send) => send.kind === kind)
       return { kind, sent: list.length, opened: list.filter((send) => send.opens > 0).length, clicked: list.filter((send) => send.clicks > 0).length }
     }),

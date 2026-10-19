@@ -41,6 +41,7 @@ import {
   faceAgeLaunchEmail,
   halfLastCallEmail,
   teaserReadyEmail,
+  proRescueEmail,
   proWelcomeEmail,
   reportUnopenedEmail,
   crossSellEmail,
@@ -361,6 +362,8 @@ export function lifecycleContentFor(
     case 'teaser_ready':
     case 'half_offer_last_call':
       throw new Error(`${kind} emails are built by sendTeaserEmails`)
+    case 'pro_rescue':
+      throw new Error('pro_rescue emails are built by sendProRescues')
     case 'colors_ready':
       return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
     case 'look_reminder':
@@ -793,19 +796,20 @@ export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()
     return 0
   }
 
-  const checkouts = await app.collections.analyticsEvents
-    .aggregate<{ _id: ObjectId; product: string; at: Date }>([
-      {
-        $match: {
-          name: 'checkout_created',
-          userId: { $ne: null },
-          at: { $gte: new Date(now.getTime() - RESCUE_WITHIN_MS), $lte: new Date(now.getTime() - RESCUE_AFTER_MS) },
-        },
-      },
-      { $sort: { at: -1 } },
-      { $group: { _id: '$userId', product: { $first: '$props.product' }, at: { $first: '$at' } } },
-    ])
+  // Each person's latest checkout in the window.
+  const events = await app.collections.analyticsEvents
+    .find(
+      { name: 'checkout_created', userId: { $ne: null }, at: { $gte: new Date(now.getTime() - RESCUE_WITHIN_MS), $lte: new Date(now.getTime() - RESCUE_AFTER_MS) } },
+      { projection: { userId: 1, props: 1, at: 1 } },
+    )
+    .sort({ at: -1 })
+    .limit(5000)
     .toArray()
+  const checkouts = [
+    ...new Map(
+      events.filter((event) => event.userId).map((event) => [event.userId!.toString(), { _id: event.userId!, product: event.props.product, at: event.at }] as const).reverse(),
+    ).values(),
+  ]
   let sent = 0
 
   for (const checkout of checkouts) {
@@ -819,6 +823,11 @@ export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()
       continue
     }
 
+    // Pro has its own rescue (sendProRescues).
+    if (String(checkout.product ?? '').startsWith('pro_')) {
+      continue
+    }
+
     // Spaced from their other emails like the onboarding ones (the colors
     // offer often goes out the same hour). It still goes later in its
     // window if they haven't paid by then.
@@ -826,8 +835,9 @@ export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()
       continue
     }
 
-    // Paid since (this checkout or anything else): nothing to rescue.
-    if (await app.collections.purchases.findOne({ userId: user._id, createdAt: { $gte: checkout.at } })) {
+    // Paid since (this checkout or anything else, here or in another
+    // account of theirs): nothing to rescue.
+    if (await paidSince(app, user._id, checkout.at)) {
       continue
     }
 
@@ -837,6 +847,101 @@ export async function sendCheckoutRescues(app: FastifyInstance, now = new Date()
   }
 
   return sent
+}
+
+// Paid since `at`, in this account or in another one of theirs: the same
+// browser (visitor id) signed up again to pay. Oct 18, 2026: a woman in
+// Australia tried Pro five times inside Instagram, then paid with a new
+// account in Safari, and the old one got "your Pro is one step away".
+async function paidSince(app: FastifyInstance, userId: ObjectId, at: Date) {
+  if (await app.collections.purchases.findOne({ userId, createdAt: { $gte: at } })) {
+    return true
+  }
+
+  const mine = await app.collections.analyticsEvents.find({ userId, visitorId: { $ne: null } }, { projection: { visitorId: 1 } }).limit(500).toArray()
+  const visitors = [...new Set(mine.map((event) => event.visitorId).filter((id): id is string => Boolean(id)))]
+
+  if (!visitors.length) {
+    return false
+  }
+
+  const theirs = await app.collections.analyticsEvents.find({ visitorId: { $in: visitors }, userId: { $ne: null } }, { projection: { userId: 1 } }).limit(500).toArray()
+  const others = [...new Map(theirs.filter((event) => event.userId && !event.userId.equals(userId)).map((event) => [event.userId!.toString(), event.userId!])).values()]
+
+  return others.length > 0 && Boolean(await app.collections.purchases.findOne({ userId: { $in: others }, createdAt: { $gte: at } }))
+}
+
+// ---------------------------------------------------------------- Pro rescue
+
+// Oct 19, 2026 (Silvio: "no tenemos rescate de pro? agreguémoslo"): Pro
+// had only the generic "finish in your browser" email, once per account
+// ever (so not for anyone a Color Advisor rescue had reached), with no
+// picture and no price. Now, 45 minutes after a Pro checkout that wasn't
+// paid: her best version drawn ahead, blurred, her half-price month if it's
+// still open, and a link that signs her in and opens that same checkout.
+// Once per account; promotional (opt-outs, the postal address); never to
+// Pro, admins or guests, nor to anyone who paid since in another account.
+const PRO_RESCUE_AFTER_MS = 45 * 60 * 1000
+const PRO_RESCUE_WITHIN_MS = 48 * 60 * 60 * 1000
+
+export async function sendProRescues(app: FastifyInstance, now = new Date()) {
+  if (!env.EMAIL_POSTAL_ADDRESS) {
+    return 0
+  }
+
+  const events = await app.collections.analyticsEvents
+    .find(
+      { name: 'checkout_created', userId: { $ne: null }, at: { $gte: new Date(now.getTime() - PRO_RESCUE_WITHIN_MS), $lte: new Date(now.getTime() - PRO_RESCUE_AFTER_MS) } },
+      { projection: { userId: 1, props: 1, at: 1 } },
+    )
+    .sort({ at: -1 })
+    .limit(BATCH)
+    .toArray()
+  const seen = new Set<string>()
+  let sent = 0
+
+  for (const event of events) {
+    const product = String(event.props.product ?? '')
+
+    if (!event.userId || !product.startsWith('pro_') || seen.has(event.userId.toString())) {
+      continue
+    }
+
+    seen.add(event.userId.toString())
+    const user = await app.collections.users.findOne({ _id: event.userId, ...eligibleFor('lifecycleEmails.pro_rescue') })
+
+    if (!user || isAdmin(user) || billingState(user, now.getTime()).proLive || (await paidSince(app, user._id, event.at))) {
+      continue
+    }
+
+    if (await sendProRescue(app, user, product, now)) {
+      sent += 1
+    }
+  }
+
+  return sent
+}
+
+async function sendProRescue(app: FastifyInstance, user: UserDocument, product: string, now: Date) {
+  return sendOnce(app, user, 'pro_rescue', now, async (sendId) => {
+    const locale = user.locale ?? 'en'
+    const half = halfFor(user, now)
+    const teaser = await app.collections.teasers.findOne({ userId: user._id, status: 'ready', unlockedAt: null, lockedKey: { $ne: null } }, { sort: { createdAt: -1 } })
+    // With her half price open, the month it applies to; otherwise the plan
+    // she was paying for.
+    const buy = half ? 'pro_monthly' : product === 'pro_annual' ? 'pro_annual' : 'pro_monthly'
+
+    return proRescueEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      half: half ? { price: half.price, amount: half.amount, currency: half.currency, hours: half.hours } : null,
+      photoUrl: teaser ? emailImageUrl(user._id, now, `teaser-${teaser._id.toString()}`) : null,
+      url: emailUrl(locale, `/studio?buy=${buy}&from=email_pro_rescue`, 'pro_rescue'),
+    })
+  })
 }
 
 async function sendCheckoutRescue(app: FastifyInstance, user: UserDocument, product: string, now: Date) {
@@ -1355,7 +1460,7 @@ export async function sendTeaserEmails(app: FastifyInstance, now = new Date()) {
 async function sendOnce(
   app: FastifyInstance,
   user: UserDocument,
-  kind: 'teaser_ready' | 'half_offer_last_call',
+  kind: 'teaser_ready' | 'half_offer_last_call' | 'pro_rescue',
   now: Date,
   build: (sendId: ObjectId) => Promise<EmailContent | null>,
 ) {
@@ -2228,6 +2333,9 @@ export function startLifecycleEmails(app: FastifyInstance) {
     })
     void sendCheckoutRescues(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Checkout rescue run crashed')
+    })
+    void sendProRescues(app).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Pro rescue run crashed')
     })
     void sendPriceDropEmails(app).catch((error: unknown) => {
       app.log.error({ err: error }, 'Price drop run crashed')

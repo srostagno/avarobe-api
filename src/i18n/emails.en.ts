@@ -470,6 +470,22 @@ export const enEmails = {
     expiry: 'The link signs you in and opens checkout. The price is applied there.',
   },
 
+  // Her Pro checkout, unpaid 45 minutes later.
+  proRescue: {
+    subject: (price: string | null) => (price ? `Your Pro month at ${price} is still waiting` : 'Your Avarobe Pro is still waiting'),
+    preheader: 'Finish in your own browser, where Apple Pay and saved cards work.',
+    eyebrow: 'You were almost there',
+    heading: 'Your Pro is one tap away',
+    alt: 'Your best version, blurred until you unlock it',
+    intro: 'You started Avarobe Pro but didn’t finish. If you were paying inside Instagram or Facebook, their browser often can’t use Apple Pay or a saved card. This link opens Avarobe in your own browser, already signed in, with checkout open.',
+    teaser: 'What we drew for you is waiting: it unlocks the moment you start Pro.',
+    half: (price: string, amount: string, hours: number) => `Your first month is still ${price} instead of ${amount}, for the next ${hours} hours.`,
+    why: 'Pro is every tip and every try-on: your best face, your perfect haircut and look, your colors, and new looks on you every month. Cancel anytime.',
+    button: 'Finish starting Pro',
+    buttonHalf: (price: string) => `Start Pro for ${price}`,
+    expiry: 'The link signs you in for 14 days and opens checkout.',
+  },
+
   costumeOffer: {
     subject: (costume: string) => `You as ${costume} 🎃`,
     preheader: 'Your next costumes are ready to try on.',

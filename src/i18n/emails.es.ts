@@ -430,6 +430,22 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace inicia tu sesión y abre el pago. El precio se aplica ahí.',
   },
 
+  // Su pago de Pro, sin terminar 45 minutos después.
+  proRescue: {
+    subject: (price: string | null) => (price ? `Tu mes de Pro a ${price} te sigue esperando` : 'Tu Avarobe Pro te sigue esperando'),
+    preheader: 'Termina en tu propio navegador, donde funcionan Apple Pay y las tarjetas guardadas.',
+    eyebrow: 'Ya casi lo tenías',
+    heading: 'Tu Pro está a un toque',
+    alt: 'Tu mejor versión, borrosa hasta que la desbloquees',
+    intro: 'Empezaste Avarobe Pro, pero no terminaste. Si estabas pagando dentro de Instagram o Facebook, su navegador muchas veces no puede usar Apple Pay ni una tarjeta guardada. Este enlace abre Avarobe en tu propio navegador, con tu sesión iniciada y el pago abierto.',
+    teaser: 'Lo que dibujamos para ti te espera: se desbloquea apenas empiezas Pro.',
+    half: (price: string, amount: string, hours: number) => `Tu primer mes sigue costando ${price} en vez de ${amount}, por las próximas ${hours} horas.`,
+    why: 'Pro es todos los consejos y todas las pruebas: tu mejor rostro, tu corte y tu look perfectos, tus colores y looks nuevos en ti cada mes. Cancela cuando quieras.',
+    button: 'Terminar de activar Pro',
+    buttonHalf: (price: string) => `Activar Pro por ${price}`,
+    expiry: 'El enlace inicia tu sesión por 14 días y abre el pago.',
+  },
+
   costumeOffer: {
     subject: (costume: string) => `Así te ves de ${costume} 🎃`,
     preheader: 'Tus próximos disfraces están listos para que te los pruebes.',

@@ -1245,6 +1245,39 @@ export function halfLastCallEmail(
   })
 }
 
+// Her Pro checkout, unpaid 45 minutes later (lifecycle/service.ts
+// sendProRescues): her best version blurred if one was drawn, her
+// half-price month if it's open, and a link that signs her in and opens
+// checkout. Promotional.
+export function proRescueEmail(
+  input: Recipient & { half: { price: number; amount: number; currency: string; hours: number } | null; photoUrl: string | null; url: string },
+): EmailContent {
+  const x = reader(input)
+  const copy = x.c.proRescue
+  const half = input.half ? { price: x.money(input.half.price, input.half.currency), amount: x.money(input.half.amount, input.half.currency), hours: input.half.hours } : null
+
+  return layout({
+    subject: copy.subject(half?.price ?? null),
+    preheader: copy.preheader,
+    hero: input.photoUrl ? { src: input.photoUrl, alt: copy.alt } : HERO.drape(x.c),
+    recipient: input,
+    promotional: true,
+    tagline: false,
+    blocks: [
+      eyebrow(copy.eyebrow),
+      heading(copy.heading),
+      greeting(x.c, input.firstName),
+      paragraph(copy.intro),
+      ...(input.photoUrl ? [paragraph(copy.teaser)] : []),
+      ...(half ? [paragraph(copy.half(half.price, half.amount, half.hours))] : []),
+      paragraph(copy.why),
+      button(half ? copy.buttonHalf(half.price) : copy.button, input.url),
+      small(copy.expiry),
+      signature(x.c),
+    ],
+  })
+}
+
 // Face Age: the reminder she asked for, as often as she picked. Her own
 // numbers and last tip; a link to change how often. Asked for, so not
 // promotional.
