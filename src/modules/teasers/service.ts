@@ -9,12 +9,13 @@ import { currentLocale } from '../../utils/request-locale.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { releaseGenerations, reserveGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { presentationOf } from '../avatar/body.js'
 import { billingState, loadBillingUser } from '../billing/entitlements.js'
 import { buildHairstylePrompt } from '../hair/prompts.js'
 import { NotAHaircutError, planHairRequest } from '../hair/service.js'
 import { lookImageRequest } from '../looks/service.js'
 import { BEST_FACE_PREFIX, bestFaceRender } from '../makeup/service.js'
-import { buildMakeupPrompt } from '../makeup/prompts.js'
+import { buildBestFacePrompt } from '../makeup/prompts.js'
 import { planFix } from '../scores/fix.js'
 
 // Her best version, drawn ahead of time and shown blurred (Oct 18, 2026;
@@ -202,7 +203,11 @@ async function drawBestFace(avatar: AvatarDocument, context: Context) {
     { data: selfie, filename: 'face.jpg', contentType: 'image/jpeg' },
   ]
   const name = say({ en: 'Your best face', es: 'Tu mejor rostro', 'pt-BR': 'Seu melhor rosto' })
-  const png = await generateImageFromReferences({ images, prompt: buildMakeupPrompt({ name, render, hasAvatar: Boolean(avatarImage) }), size: '1024x1536' })
+  const png = await generateImageFromReferences({
+    images,
+    prompt: buildBestFacePrompt({ render, hasAvatar: Boolean(avatarImage), men: presentationOf(avatar) === 'menswear' }),
+    size: '1024x1536',
+  })
 
   return { png, plan: { name, render } }
 }

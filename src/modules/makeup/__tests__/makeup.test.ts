@@ -7,7 +7,7 @@ import { memoryStorage, photo, routeApp, stubOpenAi, until } from '../../../__te
 import { env } from '../../../config/env.js'
 import type { MakeupTryOnDocument, ProSubscription } from '../../../types/mongo.js'
 import { MAKEUP_PRESETS } from '../presets.js'
-import { buildMakeupPrompt } from '../prompts.js'
+import { buildBestFacePrompt, buildMakeupPrompt } from '../prompts.js'
 import makeupRoutes from '../routes.js'
 import { deleteMakeupTryOns } from '../service.js'
 
@@ -155,6 +155,17 @@ describe('Makeup try-ons', () => {
     assert.match(prompt, /Image 1 is a selfie/)
     assert.match(prompt, /Change ONLY the makeup/)
     assert.match(prompt, /they keep their age/)
+  })
+
+  it('lets her best face change the light, the color, her hair and her smile, never her age', () => {
+    const prompt = buildBestFacePrompt({ render: 'Her best photo today, applying these changes from her face read: - light: Face a window.', hasAvatar: false })
+
+    assert.match(prompt, /Image 1 is a selfie/)
+    assert.match(prompt, /Face a window/)
+    assert.match(prompt, /warm genuine smile/)
+    assert.match(prompt, /they keep their age/)
+    assert.doesNotMatch(prompt, /Change ONLY the makeup/)
+    assert.match(buildBestFacePrompt({ render: 'x', hasAvatar: true, men: true }), /no makeup look/)
   })
 
   it('makes "my colors" only for who owns the Color Advisor', async () => {

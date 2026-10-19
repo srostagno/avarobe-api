@@ -10,9 +10,10 @@ import { currentLocale } from '../../utils/request-locale.js'
 import { signedUrlOrNull, storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
+import { presentationOf } from '../avatar/body.js'
 import { billingState, loadBillingUser, refundCredits, releaseFreeUse, usePresetTryOn } from '../billing/entitlements.js'
 import { MAKEUP_COLLECTIONS, MAKEUP_PRESETS, type MakeupPreset, findMakeupPreset } from './presets.js'
-import { buildMakeupPrompt } from './prompts.js'
+import { buildBestFacePrompt, buildMakeupPrompt } from './prompts.js'
 
 // Makeup try-ons (Face, Oct 17, 2026): a preset from the collections, or her
 // own colors from the Color Report, drawn on her. One free without Pro
@@ -250,7 +251,9 @@ export async function runMakeupRender(app: FastifyInstance, tryOnId: ObjectId) {
     ]
     const png = await generateImageFromReferences({
       images,
-      prompt: buildMakeupPrompt({ name: tryOn.name, render: tryOn.render, hasAvatar }),
+      prompt: tryOn.presetId.startsWith(BEST_FACE_PREFIX)
+        ? buildBestFacePrompt({ render: tryOn.render, hasAvatar, men: presentationOf(avatar) === 'menswear' })
+        : buildMakeupPrompt({ name: tryOn.name, render: tryOn.render, hasAvatar }),
       size: '1024x1536',
       onPartial: async (partial) => {
         await storage.put(previewKey, await toPreviewWebp(partial), 'image/webp')
