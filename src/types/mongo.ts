@@ -1485,8 +1485,9 @@ export type FeedbackDocument = {
 export type ProHalfOffer = {
   // The advisor whose rating brought it, or (Oct 18, 2026) her first read
   // of a studio (Face Age, Look Score, Hair Score), the moment she sees it,
-  // or her first free try-on of an Edit.
-  from: FeedbackProduct | 'face_age' | 'look_score' | 'hair_score' | 'edit_try_on'
+  // or her first free try-on of an Edit, or (Oct 19) her colors, when she
+  // came from a colors_pro campaign.
+  from: FeedbackProduct | 'face_age' | 'look_score' | 'hair_score' | 'edit_try_on' | 'colors'
   at: Date
   until: Date
   // Paid with it (the first month at half price).

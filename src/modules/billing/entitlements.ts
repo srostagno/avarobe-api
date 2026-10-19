@@ -85,7 +85,14 @@ type BillingFields = Pick<
   | 'guest'
   | 'locale'
   | 'location'
+  | 'acquisition'
 >
+
+// Came from a colors_pro campaign (utm_campaign colors_pro_*): her colors
+// offer leads with Pro (feedback/wow-offer grantColorsProOffer).
+export function isProFirst(user: Pick<UserDocument, 'acquisition'> | null | undefined) {
+  return String(user?.acquisition?.campaign ?? '').startsWith('colors_pro')
+}
 
 export function isAdmin(user: Pick<UserDocument, 'email'>) {
   return compEmails().has(user.email.toLowerCase())
@@ -362,6 +369,8 @@ export function serializeBilling(user: BillingFields) {
     // Pro monthly's first month at half price, while their offer is open
     // (modules/feedback), in their region's prices.
     proHalfOffer: state.proLive || state.comp ? null : offerView(user.proHalfOffer, regionForCountry(user.location?.country)),
+    // Her colors offer leads with Pro (a colors_pro campaign; Oct 19, 2026).
+    proFirst: !state.proLive && !state.comp && isProFirst(user),
     paid: state.paid,
     credits: state.credits,
     unlimited: state.comp,
@@ -402,6 +411,7 @@ export const BILLING_PROJECTION = {
   guest: 1,
   locale: 1,
   location: 1,
+  acquisition: 1,
 }
 
 export async function loadBillingUser(app: FastifyInstance, userId: ObjectId) {

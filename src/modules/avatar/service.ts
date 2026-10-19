@@ -33,6 +33,7 @@ import { storage } from '../../utils/storage.js'
 import { releaseGenerations } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { releaseAvatarRun } from '../billing/entitlements.js'
+import { grantColorsProOffer } from '../feedback/wow-offer.js'
 import { noteReadFailed, noteReadSucceeded } from '../ops/alerts.js'
 import { startDrapePreview } from '../report/service.js'
 import { deleteHairstyles } from '../hair/service.js'
@@ -409,6 +410,7 @@ export async function runAvatarJob(
 
     if (colors?.ready) {
       await trackServerEvent(app, { name: 'colors_ready', userId: avatar.userId, props: colors.ready })
+      await grantColorsProOffer(app, avatar.userId).catch(() => false)
     } else if (colors?.failed) {
       await trackServerEvent(app, {
         name: 'colors_failed',
@@ -758,6 +760,7 @@ export async function runColorsJob(app: FastifyInstance, avatarId: ObjectId, rea
     userId: avatar.userId,
     props: readyProps(settled.decision, steps.method, settled.samples, via ?? 'colors'),
   })
+  await grantColorsProOffer(app, avatar.userId).catch(() => false)
   await startDrapePreview(app, avatarId).catch((error: unknown) => {
     app.log.error({ err: error, avatarId: avatarId.toString() }, 'Drape preview did not start')
   })

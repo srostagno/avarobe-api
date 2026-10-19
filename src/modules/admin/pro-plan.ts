@@ -12,7 +12,7 @@ import { adminUserIds } from '../billing/entitlements.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const KINDS: TeaserKind[] = ['perfect_haircut', 'perfect_look', 'best_face']
-const OFFER_FROM = ['face_age', 'look_score', 'hair_score', 'edit_try_on', 'color_advisor', 'style_advisor', 'hair_advisor'] as const
+const OFFER_FROM = ['colors', 'face_age', 'look_score', 'hair_score', 'edit_try_on', 'color_advisor', 'style_advisor', 'hair_advisor'] as const
 
 type Count = { key: string; count: number }
 
