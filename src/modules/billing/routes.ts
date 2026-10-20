@@ -393,12 +393,15 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         // (modules/feedback): wherever the checkout opens from, a pay link or
         // the jump to Safari included.
         const halfOffCents = parsed.data.product === 'pro_monthly' && offerOpen(user.proHalfOffer) ? halfPrice(region).off : 0
+        // A colors_pro campaign's trial: free, no trial fee.
+        const freeTrialDays = parsed.data.product === 'pro_trial' ? (state.freeTrialDays ?? undefined) : undefined
         const { url, clientSecret } = await createCheckout({
           user,
           product: parsed.data.product,
           returnPath: parsed.data.returnPath,
           discountCents,
           halfOffCents,
+          freeTrialDays,
           embedded: parsed.data.embedded,
           region,
           placement: parsed.data.placement,
@@ -414,8 +417,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
           userId,
           props: {
             product: parsed.data.product,
-            amount: Math.max(0, regionalAmount(parsed.data.product, region) - discountCents - halfOffCents),
-            ...(halfOffCents ? { offer: 'pro_half' } : {}),
+            amount: freeTrialDays ? 0 : Math.max(0, regionalAmount(parsed.data.product, region) - discountCents - halfOffCents),
+            ...(halfOffCents ? { offer: 'pro_half' } : freeTrialDays ? { offer: 'free_trial' } : {}),
             currency: REGION_CURRENCY[region],
             placement: parsed.data.placement ?? 'unknown',
             ui: parsed.data.embedded ? 'embedded' : 'hosted',

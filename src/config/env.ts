@@ -188,6 +188,11 @@ const envSchema = z.object({
   // Color Advisor leads, with Pro monthly after it ('on' brings the trial back;
   // trials already running are unaffected either way).
   PRO_TRIAL: z.enum(['on', 'off']).optional(),
+  // The colors_pro campaigns' offer (Oct 20, 2026): Pro free for this many
+  // days, the card asked and nothing charged today, then Pro monthly. Once
+  // per account, like the trial. 0 turns it off (her colors offer goes back
+  // to the half-price month).
+  PRO_FIRST_TRIAL_DAYS: z.coerce.number().int().min(0).max(30).default(3),
   // For this many days after buying a report, it counts toward the other
   // report (the bundle price) and toward Pro annual.
   REPORT_CREDIT_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),

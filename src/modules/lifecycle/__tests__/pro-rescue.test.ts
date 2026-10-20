@@ -105,6 +105,28 @@ describe('the Pro rescue', () => {
     assert.equal(sends().length, 0)
   })
 
+  it('brings back her free days, not a price, when she came from a colors_pro campaign', async () => {
+    const days = env.PRO_FIRST_TRIAL_DAYS
+    env.PRO_FIRST_TRIAL_DAYS = 3
+
+    try {
+      const { app, sends, collection } = account({
+        user: { proHalfOffer: null, acquisition: { visitorId: 'v-jen', channel: 'meta', source: 'meta', medium: 'paid_social', campaign: 'colors_pro_au_ca', content: null, term: null, landing: '/color-analysis' } },
+        checkout: { props: { product: 'pro_trial', amount: 0, currency: 'usd' } },
+      })
+
+      await sendProRescues(app, now)
+
+      assert.deepEqual(
+        sends().map((send) => send.subject),
+        ['Your 3 free days of Pro are still waiting'],
+      )
+      assert.equal(collection('emailSends').docs.length, 1)
+    } finally {
+      env.PRO_FIRST_TRIAL_DAYS = days
+    }
+  })
+
   it('leaves Pro checkouts to its own rescue', async () => {
     const { app, sends } = account()
 

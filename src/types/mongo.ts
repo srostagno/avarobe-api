@@ -68,6 +68,8 @@ export type UserDocument = {
   paidAt?: Date | null
   // When they started their Pro trial: one per account.
   proTrialAt?: Date | null
+  // Her trial cost nothing (a colors_pro campaign's free trial).
+  proTrialFree?: boolean
   // Pro's first month at half price, offered once after rating a paid
   // advisor 7 or more (modules/feedback): until when, and when it was used.
   proHalfOffer?: ProHalfOffer | null

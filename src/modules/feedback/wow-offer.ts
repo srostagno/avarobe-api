@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ObjectId } from 'mongodb'
 
+import { env } from '../../config/env.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { isAdmin, isProFirst } from '../billing/entitlements.js'
 
@@ -32,9 +33,11 @@ export async function grantWowOffer(app: FastifyInstance, userId: ObjectId, from
 // with the landing selling Pro more than the report): who came from a
 // colors_pro campaign gets the half-price month the moment she sees her
 // colors, and the offer leads with Pro (billing serializeBilling proFirst).
+// Since Oct 20 her offer is a few days of Pro free (PRO_FIRST_TRIAL_DAYS),
+// not the half-price month: one offer, so no second price shows elsewhere.
 export async function grantColorsProOffer(app: FastifyInstance, userId: ObjectId) {
   const user = await app.collections.users.findOne({ _id: userId }, { projection: { acquisition: 1 } })
 
-  return isProFirst(user) ? grantWowOffer(app, userId, 'colors') : false
+  return isProFirst(user) && env.PRO_FIRST_TRIAL_DAYS === 0 ? grantWowOffer(app, userId, 'colors') : false
 }
 

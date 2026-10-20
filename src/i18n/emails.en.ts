@@ -483,6 +483,10 @@ export const enEmails = {
     why: 'Pro is every tip and every try-on: your best face, your perfect haircut and look, your colors, and new looks on you every month. Cancel anytime.',
     button: 'Finish starting Pro',
     buttonHalf: (price: string) => `Start Pro for ${price}`,
+    // Her trial is free (a colors_pro campaign).
+    subjectTrial: (days: number) => `Your ${days} free days of Pro are still waiting`,
+    trial: (days: number, monthly: string) => `Your first ${days} days of Pro are free: nothing is charged today, then ${monthly} a month unless you cancel before.`,
+    buttonTrial: (days: number) => `Start my ${days} free days`,
     expiry: 'The link signs you in for 14 days and opens checkout.',
   },
 
@@ -549,6 +553,8 @@ export const enEmails = {
     renews: (end: string) => `Your plan renews on ${end} and every month after, until you cancel.`,
     paid: (trial: string, end: string) =>
       `Today you paid ${trial}. Cancel anytime before ${end} in your account settings and you won't be charged again. We'll remind you two days before.`,
+    // A free trial (nothing paid today).
+    free: (end: string) => `Nothing was charged today. Cancel anytime before ${end} in your account settings and you won't be charged. We'll remind you before it ends.`,
   },
 
   trialEnding: {

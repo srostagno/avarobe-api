@@ -244,6 +244,21 @@ describe('server events to Meta', () => {
     assert.deepEqual(events[1]!.user_data, events[0]!.user_data)
   })
 
+  it('sends a free trial as a StartTrial worth nothing, never a Purchase (its first charge is the purchase)', async () => {
+    const metadata = { ...attributionMetadata({ fbp: 'fb.1.1791000000000.456' }, request), userId: USER_ID, ga_cid: '123.456' }
+    env.GA_API_SECRET = 'ga-secret'
+
+    await reportPurchase(app({ email: 'ana.silva@example.com' }), { transactionId: 'in_trial', product: 'pro_trial', amount: 0, currency: 'aud', metadata })
+
+    const events = toMeta()[0]!.body.data
+    assert.deepEqual(
+      events.map((event) => [event.event_name, event.event_id]),
+      [['StartTrial', 'in_trial']],
+    )
+    assert.deepEqual(events[0]!.custom_data, { value: 0, currency: 'AUD', content_ids: ['pro_trial'], content_type: 'product' })
+    assert.equal((toGa()[0]!.body as unknown as { events: Array<{ name: string }> }).events[0]!.name, 'start_trial')
+  })
+
   it('sends a purchase without _fbp or _fbc by the email, when tracking was allowed (Safari after the jump)', async () => {
     const metadata = { ...attributionMetadata({}, request), userId: USER_ID, region: 'br' }
 

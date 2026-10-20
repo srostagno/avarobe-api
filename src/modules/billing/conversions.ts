@@ -265,6 +265,9 @@ type PurchaseReport = {
 
 const SUBSCRIPTIONS = new Set(['pro_monthly', 'pro_annual'])
 
+// A colors_pro campaign's trial: started, nothing paid.
+const isFreeTrial = (input: Pick<PurchaseReport, 'product' | 'amount'>) => input.product === 'pro_trial' && input.amount === 0
+
 function metaConfigured() {
   return Boolean(env.META_CAPI_TOKEN && env.META_PIXEL_ID)
 }
@@ -276,6 +279,24 @@ export function sendMetaPurchase(input: Omit<PurchaseReport, 'checkout'> & { cus
 
   if (!metaConfigured() || !userData) {
     return null
+  }
+
+  // A free trial is a StartTrial (the browser sends the same, same id): no
+  // money changed hands, so no Purchase until its first charge.
+  if (isFreeTrial(input)) {
+    return post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
+      data: [
+        {
+          event_name: 'StartTrial',
+          event_time: Math.floor((input.eventTime?.getTime() ?? Date.now()) / 1000),
+          event_id: input.transactionId,
+          action_source: 'website',
+          event_source_url: `${env.APP_URL}/studio/billing/success`,
+          user_data: userData,
+          custom_data: { value: 0, currency: input.currency.toUpperCase(), content_ids: [input.product], content_type: 'product' },
+        },
+      ],
+    })
   }
 
   return post(`https://graph.facebook.com/v21.0/${env.META_PIXEL_ID}/events?access_token=${env.META_CAPI_TOKEN}`, {
@@ -352,10 +373,12 @@ export async function reportPurchase(app: FastifyInstance, input: PurchaseReport
         {
           client_id: metadata.ga_cid,
           events: [
-            {
-              name: 'purchase',
-              params: { transaction_id: input.transactionId, value, currency, items: [{ item_id: input.product }] },
-            },
+            isFreeTrial(input)
+              ? { name: 'start_trial', params: { transaction_id: input.transactionId, value: 0, currency, items: [{ item_id: input.product }] } }
+              : {
+                  name: 'purchase',
+                  params: { transaction_id: input.transactionId, value, currency, items: [{ item_id: input.product }] },
+                },
           ],
         },
       ),

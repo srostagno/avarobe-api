@@ -1,15 +1,28 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 
 import { ObjectId } from 'mongodb'
 
 import { fakeApp } from '../../../__tests__/fake-app.js'
+import { env } from '../../../config/env.js'
 import type { UserDocument } from '../../../types/mongo.js'
 import { isProFirst, serializeBilling } from '../../billing/entitlements.js'
 import { grantColorsProOffer } from '../wow-offer.js'
 
 // Pro first (Oct 19, 2026): who came from a colors_pro campaign gets the
 // half-price month when she sees her colors, and her offer leads with Pro.
+// Since Oct 20 the free trial replaces that month (free-trial.test.ts); with
+// it off, the month is back.
+
+const savedDays = env.PRO_FIRST_TRIAL_DAYS
+
+before(() => {
+  env.PRO_FIRST_TRIAL_DAYS = 0
+})
+
+after(() => {
+  env.PRO_FIRST_TRIAL_DAYS = savedDays
+})
 
 function account(campaign: string | null, extra: Partial<UserDocument> = {}) {
   const userId = new ObjectId()

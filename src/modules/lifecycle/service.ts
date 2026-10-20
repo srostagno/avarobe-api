@@ -339,7 +339,7 @@ export function lifecycleContentFor(
     case 'upgrade_last_call':
       return upgradeLastCallEmail({ ...recipient, photo: colorsPhoto })
     case 'trial_started':
-      return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user) })
+      return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user), days: trialDaysOf(user), free: Boolean(user.proTrialFree) })
     case 'trial_ending':
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
@@ -583,6 +583,14 @@ export function crossSellContentFor(
 
 function trialEndOf(user: UserDocument) {
   return user.pro?.trialEnd ?? user.pro?.periodEnd ?? new Date(Date.now() + env.PRO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
+}
+
+// How long her trial is (a colors_pro campaign's is shorter than the paid one).
+function trialDaysOf(user: UserDocument) {
+  const end = user.pro?.trialEnd
+  const start = user.proTrialAt
+
+  return end && start ? Math.max(1, Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))) : env.PRO_TRIAL_DAYS
 }
 
 // ---------------------------------------------------------------- trial notices
@@ -927,9 +935,11 @@ async function sendProRescue(app: FastifyInstance, user: UserDocument, product: 
     const locale = user.locale ?? 'en'
     const half = halfFor(user, now)
     const teaser = await app.collections.teasers.findOne({ userId: user._id, status: 'ready', unlockedAt: null, lockedKey: { $ne: null } }, { sort: { createdAt: -1 } })
-    // With her half price open, the month it applies to; otherwise the plan
-    // she was paying for.
-    const buy = half ? 'pro_monthly' : product === 'pro_annual' ? 'pro_annual' : 'pro_monthly'
+    // Her free trial if she still has it (a colors_pro campaign); with her
+    // half price open, the month it applies to; otherwise the plan she was
+    // paying for.
+    const trialDays = product === 'pro_annual' ? null : billingState(user).freeTrialDays
+    const buy = trialDays ? 'pro_trial' : half ? 'pro_monthly' : product === 'pro_annual' ? 'pro_annual' : 'pro_monthly'
 
     return proRescueEmail({
       firstName: user.firstName,
@@ -940,6 +950,7 @@ async function sendProRescue(app: FastifyInstance, user: UserDocument, product: 
       half: half ? { price: half.price, amount: half.amount, currency: half.currency, hours: half.hours } : null,
       photoUrl: teaser ? emailImageUrl(user._id, now, `teaser-${teaser._id.toString()}`) : null,
       url: emailUrl(locale, `/studio?buy=${buy}&from=email_pro_rescue`, 'pro_rescue'),
+      trialDays,
     })
   })
 }

@@ -434,8 +434,8 @@ const longDate = (date: Date, locale: Locale = 'en') =>
 const STRIPE_LOCALE: Record<Locale, Stripe.Checkout.SessionCreateParams.Locale> = { en: 'en', 'pt-BR': 'pt-BR', es: 'es-419' }
 
 // When a trial started now would end (Stripe counts whole days from now).
-export function trialEndFrom(now = new Date()) {
-  return new Date(now.getTime() + env.PRO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
+export function trialEndFrom(now = new Date(), days = env.PRO_TRIAL_DAYS) {
+  return new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
 }
 
 // Checkout shows the Stripe account's name, Trimry's, unless told otherwise.
@@ -457,13 +457,24 @@ const EMBEDDED_BRANDING = Object.fromEntries(Object.entries(BRANDING).filter(([k
 // how to cancel it, as auto-renewal laws ask; for one-time payments, that
 // there is nothing recurring.
 // `firstCents`: a first payment below the plan's price (Pro's half-price
-// first month), said before the renewal.
-export function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en', firstCents?: number) {
+// first month), said before the renewal. `freeDays`: a trial with nothing
+// to pay today (a colors_pro campaign's).
+export function submitMessage(product: PurchaseProduct, region: PricingRegion = 'us', locale: Locale = 'en', firstCents?: number, freeDays?: number) {
   const config = PRODUCTS[product]
   const currency = REGION_CURRENCY[region]
   const price = (item: PurchaseProduct) => money(regionalAmount(item, region), currency, locale)
-  const days = env.PRO_TRIAL_DAYS
-  const ends = longDate(trialEndFrom(), locale)
+  const days = freeDays ?? env.PRO_TRIAL_DAYS
+  const ends = longDate(trialEndFrom(new Date(), days), locale)
+
+  if (product === 'pro_trial' && freeDays) {
+    const zero = money(0, currency, locale)
+
+    return {
+      en: `${zero} today: ${days} days of Pro free. Then ${price('pro_monthly')} per month starting ${ends}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged.`,
+      'pt-BR': `${zero} hoje: ${days} dias de Pro grátis. Depois, ${price('pro_monthly')} por mês a partir de ${ends}, até você cancelar. Cancele quando quiser antes disso nas configurações da sua conta Avarobe e você não será cobrado.`,
+      es: `${zero} hoy: ${days} días de Pro gratis. Después, ${price('pro_monthly')} al mes a partir del ${ends}, hasta que canceles. Cancela cuando quieras antes de esa fecha en la configuración de tu cuenta de Avarobe y no se te cobrará.`,
+    }[locale]
+  }
 
   if (product === 'pro_trial') {
     return {
@@ -609,11 +620,15 @@ export async function createCheckout(input: {
   placement?: string
   // The teaser a teaser_unlock pays for: unlocked when the payment lands.
   teaserId?: string
+  // pro_trial for a colors_pro campaign: this many days free, without the
+  // trial fee (the card is still asked for the monthly plan after it).
+  freeTrialDays?: number
 }): Promise<{ url: string | null; clientSecret: string | null }> {
   const userId = input.user._id.toString()
   const region = input.region ?? 'us'
   const locale = input.user.locale ?? 'en'
   const guest = isPlaceholderEmail(input.user.email)
+  const freeDays = input.product === 'pro_trial' && input.freeTrialDays ? input.freeTrialDays : undefined
   const metadata = {
     ...input.attribution,
     app: APP,
@@ -624,6 +639,7 @@ export async function createCheckout(input: {
     ...(input.placement ? { placement: input.placement } : {}),
     ...(input.halfOffCents ? { offer: 'pro_half' } : {}),
     ...(input.teaserId ? { teaserId: input.teaserId } : {}),
+    ...(freeDays ? { offer: 'free_trial', trial_days: String(freeDays) } : {}),
   }
   const discount =
     input.halfOffCents && input.halfOffCents > 0
@@ -644,9 +660,10 @@ export async function createCheckout(input: {
     // Stripe takes either a discount or the promotion code field. The field
     // is left to subscriptions: on a $5 purchase it sends people off to
     // hunt for a code.
+    // Nor on a free trial: nothing to take a code off today.
     ...(discount
       ? { discounts: [{ coupon: discount }] }
-      : PRODUCTS[input.product].recurring || input.product === 'pro_trial'
+      : (PRODUCTS[input.product].recurring || input.product === 'pro_trial') && !freeDays
         ? { allow_promotion_codes: true }
         : {}),
     custom_text: {
@@ -656,6 +673,7 @@ export async function createCheckout(input: {
           region,
           locale,
           input.halfOffCents ? regionalAmount(input.product, region) - input.halfOffCents : undefined,
+          freeDays,
         ),
       },
     },
@@ -680,7 +698,22 @@ export async function createCheckout(input: {
         }),
   }
   const params: Stripe.Checkout.SessionCreateParams =
-    input.product === 'pro_trial'
+    freeDays
+      ? {
+          ...common,
+          mode: 'subscription',
+          // The monthly plan after a few free days: no trial fee, so the
+          // first invoice is $0. The card is asked anyway (Stripe's default,
+          // said here so it stays that way): the plan starts when the trial
+          // ends.
+          line_items: [{ price: await priceFor('pro_monthly', region, locale), quantity: 1 }],
+          payment_method_collection: 'always',
+          subscription_data: {
+            trial_period_days: freeDays,
+            metadata: { ...metadata, product: 'pro_monthly', trial: 'pro_trial' },
+          },
+        }
+      : input.product === 'pro_trial'
       ? {
           ...common,
           mode: 'subscription',
@@ -1088,7 +1121,7 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
         paymentKey: readId(session.invoice) ?? session.id,
         subscriptionId,
         customerId: readId(session.customer),
-        trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
+        trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), Number(session.metadata?.trial_days) || undefined),
         amount: session.amount_total ?? 0,
         currency: session.currency ?? 'usd',
         placement: session.metadata?.placement ?? null,
@@ -1311,6 +1344,9 @@ async function grantProTrial(
     terms: input.terms ?? null,
     set: (user) => ({
       proTrialAt: user.proTrialAt ?? now,
+      // Nothing paid today: a colors_pro campaign's free trial (its emails
+      // say so).
+      proTrialFree: input.amount === 0,
       pro: {
         subscriptionId: input.subscriptionId,
         customerId: input.customerId,
@@ -1360,7 +1396,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
       paymentKey: invoice.id,
       subscriptionId,
       customerId: readId(invoice.customer),
-      trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(),
+      trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), Number(details?.metadata?.trial_days) || undefined),
       amount: invoice.amount_paid,
       currency: invoice.currency,
       placement: details?.metadata?.placement ?? null,
@@ -1402,6 +1438,27 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
   if (applied && first) {
     void reportFirstInvoice(app, invoice, invoice.id, product)
   }
+
+  // A free trial's first charge is the purchase the ad led to (its start
+  // went to Meta as a StartTrial, worth nothing): reported once, with the
+  // checkout's browser ids.
+  if (
+    applied &&
+    details?.metadata?.offer === 'free_trial' &&
+    invoice.billing_reason === 'subscription_cycle' &&
+    invoice.amount_paid > 0 &&
+    firstChargeAfterTrial(invoice, await subscriptionTrialEnd(subscriptionId))
+  ) {
+    void reportFirstInvoice(app, invoice, invoice.id, product)
+  }
+}
+
+// The invoice for the period that starts when the trial ends (later ones
+// are renewals).
+export function firstChargeAfterTrial(invoice: Pick<Stripe.Invoice, 'lines'>, trialEnd: Date | null) {
+  const start = Math.min(...invoice.lines.data.map((line) => line.period.start))
+
+  return Boolean(trialEnd && Number.isFinite(start) && Math.abs(start * 1000 - trialEnd.getTime()) < 60 * 60 * 1000)
 }
 
 function intervalOf(subscription: Stripe.Subscription): ProSubscription['interval'] {

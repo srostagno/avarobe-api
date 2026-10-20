@@ -444,6 +444,9 @@ export const ptBrEmails: EmailCopy = {
     why: 'O Pro é todas as dicas e todos os testes: seu melhor rosto, seu corte e seu look perfeitos, suas cores e looks novos em você todo mês. Cancele quando quiser.',
     button: 'Concluir o Pro',
     buttonHalf: (price: string) => `Assinar o Pro por ${price}`,
+    subjectTrial: (days: number) => `Seus ${days} dias grátis de Pro continuam esperando`,
+    trial: (days: number, monthly: string) => `Seus primeiros ${days} dias de Pro são grátis: nada é cobrado hoje e depois ${monthly} por mês, a menos que você cancele antes.`,
+    buttonTrial: (days: number) => `Começar meus ${days} dias grátis`,
     expiry: 'O link faz seu login por 14 dias e abre o pagamento.',
   },
 
@@ -504,6 +507,7 @@ export const ptBrEmails: EmailCopy = {
     renews: (end: string) => `Seu plano se renova a partir de ${end}, e todo mês depois disso, até você cancelar.`,
     paid: (trial: string, end: string) =>
       `Hoje você pagou ${trial}. Cancele quando quiser antes de ${end}, nas configurações da sua conta, e nada mais será cobrado. Vamos lembrar você dois dias antes.`,
+    free: (end: string) => `Nada foi cobrado hoje. Cancele quando quiser antes de ${end}, nas configurações da sua conta, e você não será cobrado. Vamos lembrar você antes do fim.`,
   },
 
   trialEnding: {

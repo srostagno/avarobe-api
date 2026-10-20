@@ -1249,15 +1249,23 @@ export function halfLastCallEmail(
 // sendProRescues): her best version blurred if one was drawn, her
 // half-price month if it's open, and a link that signs her in and opens
 // checkout. Promotional.
+// `trialDays`: her Pro starts with these days free (a colors_pro campaign),
+// said instead of a price.
 export function proRescueEmail(
-  input: Recipient & { half: { price: number; amount: number; currency: string; hours: number } | null; photoUrl: string | null; url: string },
+  input: Recipient & {
+    half: { price: number; amount: number; currency: string; hours: number } | null
+    photoUrl: string | null
+    url: string
+    trialDays?: number | null
+  },
 ): EmailContent {
   const x = reader(input)
   const copy = x.c.proRescue
-  const half = input.half ? { price: x.money(input.half.price, input.half.currency), amount: x.money(input.half.amount, input.half.currency), hours: input.half.hours } : null
+  const trialDays = input.trialDays ?? null
+  const half = !trialDays && input.half ? { price: x.money(input.half.price, input.half.currency), amount: x.money(input.half.amount, input.half.currency), hours: input.half.hours } : null
 
   return layout({
-    subject: copy.subject(half?.price ?? null),
+    subject: trialDays ? copy.subjectTrial(trialDays) : copy.subject(half?.price ?? null),
     preheader: copy.preheader,
     hero: input.photoUrl ? { src: input.photoUrl, alt: copy.alt } : HERO.drape(x.c),
     recipient: input,
@@ -1269,9 +1277,9 @@ export function proRescueEmail(
       greeting(x.c, input.firstName),
       paragraph(copy.intro),
       ...(input.photoUrl ? [paragraph(copy.teaser)] : []),
-      ...(half ? [paragraph(copy.half(half.price, half.amount, half.hours))] : []),
+      ...(trialDays ? [paragraph(copy.trial(trialDays, x.price('pro_monthly')))] : half ? [paragraph(copy.half(half.price, half.amount, half.hours))] : []),
       paragraph(copy.why),
-      button(half ? copy.buttonHalf(half.price) : copy.button, input.url),
+      button(trialDays ? copy.buttonTrial(trialDays) : half ? copy.buttonHalf(half.price) : copy.button, input.url),
       small(copy.expiry),
       signature(x.c),
     ],
@@ -1342,14 +1350,16 @@ export function colorsReadyEmail(input: Recipient & { season: string | null; url
 // Pro trial notices. Transactional (billing terms), so they go out even to
 // people who turned off tips, and carry no postal address.
 
-export function trialStartedEmail(input: Recipient & { trialEnd: Date }): EmailContent {
+// `days`: how long her trial is; `free`: nothing was paid today (a colors_pro
+// campaign's trial).
+export function trialStartedEmail(input: Recipient & { trialEnd: Date; days?: number; free?: boolean }): EmailContent {
   const x = reader(input)
   const { c } = x
   const end = longDate(input.trialEnd, x.locale)
   const monthly = x.price('pro_monthly')
 
   return layout({
-    subject: c.trialStarted.subject(env.PRO_TRIAL_DAYS),
+    subject: c.trialStarted.subject(input.days ?? env.PRO_TRIAL_DAYS),
     preheader: c.trialStarted.preheader(end, monthly),
     hero: HERO.drape(c),
     recipient: input,
@@ -1360,7 +1370,7 @@ export function trialStartedEmail(input: Recipient & { trialEnd: Date }): EmailC
       paragraph(c.trialStarted.intro),
       checklist(trialFeatures(c)),
       button(c.trialStarted.button, x.link('/studio', 'trial_started')),
-      priceBox(c.trialStarted.then(monthly), c.trialStarted.renews(end), c.trialStarted.paid(x.price('pro_trial'), end)),
+      priceBox(c.trialStarted.then(monthly), c.trialStarted.renews(end), input.free ? c.trialStarted.free(end) : c.trialStarted.paid(x.price('pro_trial'), end)),
       small(c.common.manage(appUrl(x.locale, '/studio/account#plan'))),
       signature(c),
     ],
