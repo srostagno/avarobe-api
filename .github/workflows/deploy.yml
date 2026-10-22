@@ -1,0 +1,72 @@
+# Every push to main is tested; when the repo variable AUTO_DEPLOY is "on" it
+# is then deployed to the EC2 box by scripts/deploy.sh, which rolls back if
+# the API doesn't come back healthy on the new commit.
+#
+# Setup (docs/operations.md, "Deploy automático"):
+#   secrets EC2_DEPLOY_KEY (a key the server only lets run scripts/deploy.sh)
+#           EC2_KNOWN_HOSTS (ssh-keyscan of the server)
+#   vars    EC2_HOST, AUTO_DEPLOY=on   (AUTO_DEPLOY=off stops deploys)
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DB: avarobe_test
+      JWT_ACCESS_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm exec tsc --noEmit -p tsconfig.json
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AUTO_DEPLOY == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Deploy on the EC2 box
+        env:
+          SSH_KEY: ${{ secrets.EC2_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+          HOST: ${{ vars.EC2_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o BatchMode=yes "ec2-user@$HOST" "deploy $GITHUB_SHA"
+
+      - name: Check it from outside
+        run: |
+          short="${GITHUB_SHA::7}"
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 5 https://api.avarobe.com/api/v1/health | grep -q "\"commit\":\"$short\""; then
+              echo "api.avarobe.com runs $short"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "api.avarobe.com is not on $short"
+          exit 1
