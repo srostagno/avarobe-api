@@ -72,6 +72,10 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
       name: 'Teste do Avarobe Pro',
       description: 'Seus primeiros dias de Avarobe Pro. Depois, mensal, até você cancelar.',
     },
+    color_pro: {
+      name: 'Consultor de Cores + teste do Pro',
+      description: 'Sua paleta completa e o relatório visual de cores, seus para sempre, com os primeiros dias de Avarobe Pro. Depois, mensal, até você cancelar.',
+    },
   },
   es: {
     color_report: {
@@ -137,6 +141,10 @@ export const PRODUCT_COPY: Record<Exclude<Locale, 'en'>, Record<PurchaseProduct,
     pro_trial: {
       name: 'Prueba de Avarobe Pro',
       description: 'Tus primeros días de Avarobe Pro. Después, mensual, hasta que canceles.',
+    },
+    color_pro: {
+      name: 'Asesor de Color + prueba de Pro',
+      description: 'Tu paleta completa y el reporte visual de color, tuyos para siempre, con tus primeros días de Avarobe Pro. Después, mensual, hasta que canceles.',
     },
   },
 }

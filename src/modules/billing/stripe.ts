@@ -27,7 +27,7 @@ import {
 import { isPricingRegion, type PricingRegion, REGION_CURRENCY, regionalAmount, regionalPrice, toUsdCents } from './pricing.js'
 
 // The purchases after which her perfect haircut is drawn ahead (teasers).
-const TEASER_AFTER = new Set<string>(['color_report', 'reports_bundle', 'advisors_bundle'])
+const TEASER_AFTER = new Set<string>(['color_report', 'reports_bundle', 'advisors_bundle', 'color_pro'])
 
 // Avarobe shares the Stripe account with Trimry. Everything Avarobe creates
 // carries metadata app=avarobe and only that is handled here. Trimry's
@@ -179,6 +179,17 @@ export const PRODUCTS: Record<PurchaseProduct, ProductConfig> = {
     description: 'Your first days of Avarobe Pro. Then monthly, until you cancel.',
     amount: () => env.PRICE_PRO_TRIAL_CENTS,
     credits: () => env.PRO_TRIAL_CREDITS,
+  },
+  // The Color Advisor with Pro's first days (Oct 23, 2026): the report's
+  // price on the subscription's first (trial) invoice, like the trial fee.
+  // The subscription is pro_monthly and starts charging when the days end.
+  color_pro: {
+    lookupKey: 'avarobe_color_pro_v1',
+    name: 'Avarobe Color Advisor + Pro trial',
+    description: 'Your full palette and visual color report, yours to keep, with your first days of Avarobe Pro. Then monthly, until you cancel.',
+    amount: () => env.PRICE_COLOR_REPORT_CENTS,
+    credits: () => env.PRO_TRIAL_CREDITS,
+    unlocks: { color: true },
   },
 }
 
@@ -476,6 +487,17 @@ export function submitMessage(product: PurchaseProduct, region: PricingRegion = 
     }[locale]
   }
 
+  if (product === 'color_pro') {
+    const proDays = env.COLOR_PRO_TRIAL_DAYS
+    const proEnds = longDate(trialEndFrom(new Date(), proDays), locale)
+
+    return {
+      en: `${price('color_pro')} today for your Color Advisor, yours to keep, with ${proDays} days of Pro. Then ${price('pro_monthly')} per month starting ${proEnds}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged again.`,
+      'pt-BR': `${price('color_pro')} hoje pelo seu Consultor de Cores, seu para sempre, com ${proDays} dias de Pro. Depois, ${price('pro_monthly')} por mês a partir de ${proEnds}, até você cancelar. Cancele quando quiser antes disso nas configurações da sua conta Avarobe e você não será cobrado de novo.`,
+      es: `${price('color_pro')} hoy por tu Asesor de Color, tuyo para siempre, con ${proDays} días de Pro. Después, ${price('pro_monthly')} al mes a partir del ${proEnds}, hasta que canceles. Cancela cuando quieras antes de esa fecha en la configuración de tu cuenta de Avarobe y no se te volverá a cobrar.`,
+    }[locale]
+  }
+
   if (product === 'pro_trial') {
     return {
       en: `${price('pro_trial')} today for ${days} days of Pro. Then ${price('pro_monthly')} per month starting ${ends}, until you cancel. Cancel anytime before then in your Avarobe account settings and you won't be charged again.`,
@@ -539,12 +561,12 @@ export function submitMessage(product: PurchaseProduct, region: PricingRegion = 
 export function termsAcceptance(locale: Locale, product?: PurchaseProduct, region: PricingRegion = 'us') {
   const terms = appUrl(locale, '/terms')
   const privacy = appUrl(locale, '/privacy')
-  const plan = product === 'pro_trial' ? 'pro_monthly' : product
+  const trial = product === 'pro_trial' || product === 'color_pro'
+  const plan = trial ? 'pro_monthly' : product
   const recurring = plan ? PRODUCTS[plan].recurring : undefined
 
   if (plan && recurring) {
     const price = money(regionalAmount(plan, region), REGION_CURRENCY[region], locale)
-    const trial = product === 'pro_trial'
 
     return {
       en: `I agree to Avarobe’s [Terms](${terms}) and [Privacy Policy](${privacy}), and that ${trial ? 'after the trial ' : ''}Pro renews automatically at ${price} per ${recurring} until I cancel.`,
@@ -594,6 +616,38 @@ async function openSession(params: Stripe.Checkout.SessionCreateParams, locale: 
       custom_text: { ...params.custom_text, submit: { message: `${submit} ${PAY_TERMS[locale]}`.trim() } },
     })
   }
+}
+
+// Brazil's Pro checkouts: Pix Automático next to the card (PIX_SUBSCRIPTIONS,
+// Oct 23, 2026). Stripe leaves Pix out of a subscription unless it's listed
+// (tested in test mode: a BRL subscription offered card and Link only, while a
+// one-time BRL payment offers Pix by itself). The mandate she authorizes in
+// her bank caps each charge: room for the plan with the IOF on top and a price
+// change, and for a first payment above the plan (color_pro's report).
+// Subscription mode takes only the amount and the schedule.
+export function pixSubscription(region: PricingRegion, plan: 'pro_monthly' | 'pro_annual', firstCents = 0): Partial<Stripe.Checkout.SessionCreateParams> {
+  if (!env.PIX_SUBSCRIPTIONS || region !== 'br') {
+    return {}
+  }
+
+  const cap = Math.max(2 * regionalAmount(plan, region), Math.ceil(firstCents * 1.2))
+
+  return {
+    payment_method_types: ['card', 'pix'],
+    payment_method_options: {
+      pix: { mandate_options: { amount: cap, payment_schedule: plan === 'pro_annual' ? 'yearly' : 'monthly' } },
+    } as Stripe.Checkout.SessionCreateParams['payment_method_options'],
+  }
+}
+
+// An account without Pix (or a Stripe that refuses it) gets a card-only
+// checkout rather than none.
+function pixRefused(params: Stripe.Checkout.SessionCreateParams, error: unknown) {
+  return (
+    Boolean(params.payment_method_types?.includes('pix')) &&
+    error instanceof Stripe.errors.StripeInvalidRequestError &&
+    /pix|payment_method_types|payment_method_options/i.test(`${error.param ?? ''} ${error.message}`)
+  )
 }
 
 export async function createCheckout(input: {
@@ -712,6 +766,24 @@ export async function createCheckout(input: {
             trial_period_days: freeDays,
             metadata: { ...metadata, product: 'pro_monthly', trial: 'pro_trial' },
           },
+          ...pixSubscription(region, 'pro_monthly'),
+        }
+      : input.product === 'color_pro'
+      ? {
+          ...common,
+          mode: 'subscription',
+          // The monthly plan with Pro's first days, plus the Color Advisor on
+          // its first invoice: what she pays today. `trial` marks how it
+          // started, so that invoice is granted as her report and the trial.
+          line_items: [
+            { price: await priceFor('pro_monthly', region, locale), quantity: 1 },
+            { price: await priceFor('color_pro', region, locale), quantity: 1 },
+          ],
+          subscription_data: {
+            trial_period_days: env.COLOR_PRO_TRIAL_DAYS,
+            metadata: { ...metadata, product: 'pro_monthly', trial: 'color_pro' },
+          },
+          ...pixSubscription(region, 'pro_monthly', regionalAmount('color_pro', region)),
         }
       : input.product === 'pro_trial'
       ? {
@@ -728,9 +800,10 @@ export async function createCheckout(input: {
             trial_period_days: env.PRO_TRIAL_DAYS,
             metadata: { ...metadata, product: 'pro_monthly', trial: 'pro_trial' },
           },
+          ...pixSubscription(region, 'pro_monthly', regionalAmount('pro_trial', region)),
         }
-      : PRODUCTS[input.product].recurring
-    ? { ...common, mode: 'subscription', subscription_data: { metadata } }
+      : isPro(input.product)
+    ? { ...common, mode: 'subscription', subscription_data: { metadata }, ...pixSubscription(region, input.product) }
     : {
         ...common,
         mode: 'payment',
@@ -738,7 +811,17 @@ export async function createCheckout(input: {
         // would only say the account's name.
         payment_intent_data: { metadata, statement_descriptor_suffix: 'AVAROBE' },
       }
-  const session = await openSession(params, locale, input.product, region)
+  const session = await openSession(params, locale, input.product, region).catch((error: unknown) => {
+    if (!pixRefused(params, error)) {
+      throw error
+    }
+
+    console.error('Stripe refused Pix; checkout opened with the card only:', error instanceof Error ? error.message : error)
+    const cardOnly = { ...params }
+    delete cardOnly.payment_method_types
+    delete cardOnly.payment_method_options
+    return openSession(cardOnly, locale, input.product, region)
+  })
 
   if (input.embedded ? !session.client_secret : !session.url) {
     throw new Error('Stripe returned a checkout session without a URL or client secret.')
@@ -1115,13 +1198,14 @@ export async function grantSession(app: FastifyInstance, session: Stripe.Checkou
   if (session.mode === 'subscription') {
     const subscriptionId = readId(session.subscription)
 
-    if (subscriptionId && product === 'pro_trial') {
+    if (subscriptionId && (product === 'pro_trial' || product === 'color_pro')) {
       const applied = await grantProTrial(app, {
+        product,
         userId,
         paymentKey: readId(session.invoice) ?? session.id,
         subscriptionId,
         customerId: readId(session.customer),
-        trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), Number(session.metadata?.trial_days) || undefined),
+        trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), trialDaysFrom(product, session.metadata?.trial_days)),
         amount: session.amount_total ?? 0,
         currency: session.currency ?? 'usd',
         placement: session.metadata?.placement ?? null,
@@ -1314,12 +1398,21 @@ function paidIntent(invoice: Stripe.Invoice) {
   return readId(invoice.payments?.data.find((payment) => payment.status === 'paid')?.payment.payment_intent)
 }
 
-// The trial's first invoice (the trial fee): the trial looks, and Pro in
-// 'trialing' until the first monthly charge. Its key is that invoice, like
-// every Pro payment, so the success page and the webhook grant it once.
+// How long a trial lasts when Stripe can't be asked: color_pro's days, a
+// free trial's from its checkout, else the paid trial's.
+function trialDaysFrom(product: 'pro_trial' | 'color_pro', metadataDays?: string | null) {
+  return product === 'color_pro' ? env.COLOR_PRO_TRIAL_DAYS : Number(metadataDays) || undefined
+}
+
+// The trial's first invoice (the trial fee, or color_pro's Color Advisor):
+// the trial looks (and the report), and Pro in 'trialing' until the first
+// monthly charge. Its key is that invoice, like every Pro payment, so the
+// success page and the webhook grant it once.
 async function grantProTrial(
   app: FastifyInstance,
   input: {
+    // How the trial started: its fee, or with the Color Advisor.
+    product?: 'pro_trial' | 'color_pro'
     userId: ObjectId
     paymentKey: string
     subscriptionId: string
@@ -1333,9 +1426,10 @@ async function grantProTrial(
   },
 ) {
   const now = new Date()
+  const product = input.product ?? 'pro_trial'
   const applied = await applyGrant(app, {
     userId: input.userId,
-    product: 'pro_trial',
+    product,
     paymentKey: input.paymentKey,
     paymentIntentId: input.paymentIntentId ?? null,
     amount: input.amount,
@@ -1347,6 +1441,8 @@ async function grantProTrial(
       // Nothing paid today: a colors_pro campaign's free trial (its emails
       // say so).
       proTrialFree: input.amount === 0,
+      // What she paid was her Color Advisor (its emails say so).
+      ...(product === 'color_pro' ? { proTrialColor: true } : {}),
       pro: {
         subscriptionId: input.subscriptionId,
         customerId: input.customerId,
@@ -1390,13 +1486,16 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
   // Renewals and the switch to annual aren't purchases from an ad.
   const first = invoice.billing_reason === 'subscription_create'
 
-  if (details?.metadata?.trial === 'pro_trial' && first) {
+  const trial = details?.metadata?.trial
+
+  if ((trial === 'pro_trial' || trial === 'color_pro') && first) {
     const applied = await grantProTrial(app, {
+      product: trial,
       userId,
       paymentKey: invoice.id,
       subscriptionId,
       customerId: readId(invoice.customer),
-      trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), Number(details?.metadata?.trial_days) || undefined),
+      trialEnd: (await subscriptionTrialEnd(subscriptionId)) ?? trialEndFrom(new Date(), trialDaysFrom(trial, details?.metadata?.trial_days)),
       amount: invoice.amount_paid,
       currency: invoice.currency,
       placement: details?.metadata?.placement ?? null,
@@ -1404,7 +1503,7 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
     })
 
     if (applied) {
-      void reportFirstInvoice(app, invoice, invoice.id, 'pro_trial')
+      void reportFirstInvoice(app, invoice, invoice.id, trial)
     }
 
     return
@@ -1441,10 +1540,11 @@ export async function handleInvoicePaid(app: FastifyInstance, invoice: Stripe.In
 
   // A free trial's first charge is the purchase the ad led to (its start
   // went to Meta as a StartTrial, worth nothing): reported once, with the
-  // checkout's browser ids.
+  // checkout's browser ids. So is color_pro's: her report went as a
+  // Purchase, and this is the subscription the ads are after.
   if (
     applied &&
-    details?.metadata?.offer === 'free_trial' &&
+    (details?.metadata?.offer === 'free_trial' || trial === 'color_pro') &&
     invoice.billing_reason === 'subscription_cycle' &&
     invoice.amount_paid > 0 &&
     firstChargeAfterTrial(invoice, await subscriptionTrialEnd(subscriptionId))

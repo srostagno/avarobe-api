@@ -1352,7 +1352,7 @@ export function colorsReadyEmail(input: Recipient & { season: string | null; url
 
 // `days`: how long her trial is; `free`: nothing was paid today (a colors_pro
 // campaign's trial).
-export function trialStartedEmail(input: Recipient & { trialEnd: Date; days?: number; free?: boolean }): EmailContent {
+export function trialStartedEmail(input: Recipient & { trialEnd: Date; days?: number; free?: boolean; color?: boolean }): EmailContent {
   const x = reader(input)
   const { c } = x
   const end = longDate(input.trialEnd, x.locale)
@@ -1370,7 +1370,11 @@ export function trialStartedEmail(input: Recipient & { trialEnd: Date; days?: nu
       paragraph(c.trialStarted.intro),
       checklist(trialFeatures(c)),
       button(c.trialStarted.button, x.link('/studio', 'trial_started')),
-      priceBox(c.trialStarted.then(monthly), c.trialStarted.renews(end), input.free ? c.trialStarted.free(end) : c.trialStarted.paid(x.price('pro_trial'), end)),
+      priceBox(
+        c.trialStarted.then(monthly),
+        c.trialStarted.renews(end),
+        input.free ? c.trialStarted.free(end) : input.color ? c.trialStarted.color(x.price('color_report'), end) : c.trialStarted.paid(x.price('pro_trial'), end),
+      ),
       small(c.common.manage(appUrl(x.locale, '/studio/account#plan'))),
       signature(c),
     ],

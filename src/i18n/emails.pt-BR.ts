@@ -16,6 +16,7 @@ const RESCUE: Record<string, string> = {
   pro_monthly: 'Seu Avarobe Pro está',
   pro_annual: 'Seu Avarobe Pro está',
   pro_trial: 'Seu Avarobe Pro está',
+  color_pro: 'Seu Consultor de Cores está',
   hair_advisor: 'Seu Consultor de Cabelo e Barba está',
   advisors_bundle: 'Seus três consultores estão',
   event_pass: 'Seu Stylist de Eventos está',
@@ -508,6 +509,8 @@ export const ptBrEmails: EmailCopy = {
     paid: (trial: string, end: string) =>
       `Hoje você pagou ${trial}. Cancele quando quiser antes de ${end}, nas configurações da sua conta, e nada mais será cobrado. Vamos lembrar você dois dias antes.`,
     free: (end: string) => `Nada foi cobrado hoje. Cancele quando quiser antes de ${end}, nas configurações da sua conta, e você não será cobrado. Vamos lembrar você antes do fim.`,
+    color: (report: string, end: string) =>
+      `Hoje você pagou ${report} pelo seu Consultor de Cores, que é seu para sempre. O Pro veio junto: cancele quando quiser antes de ${end}, nas configurações da sua conta, e você não será cobrado de novo. Vamos lembrar você dois dias antes.`,
   },
 
   trialEnding: {

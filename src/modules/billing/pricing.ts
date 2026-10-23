@@ -50,7 +50,7 @@ export function pricingRegion(request: FastifyRequest, user?: Pick<UserDocument,
 
 export const REGION_CURRENCY: Record<PricingRegion, Currency> = { us: 'usd', br: 'brl', mx: 'mxn', co: 'cop', latam: 'usd' }
 
-type Listed = Exclude<PurchaseProduct, 'color_addon' | 'style_addon'>
+type Listed = Exclude<PurchaseProduct, 'color_addon' | 'style_addon' | 'color_pro'>
 
 // Minor units of each region's currency (R$ 27,90 = 2790; MX$ 79 = 7900;
 // COP 11.900 = 1190000, the dollar list at about 4,000 pesos).
@@ -155,6 +155,11 @@ export function regionalAmount(product: PurchaseProduct, region: PricingRegion):
 
   if (product === 'style_addon') {
     return Math.max(50, listed('reports_bundle', region) - listed('color_report', region))
+  }
+
+  // The Color Advisor with Pro's first days costs what the report does.
+  if (product === 'color_pro') {
+    return listed('color_report', region)
   }
 
   return listed(product, region)

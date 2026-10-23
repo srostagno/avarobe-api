@@ -261,6 +261,11 @@ export function billingState(user: BillingFields, now = Date.now(), region: Pric
     colorRecent && styleRecent ? new Date(Math.min(colorRecent.getTime(), styleRecent.getTime())) : (colorRecent ?? styleRecent)
 
   const freeTrialDays = env.PRO_FIRST_TRIAL_DAYS > 0 && isProFirst(user) && !comp && !pro && !user.proTrialAt ? env.PRO_FIRST_TRIAL_DAYS : null
+  // The Color Advisor with Pro's first days (Oct 23, 2026): for who hasn't
+  // got the report and never had Pro, not even a trial. A colors_pro
+  // visitor's free days come first.
+  const colorProDays =
+    env.COLOR_PRO_TRIAL_DAYS > 0 && !comp && !pro && !user.proTrialAt && !colorReport && freeTrialDays === null ? env.COLOR_PRO_TRIAL_DAYS : null
 
   return {
     admin,
@@ -276,6 +281,7 @@ export function billingState(user: BillingFields, now = Date.now(), region: Pric
     // A colors_pro campaign's trial (Oct 20, 2026): these days of Pro free,
     // nothing charged today.
     freeTrialDays,
+    colorProDays,
     colorReport,
     styleReport,
     colorMirror,
@@ -373,6 +379,8 @@ export function serializeBilling(user: BillingFields) {
     trialEligible: state.trialEligible,
     // Her trial is free (a colors_pro campaign): how many days.
     freeTrialDays: state.freeTrialDays,
+    // Her Color Advisor comes with these days of Pro (color_pro), else null.
+    colorProDays: state.colorProDays,
     // Pro monthly's first month at half price, while their offer is open
     // (modules/feedback), in their region's prices.
     proHalfOffer: state.proLive || state.comp ? null : offerView(user.proHalfOffer, regionForCountry(user.location?.country)),

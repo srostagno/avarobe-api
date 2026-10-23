@@ -37,7 +37,8 @@ const WINDOW_MS = REFUND_WINDOW_DAYS * DAY_MS
 // São Paulo is UTC-03:00 all year (Brazil dropped daylight time in 2019).
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000
 
-export const PRO_PRODUCTS = new Set<PurchaseProduct>(['pro_monthly', 'pro_annual', 'pro_trial'])
+// color_pro too: its refund ends the Pro it started (and takes back the report).
+export const PRO_PRODUCTS = new Set<PurchaseProduct>(['pro_monthly', 'pro_annual', 'pro_trial', 'color_pro'])
 
 export const REFUNDABLE = new Set<PurchaseProduct>([
   'color_report',

@@ -81,6 +81,7 @@ const checkoutSchema = z.object({
     'event_pass',
     'magazine',
     'teaser_unlock',
+    'color_pro',
   ]),
   // The teaser a teaser_unlock pays for.
   teaserId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
@@ -299,6 +300,12 @@ function ineligibility(product: PurchaseProduct, state: ReturnType<typeof billin
           : !env.PRO_TRIAL
             ? 'The trial isn’t offered right now. Pro monthly is available.'
             : 'Your trial has been used. Pro monthly is still available.'
+    case 'color_pro':
+      return state.colorReport
+        ? 'You already have your Color Advisor.'
+        : state.colorProDays
+          ? null
+          : 'This offer isn’t available on your account. The Color Advisor is still available.'
     case 'pro_annual':
       if (state.comp) {
         return 'You already have Avarobe Pro.'

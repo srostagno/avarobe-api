@@ -17,6 +17,7 @@ const RESCUE: Record<string, string> = {
   pro_monthly: 'Tu Avarobe Pro está',
   pro_annual: 'Tu Avarobe Pro está',
   pro_trial: 'Tu Avarobe Pro está',
+  color_pro: 'Tu Asesor de Color está',
   hair_advisor: 'Tu Asesor de Cabello y Barba está',
   advisors_bundle: 'Tus tres asesores están',
   event_pass: 'Tu Estilista de Eventos está',
@@ -507,6 +508,8 @@ export const esEmails: EmailCopy = {
     paid: (trial: string, end: string) =>
       `Hoy pagaste ${trial}. Cancela cuando quieras antes del ${end} en la configuración de tu cuenta y no se te volverá a cobrar. Te lo recordaremos dos días antes.`,
     free: (end: string) => `Hoy no se te cobró nada. Cancela cuando quieras antes del ${end} en la configuración de tu cuenta y no se te cobrará. Te lo recordaremos antes de que termine.`,
+    color: (report: string, end: string) =>
+      `Hoy pagaste ${report} por tu Asesor de Color, que es tuyo para siempre. Pro vino incluido: cancela cuando quieras antes del ${end} en la configuración de tu cuenta y no se te volverá a cobrar. Te lo recordaremos dos días antes.`,
   },
 
   trialEnding: {

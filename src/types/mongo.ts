@@ -70,6 +70,9 @@ export type UserDocument = {
   proTrialAt?: Date | null
   // Her trial cost nothing (a colors_pro campaign's free trial).
   proTrialFree?: boolean
+  // Her trial came with her Color Advisor (color_pro, Oct 23, 2026): what she
+  // paid is the report, hers to keep, and Pro's days came with it.
+  proTrialColor?: boolean
   // Pro's first month at half price, offered once after rating a paid
   // advisor 7 or more (modules/feedback): until when, and when it was used.
   proHalfOffer?: ProHalfOffer | null
@@ -348,6 +351,9 @@ export type PurchaseProduct =
   // One teaser unlocked without Pro (Oct 18, 2026): her perfect haircut,
   // look or best face, the teaser in the purchase's metadata.teaserId.
   | 'teaser_unlock'
+  // The Color Advisor with Pro's first days (Oct 23, 2026): the report's
+  // price today, the report for good, then Pro monthly until she cancels.
+  | 'color_pro'
 
 // Products of the first price list (Sep 2026), found in old records only.
 export type LegacyPurchaseProduct = 'style_kit' | 'top_up' | 'kit_upgrade' | 'plus'

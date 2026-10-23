@@ -339,7 +339,7 @@ export function lifecycleContentFor(
     case 'upgrade_last_call':
       return upgradeLastCallEmail({ ...recipient, photo: colorsPhoto })
     case 'trial_started':
-      return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user), days: trialDaysOf(user), free: Boolean(user.proTrialFree) })
+      return trialStartedEmail({ ...recipient, trialEnd: trialEndOf(user), days: trialDaysOf(user), free: Boolean(user.proTrialFree), color: Boolean(user.proTrialColor) })
     case 'trial_ending':
       return trialEndingEmail({ ...recipient, trialEnd: trialEndOf(user), looksLeft: billingState(user).credits })
     case 'checkout_rescue':
@@ -1118,7 +1118,7 @@ const PRO_WELCOME_WITHIN_MS = 3 * 24 * 60 * 60 * 1000
 export async function sendProWelcomes(app: FastifyInstance, now = new Date()) {
   const since = new Date(now.getTime() - PRO_WELCOME_WITHIN_MS)
   const ids = await app.collections.purchases.distinct('userId', {
-    product: { $in: ['pro_monthly', 'pro_annual', 'pro_trial'] },
+    product: { $in: ['pro_monthly', 'pro_annual', 'pro_trial', 'color_pro'] },
     createdAt: { $gte: since },
   })
 

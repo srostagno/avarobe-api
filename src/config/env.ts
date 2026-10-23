@@ -193,6 +193,15 @@ const envSchema = z.object({
   // per account, like the trial. 0 turns it off (her colors offer goes back
   // to the half-price month).
   PRO_FIRST_TRIAL_DAYS: z.coerce.number().int().min(0).max(30).default(3),
+  // The Color Advisor with Pro's first days (color_pro, Oct 23, 2026; Silvio:
+  // one-time sales alone don't pay for the ads, recurrence does): her report
+  // at its price today, these days of Pro with it, then Pro monthly until
+  // she cancels. Once per account; 0 turns it off (the Color Advisor alone).
+  COLOR_PRO_TRIAL_DAYS: z.coerce.number().int().min(0).max(30).default(7),
+  // Brazil's Pro checkouts take Pix Automático next to the card (a mandate
+  // authorized once in her bank, then charged each cycle). 'off' leaves the
+  // card alone; a Stripe account without Pix falls back to the card anyway.
+  PIX_SUBSCRIPTIONS: z.enum(['on', 'off']).optional(),
   // For this many days after buying a report, it counts toward the other
   // report (the bundle price) and toward Pro annual.
   REPORT_CREDIT_WINDOW_DAYS: z.coerce.number().int().min(1).default(14),
@@ -328,6 +337,7 @@ export const env = {
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
+  PIX_SUBSCRIPTIONS: (raw.PIX_SUBSCRIPTIONS ?? 'on') === 'on',
   FACE_AGE_LAUNCH: (raw.FACE_AGE_LAUNCH ?? 'off') === 'on',
   PRO_AVATAR_GRANDFATHER: (raw.PRO_AVATAR_GRANDFATHER ?? 'on') === 'on',
   PRO_ROLLOVER_GRANDFATHER: (raw.PRO_ROLLOVER_GRANDFATHER ?? 'on') === 'on',

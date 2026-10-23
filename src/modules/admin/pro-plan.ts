@@ -47,7 +47,7 @@ export async function proPlanReport(app: FastifyInstance, days: number, now = ne
       .toArray(),
     app.collections.purchases
       .find(
-        { createdAt: { $gte: since }, userId: notAdmin, product: { $in: ['pro_monthly', 'pro_annual', 'pro_trial', 'teaser_unlock'] } },
+        { createdAt: { $gte: since }, userId: notAdmin, product: { $in: ['pro_monthly', 'pro_annual', 'pro_trial', 'color_pro', 'teaser_unlock'] } },
         { projection: { product: 1, placement: 1, amountUsd: 1, refundedAt: 1 } },
       )
       .toArray(),

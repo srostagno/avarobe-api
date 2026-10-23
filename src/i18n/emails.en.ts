@@ -15,6 +15,7 @@ const PRODUCT_NAMES: Record<string, string> = {
   pro_monthly: 'Avarobe Pro',
   pro_annual: 'Avarobe Pro',
   pro_trial: 'Avarobe Pro',
+  color_pro: 'Color Advisor',
   // Since 2-Oct the mirror comes with the Color Advisor.
   color_mirror: 'Color Advisor',
   hair_advisor: 'Hair & Grooming Advisor',
@@ -555,6 +556,9 @@ export const enEmails = {
       `Today you paid ${trial}. Cancel anytime before ${end} in your account settings and you won't be charged again. We'll remind you two days before.`,
     // A free trial (nothing paid today).
     free: (end: string) => `Nothing was charged today. Cancel anytime before ${end} in your account settings and you won't be charged. We'll remind you before it ends.`,
+    // Pro's days that came with her Color Advisor (color_pro).
+    color: (report: string, end: string) =>
+      `Today you paid ${report} for your Color Advisor, which is yours to keep. Pro came with it: cancel anytime before ${end} in your account settings and you won't be charged again. We'll remind you two days before.`,
   },
 
   trialEnding: {
