@@ -197,7 +197,9 @@ const envSchema = z.object({
   // one-time sales alone don't pay for the ads, recurrence does): her report
   // at its price today, these days of Pro with it, then Pro monthly until
   // she cancels. Once per account; 0 turns it off (the Color Advisor alone).
-  COLOR_PRO_TRIAL_DAYS: z.coerce.number().int().min(0).max(30).default(7),
+  // Off since Oct 24, 2026: on its first day 5 checkouts and none paid (the
+  // Color Advisor alone paid 7 of 12 the days before). 7 turns it back on.
+  COLOR_PRO_TRIAL_DAYS: z.coerce.number().int().min(0).max(30).default(0),
   // Brazil's Pro checkouts take Pix Automático next to the card (a mandate
   // authorized once in her bank, then charged each cycle). 'off' leaves the
   // card alone; a Stripe account without Pix falls back to the card anyway.
