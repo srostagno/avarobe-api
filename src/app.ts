@@ -22,6 +22,7 @@ import eventRoutes from './modules/events/routes.js'
 import styleEventRoutes from './modules/style-events/routes.js'
 import magazineRoutes from './modules/magazine/routes.js'
 import guideRoutes from './modules/guide/routes.js'
+import growthRoutes from './modules/growth/routes.js'
 import hairRoutes from './modules/hair/routes.js'
 import makeupRoutes from './modules/makeup/routes.js'
 import scoreRoutes from './modules/scores/routes.js'
@@ -131,6 +132,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(adminRefundRequestRoutes, { prefix: '/admin/refund-requests' })
     await v1.register(eventRoutes, { prefix: '/events' })
     await v1.register(analyticsRoutes, { prefix: '/analytics' })
+    await v1.register(growthRoutes, { prefix: '/internal/growth' })
     await v1.register(billingWebhookRoutes, { prefix: '/billing/webhook' })
 
     if (env.STORAGE_DRIVER === 'local') {

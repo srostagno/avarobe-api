@@ -270,6 +270,14 @@ const envSchema = z.object({
   SCORE_FLOOR: z.coerce.number().int().min(1).max(60).default(35),
   // Accounts with everything for free, e.g. the founder and testers.
   COMP_EMAILS: z.string().default(''),
+  // The growth agent's read-only data route (modules/growth), for the agent
+  // in Anthropic's cloud, which has HTTPS but no Atlas: off (404) until set.
+  // At least 32 characters: `openssl rand -hex 32`.
+  GROWTH_API_TOKEN: z
+    .string()
+    .trim()
+    .refine((value) => value === '' || value.length >= 32, 'must be at least 32 characters (openssl rand -hex 32)')
+    .optional(),
   // Who gets the operations alerts (OpenAI out of credits, color reads
   // failing), comma-separated. COMP_EMAILS when empty, testers included.
   ALERT_EMAILS: z.string().default(''),
@@ -335,6 +343,7 @@ export const env = {
   S3_REGION: optionalTrimmed(raw.S3_REGION),
   MAILERSEND_API_KEY: optionalTrimmed(raw.MAILERSEND_API_KEY),
   MAILERSEND_FROM_EMAIL: optionalTrimmed(raw.MAILERSEND_FROM_EMAIL),
+  GROWTH_API_TOKEN: optionalTrimmed(raw.GROWTH_API_TOKEN),
   LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
