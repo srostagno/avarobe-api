@@ -7,7 +7,9 @@
 // with $set, $unset, $inc, $push, $addToSet, $pull (plain values) and $setOnInsert, pipeline $set with $ifNull, $min, $max, $add, $eq and $cond (each stage read
 // from the document as it was before the stage, as in MongoDB), upserts (and their duplicate-key
 // error, on _id and on the unique fields of UNIQUE: avatars.userId,
-// refundRequests.openKey and .ref, as in plugins/mongodb.ts) and sort/limit. Anything else throws, so a test never
+// refundRequests.openKey and .ref, as in plugins/mongodb.ts) and sort/limit;
+// aggregations with $match, $group ($min, $addToSet) and $project (with
+// $size). Projections in find are ignored. Anything else throws, so a test never
 // passes on a query the fake didn't understand.
 import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
@@ -252,6 +254,16 @@ function evaluate(doc: Doc, expression: unknown): unknown {
     return evaluate(doc, condition) === true ? evaluate(doc, yes) : evaluate(doc, no)
   }
 
+  if (isPlain(expression) && '$size' in expression) {
+    const items = evaluate(doc, expression.$size)
+
+    if (!Array.isArray(items)) {
+      throw new Error('fake-app: $size takes an array')
+    }
+
+    return items.length
+  }
+
   // Numbers only; null when any is missing, as in MongoDB.
   if (isPlain(expression) && Array.isArray(expression.$add)) {
     const values = (expression.$add as unknown[]).map((value) => evaluate(doc, value))
@@ -313,6 +325,83 @@ function applyUpdate(doc: Doc, update: Doc | Doc[], inserting = false) {
       }
     }
   }
+}
+
+// A $group key: one expression, or a document of them (fields that are
+// missing left out, as in MongoDB).
+function groupKey(doc: Doc, expression: unknown) {
+  if (!isPlain(expression) || isOperators(expression)) {
+    return evaluate(doc, expression) ?? null
+  }
+
+  return Object.fromEntries(
+    Object.entries(expression)
+      .map(([key, value]) => [key, evaluate(doc, value)] as const)
+      .filter(([, value]) => value !== undefined),
+  )
+}
+
+function aggregateStage(rows: Doc[], stage: Doc): Doc[] {
+  const [operator, spec] = Object.entries(stage)[0] ?? []
+
+  if (operator === '$match') {
+    return rows.filter((doc) => matches(doc, spec as Doc))
+  }
+
+  if (operator === '$group') {
+    const { _id: id, ...fields } = spec as Doc
+    const groups = new Map<string, Doc>()
+
+    for (const doc of rows) {
+      const key = groupKey(doc, id)
+      const group = groups.get(JSON.stringify(key)) ?? { _id: key }
+      groups.set(JSON.stringify(key), group)
+
+      for (const [field, accumulator] of Object.entries(fields)) {
+        const [kind, argument] = Object.entries(accumulator as Doc)[0] ?? []
+        const value = evaluate(doc, argument)
+
+        if (kind === '$min') {
+          const least = group[field]
+          group[field] = value === null || value === undefined ? (least ?? null) : least === null || least === undefined || order(value, least) < 0 ? value : least
+        } else if (kind === '$addToSet') {
+          const items = (group[field] ??= []) as unknown[]
+
+          if (value !== undefined && !items.some((item) => same(item, value))) {
+            items.push(value)
+          }
+        } else {
+          throw new Error(`fake-app: accumulator ${String(kind)} is not supported`)
+        }
+      }
+    }
+
+    return [...groups.values()]
+  }
+
+  if (operator === '$project') {
+    return rows.map((doc) => {
+      const projected: Doc = (spec as Doc)._id === 0 ? {} : { _id: doc._id }
+
+      for (const [field, value] of Object.entries(spec as Doc)) {
+        if (field === '_id') {
+          continue
+        }
+
+        if (value === 1 || value === true) {
+          if (read(doc, field) !== undefined) {
+            write(projected, field, read(doc, field))
+          }
+        } else {
+          write(projected, field, evaluate(doc, value))
+        }
+      }
+
+      return projected
+    })
+  }
+
+  throw new Error(`fake-app: aggregation stage ${String(operator)} is not supported`)
 }
 
 const duplicateKey = () => Object.assign(new Error('E11000 duplicate key error'), { code: 11000 })
@@ -402,6 +491,10 @@ export class FakeCollection {
     const doc = this.select(filter, { sort: options?.sort })[0]
 
     return doc ? clone(doc) : null
+  }
+
+  aggregate(pipeline: Doc[]) {
+    return { toArray: async () => pipeline.reduce((rows, stage) => aggregateStage(rows, stage), this.docs.map((doc) => clone(doc))) }
   }
 
   async countDocuments(filter: Doc = {}) {
