@@ -8,8 +8,9 @@
 // from the document as it was before the stage, as in MongoDB), upserts (and their duplicate-key
 // error, on _id and on the unique fields of UNIQUE: avatars.userId,
 // refundRequests.openKey and .ref, as in plugins/mongodb.ts) and sort/limit;
-// aggregations with $match, $group ($min, $addToSet) and $project (with
-// $size). Projections in find are ignored. Anything else throws, so a test never
+// aggregations with $match, $group ($min, $max, $sum, $addToSet) and $project
+// (with $size and $setDifference), and $dateToString as '%Y-%m-%d' in a
+// timezone. Projections in find are ignored. Anything else throws, so a test never
 // passes on a query the fake didn't understand.
 import type { FastifyInstance } from 'fastify'
 import { ObjectId } from 'mongodb'
@@ -254,6 +255,28 @@ function evaluate(doc: Doc, expression: unknown): unknown {
     return evaluate(doc, condition) === true ? evaluate(doc, yes) : evaluate(doc, no)
   }
 
+  // Only the day ('%Y-%m-%d'), in the given timezone (UTC when none).
+  if (isPlain(expression) && isPlain(expression.$dateToString)) {
+    const { format, date, timezone } = expression.$dateToString as { format: string; date: unknown; timezone?: string }
+    const value = evaluate(doc, date)
+
+    if (format !== '%Y-%m-%d' || !(value instanceof Date)) {
+      throw new Error("fake-app: $dateToString takes a date and the format '%Y-%m-%d' only")
+    }
+
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timezone ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  }
+
+  if (isPlain(expression) && Array.isArray(expression.$setDifference)) {
+    const [items, minus] = (expression.$setDifference as unknown[]).map((value) => evaluate(doc, value))
+
+    if (!Array.isArray(items) || !Array.isArray(minus)) {
+      throw new Error('fake-app: $setDifference takes two arrays')
+    }
+
+    return items.filter((item) => !minus.some((other) => same(item, other)))
+  }
+
   if (isPlain(expression) && '$size' in expression) {
     const items = evaluate(doc, expression.$size)
 
@@ -364,6 +387,12 @@ function aggregateStage(rows: Doc[], stage: Doc): Doc[] {
         if (kind === '$min') {
           const least = group[field]
           group[field] = value === null || value === undefined ? (least ?? null) : least === null || least === undefined || order(value, least) < 0 ? value : least
+        } else if (kind === '$max') {
+          const most = group[field]
+          group[field] = value === null || value === undefined ? (most ?? null) : most === null || most === undefined || order(value, most) > 0 ? value : most
+        } else if (kind === '$sum') {
+          // Numbers add up; anything else counts as 0, as in MongoDB.
+          group[field] = ((group[field] as number | undefined) ?? 0) + (typeof value === 'number' ? value : 0)
         } else if (kind === '$addToSet') {
           const items = (group[field] ??= []) as unknown[]
 

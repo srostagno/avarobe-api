@@ -143,6 +143,13 @@ describe('growth data route: access', () => {
       [{ name: 'segment', params: { segment: 'everyone' } }, /Bad params: segment/],
       [{ name: 'userByEmail', params: { email: { $ne: null } } }, /Bad params: email/],
       [{ name: 'context', params: { userIds: id } }, /Bad params: userIds/],
+      [{ name: 'activeDays', params: { from: ago(121).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'activeDays', params: { from: now.toISOString(), to: ago(1).toISOString() } }, /Bad params: to/],
+      [{ name: 'eventCounts', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'surveyAnswers', params: { since: ago(7).toISOString(), question: 'held_back' } }, /Unrecognized key/],
+      [{ name: 'feedback', params: {} }, /Bad params: since/],
+      [{ name: 'generationHealth', params: { hours: 169 } }, /Bad params: hours/],
+      [{ name: 'generationHealth', params: { hours: '24' } }, /Bad params: hours/],
     ]
 
     for (const [body, message] of bad) {
@@ -405,5 +412,135 @@ describe('growth data route: the queries', () => {
     const viaRoute = await rows<{ avatars: { userId: string; colorsAt: string }[]; purchases: unknown[]; checkouts: unknown[] }>('context', { userIds })
     assert.deepEqual(viaRoute.avatars.map((a) => [a.userId, a.colorsAt]), [[nora.toHexString(), ago(6).toISOString()]])
     assert.equal(viaRoute.purchases.length, 1)
+  })
+})
+
+describe('growth data route: behavior', () => {
+  // An instant at a Los Angeles hour, `days` days ago (stays inside that LA day).
+  const laNoon = (days: number) => {
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ago(days))
+    return { day, at: new Date(`${day}T19:00:00Z`) }
+  }
+
+  it('activeDays: the Los Angeles days each signed-in person used the site', async () => {
+    const [nora, ana] = [new ObjectId(), new ObjectId()]
+    const [d3, d1] = [laNoon(3), laNoon(1)]
+    const event = (userId: ObjectId | null, at: Date, origin = 'web') => ({ _id: new ObjectId(), name: 'page_view', origin, userId, visitorId: 'v', at })
+    const { rows, calls } = await growthApp({
+      analyticsEvents: [
+        event(nora, d3.at),
+        event(nora, new Date(d3.at.getTime() + 60_000)),
+        event(nora, d1.at),
+        event(nora, d1.at, 'server'),
+        event(ana, d1.at, 'server'),
+        event(null, d1.at),
+      ],
+    })
+
+    const active = await rows<{ _id: string; days: string[]; events: number }[]>('activeDays', { from: ago(10).toISOString(), to: now.toISOString() })
+    assert.deepEqual(
+      active.map((row) => ({ ...row, days: row.days.sort() })),
+      [{ _id: nora.toHexString(), days: [d3.day, d1.day].sort(), events: 3 }],
+    )
+    assert.deepEqual(calls[0]?.query, [
+      { $match: { at: { $gte: ago(10), $lt: now }, origin: 'web', userId: { $ne: null } } },
+      { $group: { _id: '$userId', days: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$at', timezone: 'America/Los_Angeles' } } }, events: { $sum: 1 } } },
+    ])
+    assert.equal(calls[0]?.readPreference, READ)
+  })
+
+  it('eventCounts: events, people and visitors per name and day, without the team', async () => {
+    const [admin, nora, ana] = [new ObjectId(), new ObjectId(), new ObjectId()]
+    const d1 = laNoon(1)
+    const event = (name: string, userId: ObjectId | null, visitorId: string | null) => ({ _id: new ObjectId(), name, userId, visitorId, at: d1.at })
+    const { rows } = await growthApp({
+      users: [{ _id: admin, email: 'ops@example.test', role: 'admin' }],
+      analyticsEvents: [
+        event('look_generated', nora, 'v1'),
+        event('look_generated', nora, 'v1'),
+        event('look_generated', ana, 'v2'),
+        event('look_generated', admin, 'v9'),
+        event('page_view', null, 'v3'),
+        event('page_view', null, 'v4'),
+        event('page_view', nora, null),
+      ],
+    })
+
+    const counts = await rows<{ _id: { n: string; d: string }; events: number; users: number; visitors: number }[]>('eventCounts', {
+      from: ago(5).toISOString(),
+      to: now.toISOString(),
+    })
+    assert.deepEqual(
+      counts.sort((a, b) => a._id.n.localeCompare(b._id.n)),
+      [
+        { _id: { n: 'look_generated', d: d1.day }, events: 3, users: 2, visitors: 2 },
+        { _id: { n: 'page_view', d: d1.day }, events: 3, users: 1, visitors: 2 },
+      ],
+    )
+  })
+
+  it('surveyAnswers and feedback: the answers and reviews since a date, newest first', async () => {
+    const nora = new ObjectId()
+    const { rows, calls } = await growthApp({
+      surveyAnswers: [
+        { _id: new ObjectId(), userId: nora, question: 'held_back', answer: 'too_expensive', note: null, context: { placement: 'colors_result' }, content: 'colors_e', createdAt: ago(2) },
+        { _id: new ObjectId(), userId: nora, question: 'intent', answer: 'event', note: null, context: {}, content: null, createdAt: ago(20) },
+      ],
+      feedback: [
+        { _id: new ObjectId(), userId: nora, product: 'color_advisor', score: 9, comment: 'Loved it', quoteOk: true, locale: 'en', region: 'US', pro: false, content: null, createdAt: ago(3), updatedAt: ago(3) },
+      ],
+    })
+
+    const answers = await rows<{ answer: string }[]>('surveyAnswers', { since: ago(7).toISOString() })
+    assert.deepEqual(answers.map((row) => row.answer), ['too_expensive'])
+    const reviews = await rows<{ score: number; comment: string }[]>('feedback', { since: ago(7).toISOString() })
+    assert.deepEqual(reviews.map((row) => [row.score, row.comment]), [[9, 'Loved it']])
+    assert.deepEqual(calls, [
+      {
+        collection: 'surveyAnswers',
+        op: 'find',
+        query: { createdAt: { $gte: ago(7) } },
+        projection: { userId: 1, question: 1, answer: 1, note: 1, context: 1, content: 1, createdAt: 1 },
+        readPreference: READ,
+        sort: { createdAt: -1 },
+        limit: 5000,
+      },
+      {
+        collection: 'feedback',
+        op: 'find',
+        query: { updatedAt: { $gte: ago(7) } },
+        projection: { userId: 1, product: 1, score: 1, comment: 1, locale: 1, region: 1, pro: 1, content: 1, createdAt: 1, updatedAt: 1 },
+        readPreference: READ,
+        sort: { updatedAt: -1 },
+        limit: 2000,
+      },
+    ])
+  })
+
+  it('generationHealth: generations by status, top errors without keys or emails, and open alerts', async () => {
+    const look = (status: string, error: string | null, createdAt: Date) => ({ _id: new ObjectId(), status, error, createdAt })
+    const { collections } = spyCollections({
+      looks: [
+        look('ready', null, ago(0.1)),
+        look('ready', null, ago(0.2)),
+        look('failed', 'OpenAI 401: Incorrect API key provided: sk-proj-abc123XYZ', ago(0.3)),
+        look('failed', 'Timed out for ana@example.com', ago(0.4)),
+        look('failed', 'Timed out for ana@example.com', ago(0.5)),
+        look('failed', 'old', ago(3)),
+      ],
+      opsAlerts: [{ _id: 'reads_failing', lastSentAt: ago(0.2), openSince: ago(0.3), lastError: 'boom' }],
+    })
+
+    const result = await runGrowthQuery(collections, 'generationHealth', { hours: 24 }, now)
+    assert.ok(result.ok)
+    const health = result.rows as { collections: { name: string; byStatus: Record<string, number>; errors: { error: string; n: number }[] }[]; alerts: { kind: string; lastError: string }[] }
+    const looks = health.collections.find((row) => row.name === 'looks')
+    assert.deepEqual(looks?.byStatus, { ready: 2, failed: 3 })
+    assert.deepEqual(looks?.errors, [
+      { error: 'Timed out for [email]', n: 2 },
+      { error: 'OpenAI 401: Incorrect API key provided: [key]', n: 1 },
+    ])
+    assert.deepEqual(health.collections.find((row) => row.name === 'avatars'), { name: 'avatars', byStatus: {}, errors: [] })
+    assert.deepEqual(health.alerts.map((alert) => [alert.kind, alert.lastError]), [['reads_failing', 'boom']])
   })
 })
