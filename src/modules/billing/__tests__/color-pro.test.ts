@@ -92,7 +92,7 @@ describe('the Color Advisor with Pro’s first days', () => {
 
   it('says beside Pay what she pays today, that the report is hers, and when Pro starts charging', () => {
     assert.match(submitMessage('color_pro', 'us', 'en'), /^\$\d+\.\d\d today for your Color Advisor, yours to keep, with 7 days of Pro\. Then \$\d+\.\d\d per month starting .+, until you cancel\. Cancel anytime before then/)
-    assert.match(submitMessage('color_pro', 'br', 'pt-BR'), /^R\$\s?27,90 hoje pelo seu Consultor de Cores, seu para sempre, com 7 dias de Pro\. Depois, R\$\s?24,90 por mês/)
+    assert.match(submitMessage('color_pro', 'br', 'pt-BR'), /^R\$\s?19,90 hoje pelo seu Consultor de Cores, seu para sempre, com 7 dias de Pro\. Depois, R\$\s?24,90 por mês/)
     assert.match(submitMessage('color_pro', 'mx', 'es'), /hoy por tu Asesor de Color, tuyo para siempre, con 7 días de Pro\. Después, /)
     // Her consent at checkout is to the renewal after the trial.
     assert.match(termsAcceptance('en', 'color_pro', 'us'), /after the trial Pro renews automatically at \$\d+\.\d\d per month until I cancel/)

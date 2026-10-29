@@ -52,17 +52,23 @@ export const REGION_CURRENCY: Record<PricingRegion, Currency> = { us: 'usd', br:
 
 type Listed = Exclude<PurchaseProduct, 'color_addon' | 'style_addon' | 'color_pro'>
 
-// Minor units of each region's currency (R$ 27,90 = 2790; MX$ 79 = 7900;
+// Minor units of each region's currency (R$ 19,90 = 1990; MX$ 79 = 7900;
 // COP 11.900 = 1190000, the dollar list at about 4,000 pesos).
 //
 // Brazil's Color Advisor went from R$ 14,90 to R$ 27,90 on Oct 13, 2026
 // (Silvio), and the pair from R$ 29,90 to R$ 42,90 so the Style Advisor
 // after it stays R$ 15,00, as the US did on Oct 12.
+//
+// Oct 29, 2026 (growth agent, experiment E-1029-brprice): back down to
+// R$ 19,90 and the pair to R$ 34,90 (the Style Advisor after it still
+// R$ 15,00). Since R$ 27,90, the share of Brazilians who pay after seeing
+// their colors fell from 15 % (week of Oct 5) to 6–8 %, while what each of
+// them brings in barely moved. Judged on Nov 2; reverting is this commit.
 const REGION_AMOUNTS: Record<Exclude<PricingRegion, 'us'>, Record<Listed, number>> = {
   br: {
-    color_report: 2790,
+    color_report: 1990,
     style_report: 1990,
-    reports_bundle: 4290,
+    reports_bundle: 3490,
     look_pack: 1490,
     color_mirror: 2490,
     hair_advisor: 1990,
@@ -163,6 +169,24 @@ export function regionalAmount(product: PurchaseProduct, region: PricingRegion):
   }
 
   return listed(product, region)
+}
+
+// What a product cost before its last price cut, until when. A report
+// bought then counts toward Pro annual at what she paid, so a cut never
+// raises the annual price for who already bought (entitlements.ts).
+const FORMER_AMOUNTS: Partial<Record<PricingRegion, Partial<Record<Listed, { amount: number; until: Date }>>>> = {
+  br: {
+    color_report: { amount: 2790, until: new Date('2026-10-29T16:30:00Z') },
+    reports_bundle: { amount: 4290, until: new Date('2026-10-29T16:30:00Z') },
+  },
+}
+
+// What a product bought at `at` cost in a region: its former price if it was
+// bought before the cut, else today's.
+export function amountPaidAt(product: Listed, region: PricingRegion, at: Date): number {
+  const former = FORMER_AMOUNTS[region]?.[product]
+
+  return former && at.getTime() < former.until.getTime() ? former.amount : regionalAmount(product, region)
 }
 
 export function regionalPrice(product: PurchaseProduct, region: PricingRegion) {

@@ -9,7 +9,7 @@ import { toObjectId } from '../../utils/object-id.js'
 import { timeZoneFor } from '../../utils/timezones.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { offerView } from '../feedback/rules.js'
-import { type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
+import { amountPaidAt, type Currency, type PricingRegion, REGION_CURRENCY, regionalAmount, regionForCountry } from './pricing.js'
 
 // What a person can do. Free: the avatar (FREE_AVATAR_RUNS renders), their
 // season, a few colors and their best and worst color on their face, and
@@ -206,9 +206,13 @@ export function reportCreditFor(
   const within = (at: Date | null | undefined) => (at && at.getTime() + windowMs > now ? new Date(at.getTime() + windowMs) : null)
   const color = within(user.colorReportAt)
   const style = within(user.styleReportAt)
+  // At what she paid: a report bought before a price cut counts its old price.
+  const colorAt = color ? user.colorReportAt! : null
+  const styleAt = style ? user.styleReportAt! : null
+  const first = [colorAt, styleAt].filter((at): at is Date => Boolean(at)).sort((a, b) => a.getTime() - b.getTime())[0]
   const amount = Math.min(
-    regionalAmount('reports_bundle', region),
-    (color ? regionalAmount('color_report', region) : 0) + (style ? regionalAmount('style_report', region) : 0),
+    first ? amountPaidAt('reports_bundle', region, first) : regionalAmount('reports_bundle', region),
+    (colorAt ? amountPaidAt('color_report', region, colorAt) : 0) + (styleAt ? amountPaidAt('style_report', region, styleAt) : 0),
   )
 
   if (amount <= 0) {

@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import { env } from '../../../config/env.js'
 import type { UserDocument } from '../../../types/mongo.js'
 import { billingState, reportCreditFor, serializeBilling } from '../entitlements.js'
-import { regionalAmount } from '../pricing.js'
+import { amountPaidAt, regionalAmount } from '../pricing.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const now = new Date('2026-10-01T12:00:00Z').getTime()
@@ -181,12 +181,25 @@ describe('the report credit toward Pro annual', () => {
 
   it('caps both advisors at the bundle price, says which ones count, and ends with the first window', () => {
     for (const region of ['us', 'br', 'mx', 'co', 'latam'] as const) {
-      assert.equal(reportCreditFor(both, region, now)?.amount, regionalAmount('reports_bundle', region), region)
+      assert.equal(reportCreditFor(both, region, now)?.amount, amountPaidAt('reports_bundle', region, daysAgo(3)), region)
     }
     const credit = reportCreditFor(both, 'br', now)
     assert.deepEqual(credit?.from, ['color', 'style'])
     assert.equal(credit?.until.getTime(), daysAgo(3).getTime() + env.REPORT_CREDIT_WINDOW_DAYS * DAY)
     assert.deepEqual(reportCreditFor(user({ styleReportAt: daysAgo(1) }), 'us', now)?.from, ['style'])
+  })
+
+  it("counts what she paid: Brazil's Color Advisor bought before the Oct 29 cut keeps R$ 27,90, after it R$ 19,90", () => {
+    const later = Date.parse('2026-10-31T12:00:00Z')
+    const before = reportCreditFor(user({ colorReportAt: new Date('2026-10-29T12:00:00Z') }), 'br', later)
+    assert.equal(before?.amount, 2790)
+    assert.equal(regionalAmount('pro_annual', 'br') - (before?.amount ?? 0), 7200)
+    assert.equal(reportCreditFor(user({ colorReportAt: new Date('2026-10-30T12:00:00Z') }), 'br', later)?.amount, 1990)
+    // Both before the cut: capped at the bundle's price then.
+    const both = user({ colorReportAt: new Date('2026-10-29T10:00:00Z'), styleReportAt: new Date('2026-10-29T11:00:00Z') })
+    assert.equal(reportCreditFor(both, 'br', later)?.amount, 4290)
+    // Other regions never had a cut.
+    assert.equal(reportCreditFor(user({ colorReportAt: new Date('2026-10-29T12:00:00Z') }), 'mx', later)?.amount, 7900)
   })
 
   it('is none on Pro, nor after the window, nor without a report', () => {
@@ -196,9 +209,10 @@ describe('the report credit toward Pro annual', () => {
   })
 
   it('reaches the web in the currency of where they signed up', () => {
-    const brazilian = user({ colorReportAt: new Date(Date.now() - DAY), location: { country: 'BR', region: null, source: 'edge', at: new Date() } })
+    const boughtAt = new Date(Date.now() - DAY)
+    const brazilian = user({ colorReportAt: boughtAt, location: { country: 'BR', region: null, source: 'edge', at: new Date() } })
     const credit = serializeBilling(brazilian).reportCredit
-    assert.deepEqual([credit?.amount, credit?.currency, credit?.region, credit?.from], [2790, 'brl', 'br', ['color']])
+    assert.deepEqual([credit?.amount, credit?.currency, credit?.region, credit?.from], [amountPaidAt('color_report', 'br', boughtAt), 'brl', 'br', ['color']])
     // No location: US prices, said so (a LatAm offer, also in dollars, isn't the same prices).
     const nowhere = serializeBilling(user({ colorReportAt: new Date(Date.now() - DAY) })).reportCredit
     assert.deepEqual([nowhere?.currency, nowhere?.region], ['usd', 'us'])

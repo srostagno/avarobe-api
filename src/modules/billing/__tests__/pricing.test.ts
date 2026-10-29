@@ -16,7 +16,7 @@ describe('prices by region', () => {
   })
 
   it('charges reais in Brazil and pesos in Mexico', () => {
-    assert.deepEqual(regionalPrice('color_report', 'br'), { amount: 2790, currency: 'brl' })
+    assert.deepEqual(regionalPrice('color_report', 'br'), { amount: 1990, currency: 'brl' })
     assert.deepEqual(regionalPrice('pro_monthly', 'mx'), { amount: 12900, currency: 'mxn' })
     assert.deepEqual(regionalPrice('color_report', 'latam'), { amount: 299, currency: 'usd' })
     // Colombia: the same prices in pesos (COP 11.900).
@@ -26,10 +26,10 @@ describe('prices by region', () => {
   })
 
   it('completes the pair at the bundle price of the same region', () => {
-    // Brazil since Oct 13: R$ 42,90 - R$ 27,90, the Style Advisor still R$ 15,00.
-    assert.equal(regionalAmount('style_addon', 'br'), 4290 - 2790)
+    // Brazil since Oct 29: R$ 34,90 - R$ 19,90, the Style Advisor still R$ 15,00.
+    assert.equal(regionalAmount('style_addon', 'br'), 3490 - 1990)
     assert.equal(regionalAmount('style_addon', 'br'), 1500)
-    assert.equal(regionalAmount('color_addon', 'br'), 4290 - 1990)
+    assert.equal(regionalAmount('color_addon', 'br'), 3490 - 1990)
     assert.equal(regionalAmount('color_addon', 'mx'), 14900 - 9900)
   })
 
