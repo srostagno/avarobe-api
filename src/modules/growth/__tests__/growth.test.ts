@@ -146,6 +146,7 @@ describe('growth data route: access', () => {
       [{ name: 'activeDays', params: { from: ago(121).toISOString(), to: now.toISOString() } }, /Bad params: to/],
       [{ name: 'activeDays', params: { from: now.toISOString(), to: ago(1).toISOString() } }, /Bad params: to/],
       [{ name: 'eventCounts', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'offerEvents', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
       [{ name: 'surveyAnswers', params: { since: ago(7).toISOString(), question: 'held_back' } }, /Unrecognized key/],
       [{ name: 'feedback', params: {} }, /Bad params: since/],
       [{ name: 'generationHealth', params: { hours: 169 } }, /Bad params: hours/],
@@ -477,6 +478,53 @@ describe('growth data route: behavior', () => {
         { _id: { n: 'page_view', d: d1.day }, events: 3, users: 1, visitors: 2 },
       ],
     )
+  })
+
+  it('offerEvents: each offer step by reason, placement and product, in people, without the team', async () => {
+    const [admin, nora, ana] = [new ObjectId(), new ObjectId(), new ObjectId()]
+    const at = ago(1)
+    const event = (name: string, userId: ObjectId | null, visitorId: string | null, props: Doc) => ({ _id: new ObjectId(), name, userId, visitorId, props, at })
+    const shown = { reason: 'pro_credit', placement: 'purchase_success_pro_credit' }
+    const { rows, calls } = await growthApp({
+      users: [{ _id: admin, email: 'ops@example.test', role: 'admin' }],
+      analyticsEvents: [
+        event('paywall_viewed', nora, 'v1', shown),
+        event('paywall_viewed', nora, 'v1', shown),
+        event('paywall_viewed', ana, 'v2', shown),
+        event('paywall_viewed', admin, 'v9', shown),
+        event('pair_toggled', null, 'v3', { on: true, placement: 'colors_result' }),
+        event('checkout_started', nora, 'v1', { product: 'pro_annual', amount: 2999, placement: 'purchase_success_pro_credit' }),
+        event('look_generated', nora, 'v1', {}),
+      ],
+    })
+
+    const offers = await rows<{ _id: Doc; events: number; people: number }[]>('offerEvents', { from: ago(5).toISOString(), to: now.toISOString() })
+    assert.deepEqual(
+      offers.map((row) => [row._id.n, row.events, row.people]).sort(),
+      [
+        ['checkout_started', 1, 1],
+        ['pair_toggled', 1, 1],
+        ['paywall_viewed', 3, 2],
+      ],
+    )
+    assert.deepEqual(offers.find((row) => row._id.n === 'checkout_started')?._id, { n: 'checkout_started', placement: 'purchase_success_pro_credit', product: 'pro_annual' })
+    assert.deepEqual(calls.at(-1)?.query, [
+      {
+        $match: {
+          at: { $gte: ago(5), $lt: now },
+          userId: { $nin: [admin] },
+          name: { $in: ['paywall_viewed', 'paywall_closed', 'pair_toggled', 'checkout_started', 'checkout_created', 'purchase_completed'] },
+        },
+      },
+      {
+        $group: {
+          _id: { n: '$name', reason: '$props.reason', placement: '$props.placement', product: '$props.product', on: '$props.on' },
+          events: { $sum: 1 },
+          p: { $addToSet: { $ifNull: ['$userId', '$visitorId'] } },
+        },
+      },
+      { $project: { events: 1, people: { $size: { $setDifference: ['$p', [null]] } } } },
+    ])
   })
 
   it('surveyAnswers and feedback: the answers and reviews since a date, newest first', async () => {

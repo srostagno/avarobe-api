@@ -21,6 +21,10 @@ import { parseBody } from '../../utils/http.js'
 // surveys and reviews is the one exception). Each one with its test.
 
 const DAY = 24 * 60 * 60 * 1000
+
+// offerEvents: what an offer's funnel is made of (web/lib/analytics, billing).
+const OFFER_EVENTS = ['paywall_viewed', 'paywall_closed', 'pair_toggled', 'checkout_started', 'checkout_created', 'purchase_completed']
+
 // Off the primary when there is a secondary, and never a runaway query.
 const READ = { readPreference: 'secondaryPreferred', maxTimeMS: 30_000 } as const
 
@@ -230,6 +234,30 @@ const GROWTH_QUERIES: Record<string, Runner> = {
           { $match: { at: { $gte: from, $lt: to }, userId: { $nin: staff } } },
           { $group: { _id: { n: '$name', d: laDay('$at') }, events: { $sum: 1 }, u: { $addToSet: '$userId' }, v: { $addToSet: '$visitorId' } } },
           { $project: { events: 1, users: { $size: { $setDifference: ['$u', [null]] } }, visitors: { $size: { $setDifference: ['$v', [null]] } } } },
+        ],
+        READ,
+      )
+      .toArray()
+  }),
+  // The offers' funnel, for the agent's bets on the first purchase and on Pro
+  // after it: views, closes, checkouts and payments (and the pair box's
+  // toggles) by event, reason, placement and product, in people (signed-in
+  // or visitor). The team's own events left out.
+  offerEvents: query(span(62), async (c, { from, to }) => {
+    const staff = (await staffUsers(c, compEmails())).map((user) => user._id)
+
+    return c.analyticsEvents
+      .aggregate(
+        [
+          { $match: { at: { $gte: from, $lt: to }, userId: { $nin: staff }, name: { $in: OFFER_EVENTS } } },
+          {
+            $group: {
+              _id: { n: '$name', reason: '$props.reason', placement: '$props.placement', product: '$props.product', on: '$props.on' },
+              events: { $sum: 1 },
+              p: { $addToSet: { $ifNull: ['$userId', '$visitorId'] } },
+            },
+          },
+          { $project: { events: 1, people: { $size: { $setDifference: ['$p', [null]] } } } },
         ],
         READ,
       )
