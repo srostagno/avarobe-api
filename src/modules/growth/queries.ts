@@ -263,6 +263,51 @@ const GROWTH_QUERIES: Record<string, Runner> = {
       )
       .toArray()
   }),
+  // offerFollowThrough: of the people who opened a checkout from a placement,
+  // how many paid within 48 h from that same placement, and how many paid
+  // from any placement. Tells a lost checkout from an early click that paid
+  // later through another button. People per placement, no ids out.
+  offerFollowThrough: query(span(62), async (c, { from, to }) => {
+    const staff = (await staffUsers(c, compEmails())).map((user) => user._id)
+    const window = 48 * 60 * 60 * 1000
+    const events = await c.analyticsEvents
+      .find(
+        { at: { $gte: from, $lt: new Date(to.getTime() + window) }, userId: { $nin: staff }, name: { $in: ['checkout_created', 'purchase_completed'] } },
+        { projection: { _id: 0, userId: 1, visitorId: 1, name: 1, at: 1, 'props.placement': 1 }, ...READ },
+      )
+      .limit(50_000)
+      .toArray()
+
+    type Step = { at: Date; placement: string | null }
+    const people = new Map<string, { opened: Step[]; paid: Step[] }>()
+    for (const event of events) {
+      const who = event.userId?.toString() ?? event.visitorId
+      if (!who) continue
+      const person = people.get(who) ?? { opened: [], paid: [] }
+      people.set(who, person)
+      const step = { at: event.at, placement: (event.props?.placement as string | undefined) ?? null }
+      if (event.name === 'purchase_completed') person.paid.push(step)
+      else if (event.at < to) person.opened.push(step)
+    }
+
+    // One row per placement: people who opened a checkout there, and how many
+    // of them paid within 48 h from that placement or from any.
+    const rows = new Map<string | null, { placement: string | null; people: number; paidSame: number; paidAny: number }>()
+    for (const { opened, paid } of people.values()) {
+      const byPlacement = new Map<string | null, { same: boolean; any: boolean }>()
+      for (const open of opened) {
+        const after = paid.filter((p) => p.at >= open.at && p.at.getTime() <= open.at.getTime() + window)
+        const seen = byPlacement.get(open.placement) ?? { same: false, any: false }
+        byPlacement.set(open.placement, { same: seen.same || after.some((p) => p.placement === open.placement), any: seen.any || after.length > 0 })
+      }
+      for (const [placement, { same, any }] of byPlacement) {
+        const row = rows.get(placement) ?? { placement, people: 0, paidSame: 0, paidAny: 0 }
+        rows.set(placement, { ...row, people: row.people + 1, paidSame: row.paidSame + (same ? 1 : 0), paidAny: row.paidAny + (any ? 1 : 0) })
+      }
+    }
+
+    return [...rows.values()].sort((x, y) => y.people - x.people)
+  }),
   // The studio's one-tap questions (modules/survey): why they came, what held
   // them back, what convinced them. The script leaves the team out.
   surveyAnswers: query(z.object({ since: isoDate }).strict(), (c, { since }) =>

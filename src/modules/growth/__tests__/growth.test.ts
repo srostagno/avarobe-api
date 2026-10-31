@@ -147,6 +147,8 @@ describe('growth data route: access', () => {
       [{ name: 'activeDays', params: { from: now.toISOString(), to: ago(1).toISOString() } }, /Bad params: to/],
       [{ name: 'eventCounts', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
       [{ name: 'offerEvents', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'offerFollowThrough', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'offerFollowThrough', params: { from: ago(5).toISOString(), to: now.toISOString(), placement: 'hero_lock' } }, /Unrecognized key/],
       [{ name: 'surveyAnswers', params: { since: ago(7).toISOString(), question: 'held_back' } }, /Unrecognized key/],
       [{ name: 'feedback', params: {} }, /Bad params: since/],
       [{ name: 'generationHealth', params: { hours: 169 } }, /Bad params: hours/],
@@ -525,6 +527,52 @@ describe('growth data route: behavior', () => {
       },
       { $project: { events: 1, people: { $size: { $setDifference: ['$p', [null]] } } } },
     ])
+  })
+
+  it('offerFollowThrough: who paid within 48 h after a checkout, from the same placement or another, without the team', async () => {
+    const [admin, nora, ana, eva] = [new ObjectId(), new ObjectId(), new ObjectId(), new ObjectId()]
+    const hour = 60 * 60 * 1000
+    const t0 = ago(4)
+    const at = (h: number) => new Date(t0.getTime() + h * hour)
+    const event = (name: string, userId: ObjectId | null, visitorId: string | null, placement: string, when: Date) => ({ _id: new ObjectId(), name, userId, visitorId, props: { placement }, at: when })
+    const { rows, calls } = await growthApp({
+      users: [{ _id: admin, email: 'ops@example.test', role: 'admin' }],
+      analyticsEvents: [
+        // Nora opens hero_lock twice, pays 5 h later from colors_sheet.
+        event('checkout_created', nora, 'v1', 'hero_lock', at(0)),
+        event('checkout_created', nora, 'v1', 'hero_lock', at(1)),
+        event('checkout_created', nora, 'v1', 'colors_sheet', at(4)),
+        event('purchase_completed', nora, 'v1', 'colors_sheet', at(5)),
+        // Ana opens hero_lock and pays there.
+        event('checkout_created', ana, 'v2', 'hero_lock', at(2)),
+        event('purchase_completed', ana, 'v2', 'hero_lock', at(2.2)),
+        // Eva opens color_video and pays 3 days later: too late.
+        event('checkout_created', eva, 'v3', 'color_video', at(0)),
+        event('purchase_completed', eva, 'v3', 'color_video', at(72)),
+        // A guest who never pays; the team is left out.
+        event('checkout_created', null, 'v4', 'color_video', at(1)),
+        event('checkout_created', admin, 'v9', 'hero_lock', at(1)),
+        event('purchase_completed', admin, 'v9', 'hero_lock', at(1.5)),
+      ],
+    })
+
+    const out = await rows<{ placement: string; people: number; paidSame: number; paidAny: number }[]>('offerFollowThrough', { from: ago(5).toISOString(), to: now.toISOString() })
+    assert.deepEqual(
+      out.map((row) => [row.placement, row.people, row.paidSame, row.paidAny]).sort(),
+      [
+        ['color_video', 2, 0, 0],
+        ['colors_sheet', 1, 1, 1],
+        ['hero_lock', 2, 1, 2],
+      ],
+    )
+    assert.deepEqual(calls.at(-1), {
+      collection: 'analyticsEvents',
+      op: 'find',
+      query: { at: { $gte: ago(5), $lt: new Date(now.getTime() + 48 * hour) }, userId: { $nin: [admin] }, name: { $in: ['checkout_created', 'purchase_completed'] } },
+      projection: { _id: 0, userId: 1, visitorId: 1, name: 1, at: 1, 'props.placement': 1 },
+      limit: 50_000,
+      readPreference: READ,
+    })
   })
 
   it('surveyAnswers and feedback: the answers and reviews since a date, newest first', async () => {
