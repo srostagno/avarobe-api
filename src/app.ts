@@ -22,6 +22,7 @@ import eventRoutes from './modules/events/routes.js'
 import styleEventRoutes from './modules/style-events/routes.js'
 import magazineRoutes from './modules/magazine/routes.js'
 import guideRoutes from './modules/guide/routes.js'
+import giugliaRoutes from './modules/giuglia/routes.js'
 import growthRoutes from './modules/growth/routes.js'
 import hairRoutes from './modules/hair/routes.js'
 import makeupRoutes from './modules/makeup/routes.js'
@@ -108,6 +109,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await v1.register(passkeyRoutes, { prefix: '/auth/passkeys' })
     await v1.register(meRoutes, { prefix: '/me' })
     await v1.register(feedbackRoutes, { prefix: '/feedback' })
+    await v1.register(giugliaRoutes, { prefix: '/giuglia' })
     await v1.register(avatarRoutes, { prefix: '/avatar' })
     await v1.register(lookRoutes, { prefix: '/looks' })
     await v1.register(iconLookRoutes, { prefix: '/looks/icons' })

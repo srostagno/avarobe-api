@@ -75,6 +75,10 @@ const envSchema = z.object({
   // (a 2x2 grid, the best three locked until they pay). 'off' goes back to
   // the best-and-worst pair.
   BEST_COLORS_GRID: z.enum(['on', 'off']).optional(),
+  // Giuglia in the app (Nov 2026): the style adviser, disclosed as AI, who
+  // answers a purchase doubt on the results and checkout (modules/giuglia).
+  // Off by default; 'on' opens /giuglia.
+  GIUGLIA_IN_APP: z.enum(['on', 'off']).optional(),
   // Postal address for the footer of promotional emails (CAN-SPAM). The
   // upgrade offer and its reminders only go out once it is set.
   EMAIL_POSTAL_ADDRESS: z.string().optional(),
@@ -347,6 +351,7 @@ export const env = {
   LIFECYCLE_EMAILS: (raw.LIFECYCLE_EMAILS ?? (raw.NODE_ENV === 'production' ? 'on' : 'off')) === 'on',
   LOCK_BEST_COLOR: (raw.LOCK_BEST_COLOR ?? 'on') === 'on',
   BEST_COLORS_GRID: (raw.BEST_COLORS_GRID ?? 'on') === 'on',
+  GIUGLIA_IN_APP: (raw.GIUGLIA_IN_APP ?? 'off') === 'on',
   PRO_TRIAL: (raw.PRO_TRIAL ?? 'off') === 'on',
   PIX_SUBSCRIPTIONS: (raw.PIX_SUBSCRIPTIONS ?? 'on') === 'on',
   FACE_AGE_LAUNCH: (raw.FACE_AGE_LAUNCH ?? 'off') === 'on',
