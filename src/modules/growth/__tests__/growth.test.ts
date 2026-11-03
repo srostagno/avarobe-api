@@ -149,6 +149,8 @@ describe('growth data route: access', () => {
       [{ name: 'offerEvents', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
       [{ name: 'offerFollowThrough', params: { from: ago(63).toISOString(), to: now.toISOString() } }, /Bad params: to/],
       [{ name: 'offerFollowThrough', params: { from: ago(5).toISOString(), to: now.toISOString(), placement: 'hero_lock' } }, /Unrecognized key/],
+      [{ name: 'giugliaArms', params: { from: ago(32).toISOString(), to: now.toISOString() } }, /Bad params: to/],
+      [{ name: 'giugliaArms', params: { from: ago(5).toISOString(), to: now.toISOString(), arm: 'on' } }, /Unrecognized key/],
       [{ name: 'surveyAnswers', params: { since: ago(7).toISOString(), question: 'held_back' } }, /Unrecognized key/],
       [{ name: 'feedback', params: {} }, /Bad params: since/],
       [{ name: 'generationHealth', params: { hours: 169 } }, /Bad params: hours/],
@@ -573,6 +575,60 @@ describe('growth data route: behavior', () => {
       limit: 50_000,
       readPreference: READ,
     })
+  })
+
+  it('giugliaArms: per half, who paid after first seeing their arm, without forced sessions or the team', async () => {
+    const [admin, nora, ana, eva, lia, mia] = [new ObjectId(), new ObjectId(), new ObjectId(), new ObjectId(), new ObjectId(), new ObjectId()]
+    const hour = 60 * 60 * 1000
+    const t0 = ago(4)
+    const at = (h: number) => new Date(t0.getTime() + h * hour)
+    const arm = (userId: ObjectId | null, value: string, when: Date, forced = false) => ({ _id: new ObjectId(), name: 'giuglia_arm', userId, visitorId: 'v', props: { arm: value, forced }, at: when })
+    const opened = (userId: ObjectId, when: Date) => ({ _id: new ObjectId(), name: 'giuglia_opened', userId, visitorId: 'v', props: { placement: 'results' }, at: when })
+    const purchase = (userId: ObjectId, when: Date, amountUsd = 9) => ({ _id: new ObjectId(), userId, product: 'color_advisor', amountUsd, createdAt: when, refundedAt: null })
+    const { rows, calls } = await growthApp({
+      users: [{ _id: admin, email: 'ops@example.test', role: 'admin' }],
+      analyticsEvents: [
+        // Nora (on) opens Giuglia and pays after; seen twice, counted once.
+        arm(nora, 'on', at(0)),
+        arm(nora, 'on', at(1)),
+        opened(nora, at(1)),
+        // Ana (on) had paid before her first arm.
+        arm(ana, 'on', at(2)),
+        // Eva (off) pays after; Lia (off) never pays (her $0 trial doesn't count).
+        arm(eva, 'off', at(0)),
+        arm(lia, 'off', at(3)),
+        // Mia only forced it on: left out. A guest and the team too.
+        arm(mia, 'on', at(1), true),
+        arm(null, 'on', at(1)),
+        arm(admin, 'on', at(1)),
+      ],
+      purchases: [purchase(nora, at(5)), purchase(ana, at(-24)), purchase(eva, at(30)), purchase(lia, at(4), 0), purchase(mia, at(6)), purchase(admin, at(2))],
+    })
+
+    const out = await rows<{ arm: string; people: number; paidBefore: number; eligible: number; paidAfter: number; opened: number }[]>('giugliaArms', { from: ago(5).toISOString(), to: now.toISOString() })
+    assert.deepEqual(out, [
+      { arm: 'on', people: 2, paidBefore: 1, eligible: 1, paidAfter: 1, opened: 1 },
+      { arm: 'off', people: 2, paidBefore: 0, eligible: 2, paidAfter: 1, opened: 0 },
+    ])
+    assert.deepEqual(calls.slice(-2), [
+      {
+        collection: 'analyticsEvents',
+        op: 'find',
+        query: { at: { $gte: ago(5), $lt: now }, userId: { $nin: [admin] }, name: { $in: ['giuglia_arm', 'giuglia_opened'] } },
+        projection: { _id: 0, userId: 1, name: 1, at: 1, 'props.arm': 1, 'props.forced': 1 },
+        sort: { at: 1 },
+        limit: 50_000,
+        readPreference: READ,
+      },
+      {
+        collection: 'purchases',
+        op: 'find',
+        query: { userId: { $in: [nora, eva, ana, lia] }, refundedAt: null, $or: [{ amountUsd: { $gt: 0 } }, { amountTotal: { $gt: 0 } }] },
+        projection: { _id: 0, userId: 1, createdAt: 1 },
+        limit: 50_000,
+        readPreference: READ,
+      },
+    ])
   })
 
   it('surveyAnswers and feedback: the answers and reviews since a date, newest first', async () => {

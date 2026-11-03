@@ -328,6 +328,65 @@ const GROWTH_QUERIES: Record<string, Runner> = {
       .limit(2000)
       .toArray(),
   ),
+  // giugliaArms (E-1102-giuglia3): the in-app adviser shown to half of the
+  // people with colors. Per arm (on/off, forced sessions left out): people
+  // with a giuglia_arm in the window, how many had paid before their first
+  // one, and of the rest how many paid after it (up to now). Plus who opened
+  // her. Counts only, no ids out; the team left out.
+  giugliaArms: query(span(31), async (c, { from, to }) => {
+    const staff = (await staffUsers(c, compEmails())).map((user) => user._id)
+    const events = await c.analyticsEvents
+      .find(
+        { at: { $gte: from, $lt: to }, userId: { $nin: staff }, name: { $in: ['giuglia_arm', 'giuglia_opened'] } },
+        { projection: { _id: 0, userId: 1, name: 1, at: 1, 'props.arm': 1, 'props.forced': 1 }, ...READ },
+      )
+      .sort({ at: 1 })
+      .limit(50_000)
+      .toArray()
+
+    const people = new Map<string, { id: ObjectId; arm: string; at: Date; opened: boolean }>()
+    for (const event of events) {
+      if (!event.userId) continue
+      const key = event.userId.toString()
+      const arm = event.props?.arm
+      if (event.name === 'giuglia_arm' && event.props?.forced !== true && (arm === 'on' || arm === 'off') && !people.has(key)) {
+        people.set(key, { id: event.userId, arm, at: event.at, opened: false })
+      }
+    }
+    for (const event of events) {
+      const person = event.userId && event.name === 'giuglia_opened' ? people.get(event.userId.toString()) : undefined
+      if (person && event.at >= person.at) person.opened = true
+    }
+
+    const paid = people.size
+      ? await c.purchases
+          .find(
+            { userId: { $in: [...people.values()].map((person) => person.id) }, refundedAt: null, $or: [{ amountUsd: { $gt: 0 } }, { amountTotal: { $gt: 0 } }] },
+            { projection: { _id: 0, userId: 1, createdAt: 1 }, ...READ },
+          )
+          .limit(50_000)
+          .toArray()
+      : []
+    const payments = new Map<string, Date[]>()
+    for (const purchase of paid) payments.set(purchase.userId.toString(), [...(payments.get(purchase.userId.toString()) ?? []), purchase.createdAt])
+
+    const rows = new Map<string, { arm: string; people: number; paidBefore: number; eligible: number; paidAfter: number; opened: number }>()
+    for (const arm of ['on', 'off']) rows.set(arm, { arm, people: 0, paidBefore: 0, eligible: 0, paidAfter: 0, opened: 0 })
+    for (const [key, person] of people) {
+      const row = rows.get(person.arm)!
+      const dates = payments.get(key) ?? []
+      const before = dates.some((at) => at < person.at)
+      row.people += 1
+      row.opened += person.opened ? 1 : 0
+      if (before) row.paidBefore += 1
+      else {
+        row.eligible += 1
+        row.paidAfter += dates.some((at) => at >= person.at) ? 1 : 0
+      }
+    }
+
+    return [...rows.values()]
+  }),
   // What broke: generations by status in the last hours with their top
   // errors, and the founder's open ops alerts.
   generationHealth: query(z.object({ hours: z.number().int().min(1).max(168) }).strict(), async (c, { hours }, now) => {
