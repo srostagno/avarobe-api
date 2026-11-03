@@ -331,7 +331,14 @@ export function lifecycleContentFor(
         ...recipient,
         palette:
           looks.count === 0 && analysis
-            ? { season: analysis.season, colors: freeColors, heroUrl: offer?.heroUrl ?? null, ...(offer?.url ? { url: offer.url } : {}) }
+            ? {
+                season: analysis.season,
+                colors: freeColors,
+                heroUrl: offer?.heroUrl ?? null,
+                ...(offer?.url ? { url: offer.url } : {}),
+                // Colors first: a new selfie is read again for free.
+                retake: !avatar?.avatarKey,
+              }
             : null,
       })
     case 'upgrade_reminder':

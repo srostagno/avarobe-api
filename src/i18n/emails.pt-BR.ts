@@ -259,6 +259,8 @@ export const ptBrEmails: EmailCopy = {
       'Seu relatório de cores completo é feito a partir da sua selfie: tudo o que uma análise de coloração pessoal mostraria, no seu próprio rosto. Essa aí em cima é você, nas suas melhores cores (desfocadas até você abrir o relatório) e na cor que apaga você.',
     intro: 'Seu relatório de cores completo é feito a partir da sua selfie: tudo o que uma análise de coloração pessoal mostraria, no seu próprio rosto.',
     button: (price: string) => `Quero meu relatório completo · ${price}`,
+    retake: 'Não parece você? A luz da selfie pode mudar o resultado. Tire outra perto de uma janela, com luz do dia e sem filtro; é grátis.',
+    retakeLink: 'Tirar outra selfie',
     more: 'Mais do Avarobe',
 
     trialSubject: (season: string) => `Sua paleta completa de ${season} está esperando por você`,

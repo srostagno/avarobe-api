@@ -5,7 +5,8 @@ import { ObjectId } from 'mongodb'
 
 import { env } from '../../../config/env.js'
 import { hmacSign } from '../../../utils/tokens.js'
-import { emailImageTarget, emailImageUrl, emailImageUser, unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
+import type { AvatarDocument, UserDocument } from '../../../types/mongo.js'
+import { emailImageTarget, emailImageUrl, emailImageUser, lifecycleContentFor, unsubscribeToken, userIdFromUnsubscribeToken } from '../service.js'
 import {
   appLink,
   avatarNudgeEmail,
@@ -188,6 +189,37 @@ describe('offer emails, trial off: the Color Advisor leads', () => {
       assert.ok(offer.html.includes('https://api.example.com/email/i/abc.jpg'))
       assert.ok(offer.html.includes('https://www.avarobe.com/continue?token=t'))
       assert.ok(!offer.html.includes('You’ve seen 0'))
+    }),
+  )
+
+  it(
+    'offer a free retake under the button, colors first, in their language',
+    withTrial(false, () => {
+      const offer = upgradeOfferEmail({ ...recipient, palette: { season: 'Cool Winter', colors: [], retake: true } })
+      assert.ok(offer.text.includes('Doesn’t look like you? The light in a selfie can shift the result.'))
+      assert.ok(offer.html.includes(`${env.APP_URL}/studio/avatar?mode=colors&amp;photo=new&amp;utm_source=email`))
+      // Small and after the main button.
+      assert.ok(offer.html.indexOf('Get my full report') < offer.html.indexOf('Retake my selfie'))
+      const es = upgradeOfferEmail({ ...recipient, locale: 'es', palette: { season: 'Cool Winter', colors: [], retake: true } })
+      assert.ok(es.text.includes('es gratis.') && es.html.includes(`${env.APP_URL}/es/studio/avatar?mode=colors`))
+      const pt = upgradeOfferEmail({ ...recipient, locale: 'pt-BR', palette: { season: 'Cool Winter', colors: [], retake: true } })
+      assert.ok(pt.text.includes('é grátis.') && pt.html.includes(`${env.APP_URL}/pt-br/studio/avatar?mode=colors`))
+      // With an avatar a new selfie spends a render: no line.
+      const avatar = upgradeOfferEmail({ ...recipient, palette: { season: 'Cool Winter', colors: [] } })
+      assert.ok(!avatar.html.includes('photo=new') && !avatar.text.includes('Retake my selfie'))
+    }),
+  )
+
+  it(
+    'give the retake only to people with colors and no avatar yet',
+    withTrial(false, () => {
+      const user = { _id: new ObjectId(), firstName: 'Nora', email: 'nora@example.com', locale: 'en' } as unknown as UserDocument
+      const colors = { userId: user._id, status: 'ready', readyAt: new Date(), colorAnalysis: { season: 'Cool Winter' } } as unknown as AvatarDocument
+      const looks = { count: 0, lastAt: null }
+      const colorsFirst = lifecycleContentFor('upgrade_offer', user, { ...colors, avatarKey: null }, looks)
+      const withAvatar = lifecycleContentFor('upgrade_offer', user, { ...colors, avatarKey: 'users/x/avatar.png' }, looks)
+      assert.ok(colorsFirst.html.includes('photo=new'))
+      assert.ok(!withAvatar.html.includes('photo=new'))
     }),
   )
 

@@ -284,6 +284,9 @@ export const enEmails = {
       'Your full color report is made from your selfie: everything a color analyst would tell you, shown on your own face. That’s you above, in your best colors (blurred until you open it) and in the color that drains you.',
     intro: 'Your full color report is made from your selfie: everything a color analyst would tell you, shown on your own face.',
     button: (price: string) => `Get my full report · ${price}`,
+    // Colors first: for a doubt about the read (light, filters), a free new selfie.
+    retake: 'Doesn’t look like you? The light in a selfie can shift the result. Retake it by a window in daylight, no filter; it’s free.',
+    retakeLink: 'Retake my selfie',
     more: 'More from Avarobe',
 
     // Trial on.

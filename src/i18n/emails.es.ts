@@ -260,6 +260,9 @@ export const esEmails: EmailCopy = {
       'Tu reporte de color completo se hace con tu selfie: todo lo que te diría un análisis de color profesional, en tu propia cara. Arriba estás tú, en tus mejores colores (difuminados hasta que lo abras) y en el color que te apaga.',
     intro: 'Tu reporte de color completo se hace con tu selfie: todo lo que te diría un análisis de color profesional, en tu propia cara.',
     button: (price: string) => `Quiero mi reporte completo · ${price}`,
+    retake:
+      '¿No te reconoces en el resultado? La luz de una selfie puede cambiarlo. Vuelve a tomarla junto a una ventana, con luz de día y sin filtro; es gratis.',
+    retakeLink: 'Tomar otra selfie',
     more: 'Más de Avarobe',
 
     trialSubject: (season: string) => `Tu paleta completa de ${season} te espera`,

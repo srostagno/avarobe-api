@@ -177,6 +177,14 @@ function small(text: string): Block {
   }
 }
 
+// A small line with a quiet link at its end, for a side door under a button.
+function smallLink(text: string, label: string, url: string): Block {
+  return {
+    html: `<p style="margin:0 0 14px 0;font-family:${SANS};font-size:13px;line-height:20px;color:${COLOR.muted};">${esc(text)} <a href="${esc(url)}" style="color:${COLOR.muted};text-decoration:underline;">${esc(label)}</a></p>`,
+    text: `${text} ${label}: ${url}`,
+  }
+}
+
 function button(label: string, url: string): Block {
   return {
     html: `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 26px 0;"><tr><td align="center" bgcolor="${COLOR.ink}" style="border-radius:999px;"><a href="${esc(url)}" style="display:inline-block;padding:16px 30px;font-family:${SANS};font-size:15px;line-height:18px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:999px;">${esc(label)}&nbsp;&rarr;</a></td></tr></table>`,
@@ -678,7 +686,7 @@ const PLAN = {
 // who came for their colors, and have seen them but made no look, get one
 // that leads with their palette (`palette`).
 export function upgradeOfferEmail(
-  input: Recipient & { palette?: { season: string; colors: ColorSwatch[]; heroUrl?: string | null; url?: string } | null },
+  input: Recipient & { palette?: PaletteOffer | null },
 ): EmailContent {
   if (input.palette) {
     return paletteOfferEmail({ ...input, palette: input.palette })
@@ -752,13 +760,18 @@ const OTHER_PRODUCTS = (x: Reader, campaign: LifecycleEmailKind) => {
   ]
 }
 
+// `retake`: colors first (no avatar yet), where a new selfie is read again
+// for free (POST /avatar/colors); with an avatar it would spend an avatar
+// render, so the line stays out.
+type PaletteOffer = { season: string; colors: ColorSwatch[]; heroUrl?: string | null; url?: string; retake?: boolean }
+
 // The colors offer, an hour after their colors came in (colors first, no
 // look): their own photo with their best colors blurred (`heroUrl`), what
 // the Color Advisor holds, a button that opens checkout signed in (`url`,
-// a one-tap sign-in link), and the rest of what Avarobe sells.
-function paletteOfferEmail(
-  input: Recipient & { palette: { season: string; colors: ColorSwatch[]; heroUrl?: string | null; url?: string } },
-): EmailContent {
+// a one-tap sign-in link), and the rest of what Avarobe sells. Under the
+// button, for who doubts the read ("Wrong colors" replies, Nov 2026), a
+// quiet free retake with a new selfie (`retake`).
+function paletteOfferEmail(input: Recipient & { palette: PaletteOffer }): EmailContent {
   const x = reader(input)
   const { c } = x
   const { colors } = input.palette
@@ -790,6 +803,9 @@ function paletteOfferEmail(
         priceBox(c.common.priceOnce(price), c.common.inPerson(inPersonPrice(x.locale)), c.common.onceNote),
         button(c.paletteOffer.button(price), buyUrl),
         small(c.common.buyNote),
+        ...(input.palette.retake
+          ? [smallLink(c.paletteOffer.retake, c.paletteOffer.retakeLink, x.link('/studio/avatar', 'upgrade_offer', { mode: 'colors', photo: 'new' }))]
+          : []),
         eyebrow(c.paletteOffer.more),
         products(c, OTHER_PRODUCTS(x, 'upgrade_offer')),
         small(c.common.renewalNote),
