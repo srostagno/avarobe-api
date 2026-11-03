@@ -584,15 +584,19 @@ describe('growth data route: behavior', () => {
     const at = (h: number) => new Date(t0.getTime() + h * hour)
     const arm = (userId: ObjectId | null, value: string, when: Date, forced = false) => ({ _id: new ObjectId(), name: 'giuglia_arm', userId, visitorId: 'v', props: { arm: value, forced }, at: when })
     const opened = (userId: ObjectId, when: Date) => ({ _id: new ObjectId(), name: 'giuglia_opened', userId, visitorId: 'v', props: { placement: 'results' }, at: when })
+    const seen = (userId: ObjectId, when: Date) => ({ _id: new ObjectId(), name: 'giuglia_seen', userId, visitorId: 'v', props: { spot: 'offer' }, at: when })
     const purchase = (userId: ObjectId, when: Date, amountUsd = 9) => ({ _id: new ObjectId(), userId, product: 'color_advisor', amountUsd, createdAt: when, refundedAt: null })
     const { rows, calls } = await growthApp({
       users: [{ _id: admin, email: 'ops@example.test', role: 'admin' }],
       analyticsEvents: [
-        // Nora (on) opens Giuglia and pays after; seen twice, counted once.
+        // Nora (on) sees and opens Giuglia and pays after; armed twice, seen twice, counted once.
         arm(nora, 'on', at(0)),
         arm(nora, 'on', at(1)),
+        seen(nora, at(1)),
+        seen(nora, at(1.5)),
         opened(nora, at(1)),
-        // Ana (on) had paid before her first arm.
+        // Ana (on) had paid before her first arm; her bubble seen before the arm doesn't count.
+        seen(ana, at(1)),
         arm(ana, 'on', at(2)),
         // Eva (off) pays after; Lia (off) never pays (her $0 trial doesn't count).
         arm(eva, 'off', at(0)),
@@ -605,16 +609,16 @@ describe('growth data route: behavior', () => {
       purchases: [purchase(nora, at(5)), purchase(ana, at(-24)), purchase(eva, at(30)), purchase(lia, at(4), 0), purchase(mia, at(6)), purchase(admin, at(2))],
     })
 
-    const out = await rows<{ arm: string; people: number; paidBefore: number; eligible: number; paidAfter: number; opened: number }[]>('giugliaArms', { from: ago(5).toISOString(), to: now.toISOString() })
+    const out = await rows<{ arm: string; people: number; paidBefore: number; eligible: number; paidAfter: number; seen: number; opened: number }[]>('giugliaArms', { from: ago(5).toISOString(), to: now.toISOString() })
     assert.deepEqual(out, [
-      { arm: 'on', people: 2, paidBefore: 1, eligible: 1, paidAfter: 1, opened: 1 },
-      { arm: 'off', people: 2, paidBefore: 0, eligible: 2, paidAfter: 1, opened: 0 },
+      { arm: 'on', people: 2, paidBefore: 1, eligible: 1, paidAfter: 1, seen: 1, opened: 1 },
+      { arm: 'off', people: 2, paidBefore: 0, eligible: 2, paidAfter: 1, seen: 0, opened: 0 },
     ])
     assert.deepEqual(calls.slice(-2), [
       {
         collection: 'analyticsEvents',
         op: 'find',
-        query: { at: { $gte: ago(5), $lt: now }, userId: { $nin: [admin] }, name: { $in: ['giuglia_arm', 'giuglia_opened'] } },
+        query: { at: { $gte: ago(5), $lt: now }, userId: { $nin: [admin] }, name: { $in: ['giuglia_arm', 'giuglia_seen', 'giuglia_opened'] } },
         projection: { _id: 0, userId: 1, name: 1, at: 1, 'props.arm': 1, 'props.forced': 1 },
         sort: { at: 1 },
         limit: 50_000,
