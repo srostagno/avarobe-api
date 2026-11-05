@@ -486,6 +486,17 @@ export const ptBrEmails: EmailCopy = {
     expiry: 'O link faz seu login por 14 dias.',
   },
 
+  colorsSaved: {
+    subject: (season: string | null) => (season ? `Suas cores ${season}, guardadas para depois` : 'Suas cores, guardadas para depois'),
+    preheader: 'Aqui estão, para quando você quiser.',
+    eyebrow: 'Guardado para depois',
+    heading: (season: string | null) => (season ? `Sua estação: ${season}.` : 'Suas cores estão guardadas.'),
+    intro:
+      'Você me pediu para guardar suas cores para não se perderem. Elas estão no seu estúdio: sua estação, seu subtom e seu contraste, e a cor que deve ficar longe do seu rosto. Volte quando quiser; enquanto isso, nada muda.',
+    button: 'Ver minhas cores',
+    expiry: 'O botão já entra na sua conta por 14 dias.',
+  },
+
   colorsReady: {
     subject: 'Suas cores estão prontas',
     preheader: 'Desculpe a demora. Sua estação já está no seu estúdio.',

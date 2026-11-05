@@ -293,6 +293,9 @@ export type LifecycleEmailKind =
   // A color read that failed for the AI provider, done later (they asked to
   // be told): a sign-in link to their colors.
   | 'colors_ready'
+  // Asked Giuglia to keep their colors for later (giuglia/routes.ts): a link
+  // back to them, at most once every 7 days.
+  | 'colors_saved'
   // Face Age: the reminder she asked for (daily, a few times a week or
   // weekly) to add today's photo. Each send updates lookGreat.reminderLastAt;
   // lifecycleEmails keeps only the latest.

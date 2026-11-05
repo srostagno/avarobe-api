@@ -485,6 +485,17 @@ export const esEmails: EmailCopy = {
     expiry: 'El enlace inicia tu sesión durante 14 días.',
   },
 
+  colorsSaved: {
+    subject: (season: string | null) => (season ? `Tus colores ${season}, guardados para después` : 'Tus colores, guardados para después'),
+    preheader: 'Aquí están, para cuando quieras.',
+    eyebrow: 'Guardado para después',
+    heading: (season: string | null) => (season ? `Tu estación: ${season}.` : 'Tus colores están guardados.'),
+    intro:
+      'Me pediste guardar tus colores para que no se pierdan. Están en tu estudio: tu estación, tu subtono y tu contraste, y el color que conviene alejar de tu cara. Vuelve a verlos cuando quieras; mientras tanto, no cambia nada.',
+    button: 'Ver mis colores',
+    expiry: 'El botón inicia tu sesión durante 14 días.',
+  },
+
   colorsReady: {
     subject: 'Tus colores están listos',
     preheader: 'Perdona la espera. Tu estación ya está en tu estudio.',

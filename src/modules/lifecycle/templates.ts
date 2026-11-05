@@ -1321,6 +1321,30 @@ export function lookReminderEmail(
   })
 }
 
+// Asked Giuglia to keep their colors for later (E-1105-giuglialater): a link
+// back to their colors in the studio. Asked for, so it goes out even to
+// people who turned off tips. Their season only: no best colors before they pay.
+export function colorsSavedEmail(input: Recipient & { season: string | null; url: string }): EmailContent {
+  const { c, locale } = reader(input)
+  const season = input.season ? seasonName(input.season, locale) : null
+
+  return layout({
+    subject: c.colorsSaved.subject(season),
+    preheader: c.colorsSaved.preheader,
+    hero: HERO.drape(c),
+    recipient: input,
+    blocks: [
+      eyebrow(c.colorsSaved.eyebrow),
+      heading(c.colorsSaved.heading(season)),
+      greeting(c, input.firstName),
+      paragraph(c.colorsSaved.intro),
+      button(c.colorsSaved.button, input.url),
+      small(c.colorsSaved.expiry),
+      signature(c),
+    ],
+  })
+}
+
 // Their color read failed because the AI was busy (or out of credits), they
 // asked to be told, and it's done now: a link that signs them in on their
 // colors. They asked for it, so it goes out even to people who turned off

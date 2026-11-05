@@ -10,6 +10,7 @@ import { seasonName } from '../../utils/seasons.js'
 import { trackServerEvent } from '../analytics/service.js'
 import { billingState, loadBillingUser } from '../billing/entitlements.js'
 import { pricingRegion, regionalPrice } from '../billing/pricing.js'
+import { sendColorsSaved } from '../lifecycle/service.js'
 
 import { GIUGLIA_PLACEMENTS, GIUGLIA_TOPICS, giugliaAnswer, giugliaDisclosure, type GiugliaContext } from './answers.js'
 
@@ -96,6 +97,44 @@ const giugliaRoutes: FastifyPluginAsync = async (app) => {
     })
 
     return { ai: true, disclosure: giugliaDisclosure(locale), answer }
+  })
+
+  // "Later" (E-1105-giuglialater): she offers to email a signed-in person
+  // their colors so they don't get lost, and this sends it on their tap:
+  // a link back to the studio, at most once every 7 days. A guest saves
+  // with the page's email form instead. Only the outcome is kept.
+  app.post('/later', { config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!env.GIUGLIA_IN_APP) {
+      return off(reply)
+    }
+
+    const userId = requireUserId(request)
+    const [user, avatar] = await Promise.all([
+      app.collections.users.findOne({ _id: userId }),
+      app.collections.avatars.findOne({ userId }, { projection: { colorAnalysis: 1 } }),
+    ])
+
+    if (!user || user.deletedAt) {
+      return reply.code(401).send({ message: 'Sign in again to continue.' })
+    }
+
+    if (!avatar?.colorAnalysis) {
+      return reply.code(409).send({ code: 'no_colors', message: 'See your colors first.' })
+    }
+
+    const result = await sendColorsSaved(app, user, avatar.colorAnalysis.season)
+
+    void trackServerEvent(app, { name: 'giuglia_later', userId, props: { result } })
+
+    if (result === 'no_email') {
+      return reply.code(409).send({ code: 'no_email', message: 'Save your colors with your email first.' })
+    }
+
+    if (result === 'failed') {
+      return reply.code(502).send({ code: 'send_failed', message: 'We could not send it. Try again in a moment.' })
+    }
+
+    return { sent: result === 'sent', already: result === 'already' }
   })
 }
 

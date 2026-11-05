@@ -530,6 +530,19 @@ export const enEmails = {
     expiry: 'The link signs you in for 14 days.',
   },
 
+  // Asked Giuglia to keep their colors for later (E-1105-giuglialater): a
+  // link back to them, once a week at most. The season only, no best colors.
+  colorsSaved: {
+    subject: (season: string | null) => (season ? `Your ${season} colors, saved for later` : 'Your colors, saved for later'),
+    preheader: 'Here they are, whenever you’re ready.',
+    eyebrow: 'Saved for later',
+    heading: (season: string | null) => (season ? `Your season: ${season}.` : 'Your colors are saved.'),
+    intro:
+      'You asked me to keep your colors so they don’t get lost. They’re in your studio: your season, your undertone and contrast, and the color to keep away from your face. Come back to them whenever you like; nothing changes in the meantime.',
+    button: 'See my colors',
+    expiry: 'The button signs you in for 14 days.',
+  },
+
   // Their color read failed because the AI was busy, and it's done now (they
   // left their email for it). The season only: no best colors before paying.
   colorsReady: {

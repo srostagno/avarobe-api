@@ -37,6 +37,7 @@ import {
   avatarNudgeEmail,
   checkoutRescueEmail,
   colorsReadyEmail,
+  colorsSavedEmail,
   costumeOfferEmail,
   faceAgeLaunchEmail,
   halfLastCallEmail,
@@ -366,6 +367,8 @@ export function lifecycleContentFor(
       throw new Error('pro_rescue emails are built by sendProRescues')
     case 'colors_ready':
       return colorsReadyEmail({ ...recipient, season: analysis?.season ?? null, url: rescue?.url ?? appUrl(locale, '/studio') })
+    case 'colors_saved':
+      return colorsSavedEmail({ ...recipient, season: analysis?.season ?? null, url: appUrl(locale, '/studio') })
     case 'look_reminder':
       // Her own numbers: look/reminders.ts makes it.
       throw new Error('look_reminder emails are built by sendLookReminders')
@@ -1680,6 +1683,93 @@ export async function sendColorsReady(
       ),
     ])
     return false
+  }
+}
+
+// ---------------------------------------------------------------- colors saved
+
+export const COLORS_SAVED_GAP_DAYS = 7
+
+// Asked Giuglia to keep their colors for later (E-1105-giuglialater): a link
+// back to their colors in the studio, now. They asked for it, so it goes out
+// even to people who turned off tips, but at most once every 7 days (a
+// repeat tap answers 'already'). Never to a guest or a placeholder address.
+// Marked on the account like any lifecycle email, so the next offer waits
+// its gap; rolled back if sending fails.
+export async function sendColorsSaved(
+  app: FastifyInstance,
+  user: UserDocument,
+  season: string | null,
+  now = new Date(),
+): Promise<'sent' | 'already' | 'no_email' | 'failed'> {
+  if (user.guest || user.deletedAt || isPlaceholderEmail(user.email)) {
+    return 'no_email'
+  }
+
+  const field = 'lifecycleEmails.colors_saved'
+  const previous = user.lifecycleEmails?.colors_saved ?? null
+  const weekAgo = new Date(now.getTime() - COLORS_SAVED_GAP_DAYS * 24 * 60 * 60 * 1000)
+  const claimed = await app.collections.users.updateOne(
+    { _id: user._id, $or: [{ [field]: { $exists: false } }, { [field]: { $lt: weekAgo } }] },
+    { $set: { [field]: now, lifecycleEmailLastAt: now } },
+  )
+
+  if (claimed.modifiedCount === 0) {
+    return 'already'
+  }
+
+  const sendId = new ObjectId()
+
+  try {
+    const locale = user.locale ?? 'en'
+    const content = colorsSavedEmail({
+      firstName: user.firstName,
+      email: user.email,
+      unsubscribeUrl: unsubscribeUrl(user._id, sendId, locale),
+      locale,
+      region: regionForCountry(user.location?.country),
+      season,
+      url: appUrl(locale, '/studio'),
+    })
+
+    await app.collections.emailSends.insertOne({
+      _id: sendId,
+      userId: user._id,
+      kind: 'colors_saved',
+      subject: content.subject,
+      sentAt: now,
+      opens: 0,
+      clicks: 0,
+    })
+
+    const delivery = await deliverLinkEmail({
+      log: app.log,
+      to: { email: user.email, name: user.firstName },
+      // Only for development, where nothing is sent: a link that signs in.
+      link: await emailLink(app, user, '/studio', { ads: storedAdIds(user) }),
+      content: trackContent(content, sendId),
+    })
+    app.log.info({ userId: user._id.toString(), sent: delivery.sent }, 'Colors saved email')
+    return 'sent'
+  } catch (error) {
+    app.log.error({ err: error, userId: user._id.toString() }, 'Colors saved email failed')
+    const restore: Record<string, Date> = {}
+    const clear: Record<string, ''> = {}
+
+    if (previous) restore[field] = previous
+    else clear[field] = ''
+
+    if (user.lifecycleEmailLastAt) restore.lifecycleEmailLastAt = user.lifecycleEmailLastAt
+    else clear.lifecycleEmailLastAt = ''
+
+    await Promise.all([
+      app.collections.emailSends.deleteOne({ _id: sendId }),
+      app.collections.users.updateOne(
+        { _id: user._id },
+        { ...(Object.keys(restore).length ? { $set: restore } : {}), ...(Object.keys(clear).length ? { $unset: clear } : {}) },
+      ),
+    ])
+    return 'failed'
   }
 }
 

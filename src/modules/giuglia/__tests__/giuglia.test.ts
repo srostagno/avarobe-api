@@ -147,6 +147,68 @@ describe('Giuglia in the app', () => {
   })
 })
 
+describe('Giuglia: email my colors for later', () => {
+  const later = async (options: Parameters<typeof setup>[0] = {}) => {
+    const built = await setup(options)
+    const post = () => built.app.inject({ method: 'POST', url: '/giuglia/later', headers: { ...built.headers, 'x-avarobe-locale': 'es' } })
+    return { ...built, post }
+  }
+
+  it('is off with her flag', async () => {
+    env.GIUGLIA_IN_APP = false
+    assert.equal((await (await later()).post()).statusCode, 404)
+  })
+
+  it('sends a signed-in person their colors once, and answers "already" for a week', async () => {
+    env.GIUGLIA_IN_APP = true
+    const { post, collection, events } = await later({ user: { firstName: 'Ana', locale: 'es' } })
+    const first = await post()
+
+    assert.equal(first.statusCode, 200)
+    assert.deepEqual(first.json(), { sent: true, already: false })
+    const sends = collection('emailSends').docs as Array<Record<string, unknown>>
+    assert.equal(sends.length, 1)
+    assert.equal(sends[0]!.kind, 'colors_saved')
+    assert.match(String(sends[0]!.subject), /Otoño Suave/)
+    const user = collection('users').docs[0] as { lifecycleEmails?: Record<string, Date> }
+    assert.ok(user.lifecycleEmails?.colors_saved instanceof Date)
+
+    const again = await post()
+    assert.equal(again.statusCode, 200)
+    assert.deepEqual(again.json(), { sent: false, already: true })
+    assert.equal(collection('emailSends').docs.length, 1)
+
+    await until(async () => events().filter((event) => event.name === 'giuglia_later').length === 2)
+    assert.deepEqual(
+      events().filter((event) => event.name === 'giuglia_later').map((event) => event.props),
+      [{ result: 'sent' }, { result: 'already' }],
+    )
+  })
+
+  it('sends again after 7 days', async () => {
+    env.GIUGLIA_IN_APP = true
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000)
+    const { post, collection } = await later({ user: { firstName: 'Ana', lifecycleEmails: { colors_saved: eightDaysAgo } } })
+
+    assert.deepEqual((await post()).json(), { sent: true, already: false })
+    assert.equal(collection('emailSends').docs.length, 1)
+  })
+
+  it('never emails a guest, and waits for her colors', async () => {
+    env.GIUGLIA_IN_APP = true
+    const guest = await later({ user: { guest: true } })
+    const response = await guest.post()
+
+    assert.equal(response.statusCode, 409)
+    assert.equal(response.json<{ code: string }>().code, 'no_email')
+    assert.equal(guest.collection('emailSends').docs.length, 0)
+
+    const noColors = await (await later({ colors: false })).post()
+    assert.equal(noColors.statusCode, 409)
+    assert.equal(noColors.json<{ code: string }>().code, 'no_colors')
+  })
+})
+
 describe('giugliaAnswer', () => {
   const context: GiugliaContext = {
     season: 'Soft Autumn',
