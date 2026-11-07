@@ -393,6 +393,9 @@ export type PurchaseDocument = {
   placement?: string | null
   // The terms accepted at checkout (Stripe's consent checkbox), since Oct 2026.
   terms?: 'accepted' | null
+  // A teaser_unlock: the teaser it paid for (its checkout's metadata.teaserId),
+  // since Nov 2026.
+  teaserId?: string | null
   // The card's country as Stripe has it, looked up once while a refund can
   // be requested (a Brazilian card is one of the signals of Brazil's right
   // of withdrawal); null when Stripe has none. Missing: not looked up yet.

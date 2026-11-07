@@ -1092,6 +1092,8 @@ async function applyGrant(app: FastifyInstance, grant: Grant) {
           ...(config.unlocks?.color || config.unlocks?.mirror ? { colorRead } : {}),
           ...(grant.placement ? { placement: grant.placement } : {}),
           ...(grant.terms ? { terms: grant.terms } : {}),
+          // Which teaser a teaser_unlock paid for, so support can tell.
+          ...(grant.product === 'teaser_unlock' && grant.teaserId ? { teaserId: grant.teaserId } : {}),
         },
         { session: mongoSession },
       )

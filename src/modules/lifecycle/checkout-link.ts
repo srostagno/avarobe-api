@@ -38,6 +38,20 @@ export type CheckoutLinkInput = {
   app?: 'instagram' | 'facebook'
   // That browser's ad ids, so the purchase still reaches Meta.
   ads?: LinkAdIds
+  // The teaser a teaser_unlock pays for. Without it the checkout the link
+  // opens takes her latest locked one, which may not be the one she tapped
+  // (Nov 5, 2026: paid, and the haircut she was looking at stayed locked).
+  teaserId?: string
+}
+
+// Where the link lands: the studio, buying this; a teaser_unlock on that
+// teaser's page, carrying it (the web's ?teaser=, like the jump to Safari).
+export function checkoutLinkPath(input: Pick<CheckoutLinkInput, 'product' | 'placement' | 'teaserId'>) {
+  if (input.product === 'teaser_unlock' && input.teaserId && /^[a-f0-9]{24}$/.test(input.teaserId)) {
+    return `/studio/teasers/${input.teaserId}?buy=teaser_unlock&teaser=${input.teaserId}&from=${input.placement}`
+  }
+
+  return `/studio?buy=${input.product}&from=${input.placement}`
 }
 
 export type CheckoutLinkResult = { status: 'sent' | 'recent' | 'unsent'; devLink?: string }
@@ -86,7 +100,7 @@ export async function sendCheckoutLink(
     // account (only when it sent its ids at all, so tracking is allowed).
     const stored = input.ads ? storedAdIds(user) : undefined
     const ads = input.ads ? { ...stored, ...definedOnly(input.ads) } : null
-    const path = `/studio?buy=${input.product}&from=${input.placement}`
+    const path = checkoutLinkPath(input)
     // The studio page; the click signs them in with these ad ids
     // (clickDestination). No utm: the purchase stays with the channel she
     // came from, not the email.

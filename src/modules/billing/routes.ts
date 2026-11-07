@@ -110,6 +110,8 @@ const checkoutEmailSchema = z.object({
   placement: z.string().regex(/^[a-z0-9_]{1,40}$/),
   os: z.enum(['ios', 'android']),
   app: z.enum(['instagram', 'facebook']).optional().catch(undefined),
+  // The teaser a teaser_unlock pays for, carried into the emailed link.
+  teaserId: checkoutSchema.shape.teaserId.catch(undefined),
 })
 
 const previewSchema = z.object({ asCustomer: z.boolean() })
@@ -468,8 +470,8 @@ const billingRoutes: FastifyPluginAsync = async (app) => {
         return { status: 'unsent' }
       }
 
-      const { product, placement, os, app: inApp, attribution } = parsed.data
-      return sendCheckoutLink(app, user, { product, placement, os, app: inApp, ads: attribution })
+      const { product, placement, os, app: inApp, attribution, teaserId } = parsed.data
+      return sendCheckoutLink(app, user, { product, placement, os, app: inApp, ads: attribution, ...(product === 'teaser_unlock' && teaserId ? { teaserId } : {}) })
     },
   )
 

@@ -6,7 +6,8 @@ import type Stripe from 'stripe'
 
 import { memoryStorage } from '../../../__tests__/color-reads.js'
 import { fakeApp } from '../../../__tests__/fake-app.js'
-import type { TeaserDocument } from '../../../types/mongo.js'
+import type { PurchaseDocument, TeaserDocument } from '../../../types/mongo.js'
+import { checkoutLinkPath } from '../../lifecycle/checkout-link.js'
 import { regionalAmount } from '../pricing.js'
 import { grantSession } from '../stripe.js'
 
@@ -84,6 +85,31 @@ describe('teaser_unlock', () => {
     const user = collection('users').docs[0] as { pro?: unknown; credits: number }
     assert.equal(user.pro, undefined)
     assert.equal(user.credits, 0)
+  })
+
+  it('records on the purchase which teaser it paid for', async () => {
+    const { app, collection, session } = setup()
+
+    await grantSession(app, session)
+
+    const purchase = collection('purchases').docs[0] as PurchaseDocument
+    assert.equal(purchase.teaserId, session.metadata?.teaserId)
+  })
+
+  // The pay link emailed when Instagram's browser doesn't jump to Safari
+  // (Nov 5, 2026): it went to /studio?buy=teaser_unlock without the teaser,
+  // so the checkout took her latest locked one, not the one she tapped.
+  it('sends the emailed pay link to the teaser she tapped, carrying it', () => {
+    const teaserId = new ObjectId().toString()
+
+    assert.equal(
+      checkoutLinkPath({ product: 'teaser_unlock', placement: 'single_perfect_haircut_email', teaserId }),
+      `/studio/teasers/${teaserId}?buy=teaser_unlock&teaser=${teaserId}&from=single_perfect_haircut_email`,
+    )
+    // Any other product, or no (or a bad) id: the studio, as before.
+    assert.equal(checkoutLinkPath({ product: 'hair_advisor', placement: 'hair_ideal', teaserId }), '/studio?buy=hair_advisor&from=hair_ideal')
+    assert.equal(checkoutLinkPath({ product: 'teaser_unlock', placement: 'link' }), '/studio?buy=teaser_unlock&from=link')
+    assert.equal(checkoutLinkPath({ product: 'teaser_unlock', placement: 'link', teaserId: 'nope' }), '/studio?buy=teaser_unlock&from=link')
   })
 
   it('costs $1.99 in the US and less where the plans cost less', () => {
