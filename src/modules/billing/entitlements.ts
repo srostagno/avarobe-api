@@ -326,6 +326,7 @@ export const FREE_USE_LIMITS: Record<FreeUseKind, () => number> = {
   hair_score: () => env.SCORE_FREE_PHOTOS,
   makeup: () => env.FREE_MAKEUP_TRY_ONS,
   hair_preset: () => env.FREE_HAIR_PRESETS,
+  color_tap: () => env.FREE_COLOR_TAPS,
 }
 
 const FREE_USE_KINDS = Object.keys(FREE_USE_LIMITS) as FreeUseKind[]

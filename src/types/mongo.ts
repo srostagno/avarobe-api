@@ -143,12 +143,16 @@ export type UserDocument = {
   // Claimed atomically (billing/entitlements useFreeUse); a failure gives
   // its use back.
   freeUses?: Partial<Record<FreeUseKind, number>>
+  // "Should I buy it?": the photos (client-made ids) her free tap checks
+  // went to, so more taps on the same photo don't spend another (at most
+  // FREE_COLOR_TAPS of them).
+  colorTapPhotos?: string[]
   // Look Score and Hair Score (modules/scores): the release she agreed to
   // for her photos (one for both).
   scoreProfile?: ScoreProfile | null
 }
 
-export type FreeUseKind = 'look_score' | 'hair_score' | 'makeup' | 'hair_preset'
+export type FreeUseKind = 'look_score' | 'hair_score' | 'makeup' | 'hair_preset' | 'color_tap'
 
 export type ScoreProfile = {
   consentAt: Date

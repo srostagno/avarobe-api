@@ -122,13 +122,13 @@ describe('tapVerdict', () => {
 })
 
 describe('POST /check/tap', () => {
-  async function setup(withColors = true) {
+  async function setup(withColors = true, user: Record<string, unknown> = { colorReportAt: new Date() }) {
     const userId = new ObjectId()
     const colorAnalysis = { season: 'Warm Autumn', undertone: 'warm', contrast: 'medium', ...palette }
     const routes = await routeApp(
       { '/check': checkRoutes },
       {
-        users: [{ _id: userId, email: 'tap@example.test', createdAt: new Date() }],
+        users: [{ _id: userId, email: 'tap@example.test', createdAt: new Date(), ...user }],
         avatars: [{ _id: new ObjectId(), userId, ...(withColors ? { colorAnalysis } : {}) }],
       },
     )
@@ -141,7 +141,7 @@ describe('POST /check/tap', () => {
     const response = await app.inject({ method: 'POST', url: '/check/tap', headers: auth(userId), payload: { hex: '#e2725b' } })
 
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json(), tapVerdict('#E2725B', palette))
+    assert.deepEqual(response.json(), { ...tapVerdict('#E2725B', palette), freeLeft: 2 })
     assert.equal(collection('colorChecks').docs.length, 0)
     assert.equal(collection('usageCounters').docs.length, 0)
 
@@ -151,7 +151,49 @@ describe('POST /check/tap', () => {
 
     assert.equal(events.length, 1)
     assert.equal(events[0]?.name, 'color_tap_check')
-    assert.deepEqual(events[0]?.props, { verdict: 'wear' })
+    assert.deepEqual(events[0]?.props, { verdict: 'wear', pro: false })
+  })
+
+  it('takes one free check per photo with the Color Advisor, then Pro', async () => {
+    const { app, auth, userId, collection } = await setup()
+    const tap = (photo: string, hex = '#B7410E') => app.inject({ method: 'POST', url: '/check/tap', headers: auth(userId), payload: { hex, photo } })
+
+    assert.equal((await tap('photoaaaa1')).json<{ freeLeft: number | null }>().freeLeft, 2)
+    // More taps on the same photo are free.
+    assert.equal((await tap('photoaaaa1', '#808000')).json<{ freeLeft: number | null }>().freeLeft, 2)
+    assert.equal((await tap('photobbbb2')).json<{ freeLeft: number | null }>().freeLeft, 1)
+    assert.equal((await tap('photocccc3')).json<{ freeLeft: number | null }>().freeLeft, 0)
+    assert.equal((await tap('photocccc3', '#008080')).statusCode, 200)
+
+    const blocked = await tap('photodddd4')
+
+    assert.equal(blocked.statusCode, 402)
+    assert.equal(blocked.json<{ code: string }>().code, 'needs_pro')
+    const user = collection('users').docs[0]
+    assert.deepEqual(user?.freeUses, { color_tap: 3 })
+    assert.deepEqual(user?.colorTapPhotos, ['photoaaaa1', 'photobbbb2', 'photocccc3'])
+    // A bad photo id is a 400.
+    assert.equal((await tap('BAD ID')).statusCode, 400)
+  })
+
+  it('needs the Color Advisor; Pro has no limit', async () => {
+    const free = await setup(true, {})
+    const response = await free.app.inject({ method: 'POST', url: '/check/tap', headers: free.auth(free.userId), payload: { hex: '#B7410E' } })
+
+    assert.equal(response.statusCode, 402)
+    assert.equal(response.json<{ code: string }>().code, 'needs_color_report')
+
+    const periodEnd = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000)
+    const pro = await setup(true, { pro: { status: 'active', periodEnd, interval: 'month' } })
+
+    for (let i = 0; i < 5; i += 1) {
+      const tapped = await pro.app.inject({ method: 'POST', url: '/check/tap', headers: pro.auth(pro.userId), payload: { hex: '#B7410E', photo: `photopro${i}` } })
+
+      assert.equal(tapped.statusCode, 200)
+      assert.equal(tapped.json<{ freeLeft: number | null }>().freeLeft, null)
+    }
+
+    assert.equal(pro.collection('users').docs[0]?.freeUses, undefined)
   })
 
   it('400 on a bad hex or extra fields, 401 signed out, 409 without colors', async () => {

@@ -255,6 +255,9 @@ const envSchema = z.object({
   SCORE_FREE_PHOTOS: z.coerce.number().int().min(0).default(3),
   FREE_MAKEUP_TRY_ONS: z.coerce.number().int().min(0).default(1),
   FREE_HAIR_PRESETS: z.coerce.number().int().min(0).default(1),
+  // "Should I buy it?" tap checks with the Color Advisor and no Pro (a
+  // check is one photo: more taps on the same photo are free).
+  FREE_COLOR_TAPS: z.coerce.number().int().min(0).default(3),
   // The day's fair-use caps: score reads (looks and hair together) and
   // makeup renders (which also count toward AI_DAILY_IMAGE_LIMIT).
   DAILY_SCORE_LIMIT: z.coerce.number().int().min(1).max(200).default(20),

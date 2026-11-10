@@ -52,7 +52,7 @@ describe('Free uses of the studios', () => {
     assert.equal(await useFreeUse(app, userId, 'look_score'), true)
     assert.equal(await useFreeUse(app, userId, 'look_score'), false)
     assert.deepEqual(user().freeUses, { makeup: 1, look_score: 3 })
-    assert.deepEqual(serializeBilling(user() as never).freeLeft, { look_score: 0, hair_score: 3, makeup: 0, hair_preset: 1 })
+    assert.deepEqual(serializeBilling(user() as never).freeLeft, { look_score: 0, hair_score: 3, makeup: 0, hair_preset: 1, color_tap: 3 })
   })
 
   it('gives one back, never below zero', async () => {

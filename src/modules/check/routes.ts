@@ -8,7 +8,7 @@ import { parseBody } from '../../utils/http.js'
 import { storage } from '../../utils/storage.js'
 import { dailyLimitReply, releaseGenerations, reserveUsage } from '../../utils/usage.js'
 import { trackServerEvent } from '../analytics/service.js'
-import { PaywallError, sendPaywall } from '../billing/entitlements.js'
+import { FREE_USE_LIMITS, PaywallError, billingState, loadBillingUser, sendPaywall } from '../billing/entitlements.js'
 
 import { CheckLimitError, assertCheckAllowed, serializeCheck, startCheck } from './service.js'
 import { TAP_HEX, tapVerdict } from './tap.js'
@@ -16,7 +16,11 @@ import { TAP_HEX, tapVerdict } from './tap.js'
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 const NO_COLORS = 'We need your colors first: send a selfie.'
 
-const tapSchema = z.object({ hex: z.string().regex(TAP_HEX, 'Send a color as #RRGGBB.') }).strict()
+// `photo`: an id the web makes for each photo, so a check is one photo and
+// "Try another spot" on it is free.
+const tapSchema = z
+  .object({ hex: z.string().regex(TAP_HEX, 'Send a color as #RRGGBB.'), photo: z.string().regex(/^[a-z0-9]{8,32}$/).optional() })
+  .strict()
 
 // "Will it suit me?": a garment photo in; a verdict against their colors
 // and that color on their face out, or (the full read) why it works or not
@@ -129,9 +133,11 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
-  // "Should I buy it?" (part 1): one color tapped on a garment photo, judged
-  // against their palette with CIEDE2000 (tap.ts). Free and deterministic:
-  // no AI, no usage, nothing saved but the analytics event.
+  // "Should I buy it?": one color tapped on a garment photo, judged against
+  // their palette with CIEDE2000 (tap.ts). Deterministic, no AI. It needs
+  // the Color Advisor (the full palette); without Pro, FREE_COLOR_TAPS
+  // photos (part 3, Nov 10, 2026), claimed atomically like the studios'
+  // free uses. `freeLeft`: photos left without Pro (null with Pro).
   app.post('/tap', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const userId = requireUserId(request)
     const parsed = parseBody(tapSchema, request.body)
@@ -147,9 +153,38 @@ const checkRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ message: NO_COLORS })
     }
 
-    void trackServerEvent(app, { name: 'color_tap_check', userId, props: { verdict: result.verdict } })
+    const user = await loadBillingUser(app, userId)
+    const state = user ? billingState(user) : null
 
-    return result
+    if (!state?.colorReport) {
+      return sendPaywall(reply, new PaywallError('needs_color_report', 'Checking pieces against your palette comes with the Color Advisor.'))
+    }
+
+    let freeLeft: number | null = null
+
+    if (!state.proActive) {
+      const { photo } = parsed.data
+      const limit = FREE_USE_LIMITS.color_tap()
+      const field = 'freeUses.color_tap'
+      const again = photo ? await app.collections.users.findOne({ _id: userId, colorTapPhotos: photo }, { projection: { freeUses: 1 } }) : null
+      const claimed =
+        again ??
+        (await app.collections.users.findOneAndUpdate(
+          { _id: userId, $or: [{ [field]: { $exists: false } }, { [field]: { $lt: limit } }] },
+          { $inc: { [field]: 1 }, $set: { updatedAt: new Date() }, ...(photo ? { $addToSet: { colorTapPhotos: photo } } : {}) },
+          { returnDocument: 'after', projection: { freeUses: 1 } },
+        ))
+
+      if (!claimed) {
+        return sendPaywall(reply, new PaywallError('needs_pro', 'Checking more pieces comes with Avarobe Pro.'))
+      }
+
+      freeLeft = Math.max(0, limit - (claimed.freeUses?.color_tap ?? 0))
+    }
+
+    void trackServerEvent(app, { name: 'color_tap_check', userId, props: { verdict: result.verdict, pro: state.proActive } })
+
+    return { ...result, freeLeft }
   })
 }
 
